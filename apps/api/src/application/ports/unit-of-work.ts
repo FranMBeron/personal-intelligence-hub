@@ -16,46 +16,61 @@ import type {
 
 import type { QueryPorts } from "./queries.js";
 
+export type MutationResult<T> = Readonly<{
+  status: number;
+  body: T;
+  headers: Readonly<Record<string, string>>;
+  replayed: boolean;
+}>;
+
 export interface MutationPorts {
   createBoard(
     context: MutationContext,
     input: CreateBoardBody,
-  ): Promise<BoardSnapshot>;
-  createCard(context: MutationContext, input: CreateCardBody): Promise<Card>;
+  ): Promise<MutationResult<BoardSnapshot>>;
+  createCard(
+    context: MutationContext,
+    input: CreateCardBody,
+  ): Promise<MutationResult<Card>>;
   patchCard(
     context: MutationContext,
     cardId: string,
     input: PatchCardBody,
-  ): Promise<Card>;
+  ): Promise<MutationResult<Card>>;
   addCardTag(
     context: MutationContext,
     cardId: string,
     tagId: string,
-  ): Promise<CardTagMembership>;
+  ): Promise<MutationResult<CardTagMembership>>;
   removeCardTag(
     context: MutationContext,
     cardId: string,
     tagId: string,
-  ): Promise<CardTagMembership>;
+  ): Promise<MutationResult<CardTagMembership>>;
   createRelation(
     context: MutationContext,
     input: CreateRelationBody,
-  ): Promise<Relation>;
+  ): Promise<MutationResult<Relation>>;
   archiveRelation(
     context: MutationContext,
     relationId: string,
-  ): Promise<Relation>;
-  createTask(context: MutationContext, input: CreateTaskBody): Promise<Task>;
+  ): Promise<MutationResult<Relation>>;
+  createTask(
+    context: MutationContext,
+    input: CreateTaskBody,
+  ): Promise<MutationResult<Task>>;
   patchTask(
     context: MutationContext,
     taskId: string,
     input: PatchTaskBody,
-  ): Promise<Task>;
+  ): Promise<MutationResult<Task>>;
   compensate(
     context: MutationContext,
     eventId: string,
     input: CompensateAuditEventBody,
-  ): Promise<BoardSnapshot | Card | CardTagMembership | Relation | Task>;
+  ): Promise<
+    MutationResult<BoardSnapshot | Card | CardTagMembership | Relation | Task>
+  >;
 }
 
 export interface TransactionPorts {

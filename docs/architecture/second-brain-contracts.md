@@ -232,6 +232,13 @@ returned.
 One PostgreSQL transaction contains the aggregate mutation, version change,
 immutable audit row, durable outbox row and completed idempotency response.
 
+The application mutation port returns an internal `MutationResult<T>` envelope
+containing the response status, body, replayable response headers and a
+`replayed` flag. This envelope is required because a body-only port cannot
+reproduce the exact stored HTTP outcome or instruct the HTTP adapter to emit
+`Idempotency-Replayed: true`. It is an internal ports-and-adapters boundary:
+route response bodies and the frozen external schemas remain unchanged.
+
 An audit event records its UUID, principal subject, actor UUID/type, source,
 request UUID, route template, HTTP method, entity type/UUID/version, event
 type, `before`, `after`, occurrence time and nullable compensated event UUID.
