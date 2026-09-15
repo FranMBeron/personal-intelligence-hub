@@ -1,0 +1,13 @@
+{
+  "name": "@personal-intelligence-hub/hermes-integration",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@personal-intelligence-hub/contracts": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "vitest": "5.0.1"
+  }
+}

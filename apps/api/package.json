@@ -1,0 +1,21 @@
+{
+  "name": "@personal-intelligence-hub/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@fastify/cors": "11.3.0",
+    "@fastify/sensible": "6.0.5",
+    "@fastify/swagger": "9.8.1",
+    "@fastify/swagger-ui": "6.1.1",
+    "@personal-intelligence-hub/contracts": "workspace:*",
+    "@personal-intelligence-hub/database": "workspace:*",
+    "fastify": "5.12.4",
+    "fastify-type-provider-zod": "7.0.0",
+    "jose": "6.2.12",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "vitest": "5.0.1"
+  }
+}
