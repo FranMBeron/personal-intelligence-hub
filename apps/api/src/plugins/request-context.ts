@@ -53,7 +53,9 @@ export const installRequestContext = (
   });
 
   app.addHook("onSend", async (request, reply, payload) => {
-    void reply.header("x-request-id", request.pihRequestId);
+    if (!reply.hasHeader("x-request-id")) {
+      void reply.header("x-request-id", request.pihRequestId);
+    }
     return payload;
   });
 };

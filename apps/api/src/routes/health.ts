@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
 import { DependencyUnavailableError } from "../application/errors.js";
+import { readRouteSchema } from "./shared.js";
 
 export type ReadinessStatus = Readonly<{ status: "ready" }>;
 export type ReadinessCheck = () => Promise<ReadinessStatus>;
@@ -11,7 +12,12 @@ export const registerHealthRoutes = (
 ): void => {
   app.get(
     "/health/live",
-    { schema: { security: [] } },
+    {
+      schema: {
+        ...readRouteSchema({ responseRef: "HealthLive" }),
+        security: [],
+      },
+    },
     async () => ({ status: "ok" }),
   );
 
@@ -19,6 +25,7 @@ export const registerHealthRoutes = (
     "/health/ready",
     {
       config: { pihSecurity: { scopes: ["second-brain:read"] } },
+      schema: readRouteSchema({ responseRef: "HealthReady" }),
     },
     async () => {
       try {

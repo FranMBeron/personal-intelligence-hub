@@ -12,6 +12,9 @@ export class ApplicationError extends Error {
   readonly code: ApiProblemCode;
   readonly validationErrors: readonly ProblemValidationError[] | undefined;
   readonly currentEtag: string | undefined;
+  readonly replayed: boolean;
+  readonly storedRequestId: string | undefined;
+  readonly responseHeaders: Readonly<Record<string, string>> | undefined;
 
   constructor(
     code: ApiProblemCode,
@@ -19,6 +22,9 @@ export class ApplicationError extends Error {
       cause?: unknown;
       validationErrors?: readonly ProblemValidationError[];
       currentEtag?: string;
+      replayed?: boolean;
+      storedRequestId?: string;
+      responseHeaders?: Readonly<Record<string, string>>;
     }> = {},
   ) {
     super(code, options.cause === undefined ? undefined : { cause: options.cause });
@@ -26,6 +32,9 @@ export class ApplicationError extends Error {
     this.code = code;
     this.validationErrors = options.validationErrors;
     this.currentEtag = options.currentEtag;
+    this.replayed = options.replayed ?? false;
+    this.storedRequestId = options.storedRequestId;
+    this.responseHeaders = options.responseHeaders;
   }
 }
 

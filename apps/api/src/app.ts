@@ -20,6 +20,7 @@ import {
   type ReadinessCheck,
 } from "./routes/health.js";
 import { registerPublicConfigRoute } from "./routes/public-config.js";
+import { registerSecondBrainRoutes } from "./routes/index.js";
 
 export type RuntimeEnvironment = "development" | "test" | "production";
 
@@ -95,7 +96,10 @@ export const buildApp = (dependencies: AppDependencies): FastifyInstance => {
     throw new Error("Test authenticators are forbidden in production.");
   }
 
-  const app = fastify({ logger: resolveLoggerOptions(dependencies.logger) });
+  const app = fastify({
+    logger: resolveLoggerOptions(dependencies.logger),
+    ajv: { customOptions: { removeAdditional: false } },
+  });
   app.decorate("pihDependencies", {
     cursorCodec: dependencies.cursorCodec,
     unitOfWork: dependencies.unitOfWork,
@@ -117,8 +121,11 @@ export const buildApp = (dependencies: AppDependencies): FastifyInstance => {
     const { NotFoundError } = await import("./application/errors.js");
     throw new NotFoundError();
   });
-  registerHealthRoutes(app, dependencies.readinessCheck);
-  registerPublicConfigRoute(app, dependencies.publicConfig);
+  void app.register(async (routes) => {
+    registerHealthRoutes(routes, dependencies.readinessCheck);
+    registerPublicConfigRoute(routes, dependencies.publicConfig);
+    registerSecondBrainRoutes(routes);
+  });
 
   return app;
 };

@@ -78,4 +78,5 @@ export type MutationContext = Readonly<{
   routeTemplate: string;
   method: MutationMethod;
   expectedVersion?: number;
+  expectedEtag?: string;
 }>;

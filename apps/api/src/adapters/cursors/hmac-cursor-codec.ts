@@ -40,7 +40,14 @@ export class HmacCursorCodec implements CursorCodec {
         throw new Error("Malformed signed cursor.");
       }
 
+      const decodedBody = Buffer.from(body, "base64url");
       const suppliedSignature = Buffer.from(encodedSignature, "base64url");
+      if (
+        decodedBody.toString("base64url") !== body ||
+        suppliedSignature.toString("base64url") !== encodedSignature
+      ) {
+        throw new Error("Cursor must use canonical base64url encoding.");
+      }
       const expectedSignature = this.sign(body);
       if (
         suppliedSignature.byteLength !== expectedSignature.byteLength ||
@@ -50,7 +57,7 @@ export class HmacCursorCodec implements CursorCodec {
       }
 
       const payload = CursorPayloadSchema.parse(
-        JSON.parse(Buffer.from(body, "base64url").toString("utf8")),
+        JSON.parse(decodedBody.toString("utf8")),
       );
       if (
         payload.route !== binding.route ||

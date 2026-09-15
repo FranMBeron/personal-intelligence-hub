@@ -2,6 +2,7 @@ import type {
   ApiProblem,
   ApiProblemCode,
 } from "@personal-intelligence-hub/contracts";
+import { ApiProblemCodeSchema, RequestIdSchema } from "@personal-intelligence-hub/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
 
@@ -164,6 +165,36 @@ const normalizeError = (error: unknown): ApplicationError => {
   if (error instanceof ZodError) {
     return new ValidationError(zodErrors(error));
   }
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const parsedCode = ApiProblemCodeSchema.safeParse(error.code);
+    if (parsedCode.success) {
+      const record = error as Record<string, unknown>;
+      const responseBody =
+        typeof record.responseBody === "object" && record.responseBody !== null
+          ? (record.responseBody as Record<string, unknown>)
+          : undefined;
+      const storedRequestId = RequestIdSchema.safeParse(responseBody?.requestId);
+      const currentEtag =
+        typeof record.currentEtag === "string" ? record.currentEtag : undefined;
+      const responseHeaders =
+        typeof record.responseHeaders === "object" && record.responseHeaders !== null
+          ? Object.fromEntries(
+              Object.entries(record.responseHeaders).filter(
+                (entry): entry is [string, string] => typeof entry[1] === "string",
+              ),
+            )
+          : undefined;
+      return new ApplicationError(parsedCode.data, {
+        cause: error,
+        ...(currentEtag === undefined ? {} : { currentEtag }),
+        ...(record.replayed === true ? { replayed: true } : {}),
+        ...(storedRequestId.success
+          ? { storedRequestId: storedRequestId.data }
+          : {}),
+        ...(responseHeaders === undefined ? {} : { responseHeaders }),
+      });
+    }
+  }
   if (
     typeof error === "object" &&
     error !== null &&
@@ -199,7 +230,7 @@ export const toApiProblem = (
     detail: definition.detail,
     instance,
     code: normalized.code,
-    requestId,
+    requestId: normalized.storedRequestId ?? requestId,
     ...(normalized.validationErrors === undefined
       ? {}
       : { errors: [...normalized.validationErrors] }),
@@ -212,8 +243,14 @@ const sendProblem = (
   error: unknown,
 ): void => {
   const normalized = normalizeError(error);
+  if (normalized.responseHeaders !== undefined) {
+    void reply.headers({ ...normalized.responseHeaders });
+  }
   if (normalized.currentEtag !== undefined) {
     void reply.header("etag", normalized.currentEtag);
+  }
+  if (normalized.replayed) {
+    void reply.header("idempotency-replayed", "true");
   }
   void reply
     .status(problem.status)

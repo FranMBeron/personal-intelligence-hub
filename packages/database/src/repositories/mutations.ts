@@ -74,8 +74,13 @@ const assertVersion = (
   currentVersion: number,
 ) => {
   const expected = requireExpectedVersion(context);
-  if (expected !== currentVersion) {
-    throw new RepositoryError("version_conflict", etag(type, id, currentVersion));
+  const currentEtag = etag(type, id, currentVersion);
+  if (
+    expected !== currentVersion ||
+    (context.expectedEtag !== undefined &&
+      context.expectedEtag.toLowerCase() !== currentEtag.toLowerCase())
+  ) {
+    throw new RepositoryError("version_conflict", currentEtag);
   }
 };
 

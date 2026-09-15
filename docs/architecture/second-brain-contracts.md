@@ -238,6 +238,9 @@ containing the response status, body, replayable response headers and a
 reproduce the exact stored HTTP outcome or instruct the HTTP adapter to emit
 `Idempotency-Replayed: true`. It is an internal ports-and-adapters boundary:
 route response bodies and the frozen external schemas remain unchanged.
+The internal mutation context also retains the complete validated `If-Match`
+value, not only its numeric version, so the persistence adapter can bind the
+precondition to the expected resource type and UUID.
 
 An audit event records its UUID, principal subject, actor UUID/type, source,
 request UUID, route template, HTTP method, entity type/UUID/version, event

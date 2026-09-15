@@ -52,7 +52,7 @@ const requestHash = (context: MutationContext, request: unknown) => {
       method: context.method,
       routeTemplate: context.routeTemplate,
       source: context.source,
-      ifMatch: context.expectedVersion ?? null,
+      ifMatch: context.expectedEtag ?? context.expectedVersion ?? null,
       request,
     }),
   );
@@ -307,7 +307,7 @@ const executeMutation = async <T>(
       context.idempotencyKey,
       outcome.status,
       JSON.stringify(outcome.body),
-      JSON.stringify(outcome.headers),
+      JSON.stringify({ ...outcome.headers, "x-request-id": context.requestId }),
     ],
   );
   const persisted = completed.rows[0];
@@ -499,3 +499,29 @@ export class PostgresUnitOfWork {
     }
   }
 }
+
+export const createPostgresQueryPorts = (
+  unitOfWork: Pick<PostgresUnitOfWork, "execute">,
+): QueryPorts => ({
+  boards: {
+    list: (query) =>
+      unitOfWork.execute(({ queries }) => queries.boards.list(query)),
+    get: (boardId) =>
+      unitOfWork.execute(({ queries }) => queries.boards.get(boardId)),
+  },
+  cards: {
+    get: (cardId) =>
+      unitOfWork.execute(({ queries }) => queries.cards.get(cardId)),
+  },
+  tasks: {
+    list: (query) =>
+      unitOfWork.execute(({ queries }) => queries.tasks.list(query)),
+  },
+  auditEvents: {
+    list: (query) =>
+      unitOfWork.execute(({ queries }) => queries.auditEvents.list(query)),
+  },
+  snapshot: {
+    get: () => unitOfWork.execute(({ queries }) => queries.snapshot.get()),
+  },
+});

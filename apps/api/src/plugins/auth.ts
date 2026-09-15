@@ -175,6 +175,7 @@ export const installAuthentication = (
       routeTemplate,
       method,
       ...(expectedVersion === undefined ? {} : { expectedVersion }),
+      ...(ifMatch === undefined ? {} : { expectedEtag: ifMatch }),
     };
   });
 };
