@@ -1,0 +1,8 @@
+{
+  "name": "Personal Intelligence Hub",
+  "short_name": "PIH",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff"
+}

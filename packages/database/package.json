@@ -3,6 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "db:generate": "drizzle-kit generate",
+    "test": "vitest run --passWithNoTests",
+    "test:integration": "vitest run src/schema/schema.integration.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
   "dependencies": {
     "@personal-intelligence-hub/contracts": "workspace:*",
     "drizzle-orm": "0.45.2",

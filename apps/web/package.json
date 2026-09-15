@@ -2,6 +2,12 @@
   "name": "@personal-intelligence-hub/web",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
   "dependencies": {
     "@personal-intelligence-hub/contracts": "workspace:*",
     "next": "16.3.5",
