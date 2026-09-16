@@ -242,6 +242,15 @@ The internal mutation context also retains the complete validated `If-Match`
 value, not only its numeric version, so the persistence adapter can bind the
 precondition to the expected resource type and UUID.
 
+The frozen `OutboxEvent` and `Snapshot` wire schemas deliberately do not
+prescribe a database client. Wave 4 closes that internal integration gap with
+an `OutboxStore` port between the HTTP/SSE adapter and PostgreSQL. The port
+exposes retained-range inspection, ordered replay, lease-based batch claiming,
+and explicit delivery success/failure acknowledgement. Its PostgreSQL adapter
+uses `FOR UPDATE SKIP LOCKED`; Fastify route handlers and the event bus contain
+no SQL. This is an internal ports-and-adapters boundary and does not change any
+external request, response, or event schema.
+
 An audit event records its UUID, principal subject, actor UUID/type, source,
 request UUID, route template, HTTP method, entity type/UUID/version, event
 type, `before`, `after`, occurrence time and nullable compensated event UUID.

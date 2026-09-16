@@ -21,6 +21,7 @@ import {
 } from "./routes/health.js";
 import { registerPublicConfigRoute } from "./routes/public-config.js";
 import { registerSecondBrainRoutes } from "./routes/index.js";
+import type { SynchronizationDependencies } from "./routes/events.js";
 
 export type RuntimeEnvironment = "development" | "test" | "production";
 
@@ -42,6 +43,7 @@ export type AppDependencies = Readonly<{
   runtime: RuntimeEnvironment;
   logger?: AppLoggerOptions;
   allowedOrigins?: readonly string[];
+  synchronization?: SynchronizationDependencies;
 }>;
 
 declare module "fastify" {
@@ -124,7 +126,7 @@ export const buildApp = (dependencies: AppDependencies): FastifyInstance => {
   void app.register(async (routes) => {
     registerHealthRoutes(routes, dependencies.readinessCheck);
     registerPublicConfigRoute(routes, dependencies.publicConfig);
-    registerSecondBrainRoutes(routes);
+    registerSecondBrainRoutes(routes, dependencies.synchronization);
   });
 
   return app;

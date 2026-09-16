@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { Pool, type PoolClient } from "pg";
-import { GenericContainer, type StartedTestContainer } from "testcontainers";
+import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const migrationUrl = new URL("../../migrations/0000_initial.sql", import.meta.url);
@@ -44,6 +44,9 @@ describe("initial PostgreSQL schema", () => {
         POSTGRES_USER: "pih_test",
       })
       .withExposedPorts(5432)
+      .withWaitStrategy(
+        Wait.forLogMessage(/database system is ready to accept connections/u, 2),
+      )
       .start();
 
     pool = new Pool({

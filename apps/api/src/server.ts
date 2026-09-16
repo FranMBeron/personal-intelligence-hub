@@ -12,6 +12,7 @@ import {
   type PrivateConfig,
 } from "./config/private.js";
 import type { ReadinessCheck } from "./routes/health.js";
+import type { SynchronizationDependencies } from "./routes/events.js";
 
 export type ServerDependencies = Readonly<{
   unitOfWork: UnitOfWork;
@@ -19,6 +20,7 @@ export type ServerDependencies = Readonly<{
   readinessCheck: ReadinessCheck;
   publicConfig: PublicConfigSource;
   clock?: () => Date;
+  synchronization?: SynchronizationDependencies;
 }>;
 
 export const createServer = (
@@ -44,6 +46,9 @@ export const createServer = (
     runtime: config.nodeEnv,
     logger: { level: config.logLevel },
     allowedOrigins: config.allowedOrigins,
+    ...(dependencies.synchronization === undefined
+      ? {}
+      : { synchronization: dependencies.synchronization }),
   });
 };
 

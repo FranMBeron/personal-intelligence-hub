@@ -7,7 +7,7 @@ import {
   createPostgresQueryPorts,
 } from "@personal-intelligence-hub/database";
 import { Pool, type PoolClient } from "pg";
-import { GenericContainer, type StartedTestContainer } from "testcontainers";
+import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
 import { buildApp } from "../app.js";
@@ -73,6 +73,9 @@ describe("Second Brain REST API", () => {
         POSTGRES_USER: "pih_test",
       })
       .withExposedPorts(5432)
+      .withWaitStrategy(
+        Wait.forLogMessage(/database system is ready to accept connections/u, 2),
+      )
       .start();
     pool = new Pool({
       database: "pih_api_test",

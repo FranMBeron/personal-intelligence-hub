@@ -14,6 +14,8 @@ import {
   PatchCardBodySchema,
   PatchTaskBodySchema,
   RelationSchema,
+  OutboxEventSchema,
+  SnapshotSchema,
   TaskSchema,
   createPageSchema,
 } from "@personal-intelligence-hub/contracts";
@@ -43,6 +45,8 @@ const registerSchemas = (app: FastifyInstance) => {
     ["Relation", RelationSchema],
     ["Task", TaskSchema],
     ["AuditEvent", AuditEventSchema],
+    ["OutboxEvent", OutboxEventSchema],
+    ["Snapshot", SnapshotSchema],
     ["BoardPage", createPageSchema(BoardSchema)],
     ["TaskPage", createPageSchema(TaskSchema)],
     ["AuditEventPage", createPageSchema(AuditEventSchema)],

@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run --passWithNoTests",
-    "test:integration": "vitest run src/routes/second-brain.integration.test.ts",
+    "test:integration": "vitest run src/routes/second-brain.integration.test.ts src/routes/events.integration.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -19,11 +19,11 @@
     "fastify": "5.12.4",
     "fastify-type-provider-zod": "7.0.0",
     "jose": "6.2.12",
+    "pg": "8.23.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/pg": "8.23.1",
-    "pg": "8.23.0",
     "testcontainers": "12.1.0",
     "vitest": "5.0.1"
   }

@@ -391,7 +391,14 @@ const listAuditEvents = async (
   };
 };
 
-const getSnapshot = async (client: PoolClient): Promise<Snapshot> => {
+const getSnapshot = async (
+  client: PoolClient,
+  clock: () => Date,
+): Promise<Snapshot> => {
+  await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+  const sequence = await client.query<{ last_sequence: string }>(
+    `SELECT COALESCE(max(sequence), 0)::text AS last_sequence FROM outbox_events`,
+  );
   const boardIds = await client.query<{ id: string }>(
     `SELECT id FROM boards WHERE archived_at IS NULL ORDER BY updated_at DESC, id DESC`,
   );
@@ -406,11 +413,8 @@ const getSnapshot = async (client: PoolClient): Promise<Snapshot> => {
     `SELECT id FROM tasks WHERE archived_at IS NULL ORDER BY updated_at DESC, id DESC`,
   );
   const tasks = await Promise.all(taskIds.rows.map(async ({ id }) => getTask(client, id)));
-  const sequence = await client.query<{ last_sequence: string }>(
-    `SELECT COALESCE(max(sequence), 0)::text AS last_sequence FROM outbox_events`,
-  );
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: clock().toISOString(),
     lastSequence: sequence.rows[0]?.last_sequence ?? "0",
     boards: boards.filter((board): board is NonNullable<typeof board> => board !== null),
     cards: cards.filter((card): card is NonNullable<typeof card> => card !== null),
@@ -418,7 +422,7 @@ const getSnapshot = async (client: PoolClient): Promise<Snapshot> => {
   };
 };
 
-const createQueryPorts = (client: PoolClient): QueryPorts => ({
+const createQueryPorts = (client: PoolClient, clock: () => Date): QueryPorts => ({
   boards: {
     list: (query) => listBoards(client, query),
     get: (boardId) => getBoardSnapshot(client, boardId),
@@ -426,7 +430,7 @@ const createQueryPorts = (client: PoolClient): QueryPorts => ({
   cards: { get: (cardId) => getCard(client, cardId) },
   tasks: { list: (query) => listTasks(client, query) },
   auditEvents: { list: (query) => listAuditEvents(client, query) },
-  snapshot: { get: () => getSnapshot(client) },
+  snapshot: { get: () => getSnapshot(client, clock) },
 });
 
 const createMutationPorts = (client: PoolClient): MutationPorts => ({
@@ -468,7 +472,10 @@ const isPgError = (error: unknown): error is Error & { code: string } =>
   error instanceof Error && "code" in error && typeof error.code === "string";
 
 export class PostgresUnitOfWork {
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly clock: () => Date = () => new Date(),
+  ) {}
 
   async execute<T>(operation: (ports: TransactionPorts) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
@@ -476,7 +483,7 @@ export class PostgresUnitOfWork {
       await client.query("BEGIN");
       const result = await operation({
         mutations: createMutationPorts(client),
-        queries: createQueryPorts(client),
+        queries: createQueryPorts(client, this.clock),
       });
       await client.query("COMMIT");
       return result;

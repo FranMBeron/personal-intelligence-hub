@@ -6,7 +6,7 @@ import type {
   Principal,
 } from "@personal-intelligence-hub/contracts";
 import { Pool, type PoolClient } from "pg";
-import { GenericContainer, type StartedTestContainer } from "testcontainers";
+import { GenericContainer, Wait, type StartedTestContainer } from "testcontainers";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
 import { PostgresUnitOfWork } from "../adapters/postgres-unit-of-work.js";
@@ -58,6 +58,9 @@ describe("PostgreSQL repositories", () => {
         POSTGRES_USER: "pih_test",
       })
       .withExposedPorts(5432)
+      .withWaitStrategy(
+        Wait.forLogMessage(/database system is ready to accept connections/u, 2),
+      )
       .start();
     pool = new Pool({
       database: "pih_repositories_test",
