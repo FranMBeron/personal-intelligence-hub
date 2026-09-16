@@ -203,11 +203,14 @@ describe("PostgreSQL repositories", () => {
       ),
     );
     const relation = await unitOfWork.execute(({ mutations }) =>
-      mutations.createRelation(context("POST", "/v1/relations", "relation-key-01"), {
-        fromCardId: card.id,
-        toCardId: other.id,
-        type: "supports",
-      }),
+      mutations.createRelation(
+        context("POST", "/v1/relations", "relation-key-01", 4),
+        {
+          fromCardId: card.id,
+          toCardId: other.id,
+          type: "supports",
+        },
+      ),
     );
     const archivedRelation = await unitOfWork.execute(({ mutations }) =>
       mutations.archiveRelation(

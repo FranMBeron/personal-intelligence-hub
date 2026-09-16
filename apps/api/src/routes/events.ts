@@ -9,6 +9,7 @@ export type SynchronizationDependencies = Readonly<{
   eventBus: EventBus;
   outboxStore: OutboxStore;
   heartbeatMilliseconds?: number;
+  pollMilliseconds?: number;
 }>;
 
 const singleHeader = (value: string | string[] | undefined): string | undefined =>
@@ -28,6 +29,21 @@ const parseLastEventId = (request: FastifyRequest): string | undefined => {
   return parsed.data;
 };
 
+const requestIdHeader = {
+  "X-Request-Id": { type: "string", format: "uuid" },
+} as const;
+
+const problemResponse = (description: string, includeRecoveryLink = false) => ({
+  description,
+  headers: {
+    ...requestIdHeader,
+    ...(includeRecoveryLink ? { Link: { type: "string" } } : {}),
+  },
+  content: {
+    "application/problem+json": { schema: { $ref: "ApiProblem#" } },
+  },
+});
+
 const eventRouteSchema = {
   security: [{ bearerAuth: [] }],
   headers: {
@@ -43,34 +59,15 @@ const eventRouteSchema = {
   response: {
     200: {
       description: "Server-Sent Events stream of committed outbox events.",
+      headers: requestIdHeader,
       content: {
         "text/event-stream": { schema: { type: "string" } },
       },
     },
-    400: {
-      description: "The event cursor is invalid.",
-      content: {
-        "application/problem+json": { schema: { $ref: "ApiProblem#" } },
-      },
-    },
-    401: {
-      description: "Authentication required.",
-      content: {
-        "application/problem+json": { schema: { $ref: "ApiProblem#" } },
-      },
-    },
-    403: {
-      description: "The principal is not authorized.",
-      content: {
-        "application/problem+json": { schema: { $ref: "ApiProblem#" } },
-      },
-    },
-    409: {
-      description: "The event cursor predates retained history.",
-      content: {
-        "application/problem+json": { schema: { $ref: "ApiProblem#" } },
-      },
-    },
+    400: problemResponse("The event cursor is invalid."),
+    401: problemResponse("Authentication required."),
+    403: problemResponse("The principal is not authorized."),
+    409: problemResponse("The event cursor predates retained history.", true),
   },
 } as const;
 
@@ -98,29 +95,47 @@ export const registerEventRoute = (
 
       const startSequence = suppliedSequence ?? retention.latestSequence;
       const seen = new Set<string>();
-      const pending = new Map<string, OutboxEvent>();
-      let replaying = true;
+      let lastSequence = startSequence;
       let closed = false;
       let heartbeat: NodeJS.Timeout | undefined;
+      let poller: NodeJS.Timeout | undefined;
+      let unsubscribe = (): void => undefined;
+      let draining: Promise<void> | undefined;
 
       const send = (event: OutboxEvent): void => {
         if (closed || seen.has(event.eventId)) return;
         seen.add(event.eventId);
         writeEvent(reply, event);
-      };
-      const unsubscribe = dependencies.eventBus.subscribe((event) => {
-        if (replaying) {
-          pending.set(event.eventId, event);
-          return;
+        if (BigInt(event.sequence) > BigInt(lastSequence)) {
+          lastSequence = event.sequence;
         }
-        send(event);
-      });
+      };
 
       const cleanup = (): void => {
         if (closed) return;
         closed = true;
         if (heartbeat !== undefined) clearInterval(heartbeat);
+        if (poller !== undefined) clearInterval(poller);
         unsubscribe();
+      };
+      const fail = (error: unknown): void => {
+        cleanup();
+        reply.raw.destroy(error instanceof Error ? error : undefined);
+      };
+      const drain = (): Promise<void> => {
+        if (closed) return Promise.resolve();
+        if (draining !== undefined) return draining;
+        draining = (async () => {
+          const events = await dependencies.outboxStore.readAfter(lastSequence);
+          for (const event of [...events].sort((left, right) =>
+            BigInt(left.sequence) < BigInt(right.sequence) ? -1 : 1,
+          )) {
+            send(event);
+          }
+        })().finally(() => {
+          draining = undefined;
+        });
+        return draining;
       };
       request.raw.once("close", cleanup);
       reply.raw.once("close", cleanup);
@@ -138,20 +153,18 @@ export const registerEventRoute = (
         if (!closed) reply.raw.write(": heartbeat\n\n");
       }, dependencies.heartbeatMilliseconds ?? 15_000);
       heartbeat.unref();
+      unsubscribe = dependencies.eventBus.subscribe(() => {
+        void drain().catch(fail);
+      });
+      poller = setInterval(() => {
+        void drain().catch(fail);
+      }, dependencies.pollMilliseconds ?? 1_000);
+      poller.unref();
 
       try {
-        const replay = await dependencies.outboxStore.readAfter(startSequence);
-        for (const event of replay) send(event);
-        replaying = false;
-        for (const event of [...pending.values()].sort((left, right) =>
-          BigInt(left.sequence) < BigInt(right.sequence) ? -1 : 1,
-        )) {
-          send(event);
-        }
-        pending.clear();
+        await drain();
       } catch (error) {
-        cleanup();
-        reply.raw.destroy(error instanceof Error ? error : undefined);
+        fail(error);
       }
     },
   );

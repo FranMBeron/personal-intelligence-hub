@@ -18,13 +18,37 @@ services:
     networks:
       - data
 
-  api:
+  migrate:
     image: ${PIH_API_IMAGE:?set PIH_API_IMAGE to an immutable image reference}
+    command: ["node", "packages/database/dist/src/migrate.js"]
     env_file:
       - ${PIH_API_ENV_FILE:?set PIH_API_ENV_FILE outside Git}
     depends_on:
       postgres:
         condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    restart: "no"
+    networks:
+      - data
+
+  api:
+    image: ${PIH_API_IMAGE:?set PIH_API_IMAGE to an immutable image reference}
+    env_file:
+      - ${PIH_API_ENV_FILE:?set PIH_API_ENV_FILE outside Git}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3001/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
       - 127.0.0.1:${PIH_API_PORT:-3001}:3001
     read_only: true
@@ -40,7 +64,17 @@ services:
     env_file:
       - ${PIH_WEB_ENV_FILE:?set PIH_WEB_ENV_FILE outside Git}
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 10
     ports:
       - 127.0.0.1:${PIH_WEB_PORT:-3000}:3000
     read_only: true

@@ -361,8 +361,15 @@ export const removeCardTag = (
 
 export const createRelation = async (
   client: PoolClient,
+  context: MutationContext,
   input: CreateRelationBody,
 ): Promise<MutationOutcome<Relation>> => {
+  await client.query(`SELECT id FROM cards WHERE id = $1 FOR UPDATE`, [
+    input.fromCardId,
+  ]);
+  const sourceCard = await getCard(client, input.fromCardId);
+  if (sourceCard === null) throw new RepositoryError("not_found");
+  assertVersion(context, "card", input.fromCardId, sourceCard.version);
   const relationId = crypto.randomUUID();
   await client.query(
     `INSERT INTO relations (id, from_card_id, to_card_id, relation_type)

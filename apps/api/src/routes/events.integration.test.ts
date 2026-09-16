@@ -99,6 +99,8 @@ describe("outbox-backed synchronization", () => {
   let store: PostgresOutboxStore;
   let dispatcher: OutboxDispatcher;
   let app: ReturnType<typeof buildApp>;
+  let replicaApp: ReturnType<typeof buildApp>;
+  let replicaBaseUrl: string;
 
   beforeAll(async () => {
     const migration = await readFile(fileURLToPath(migrationUrl), "utf8");
@@ -155,6 +157,31 @@ describe("outbox-backed synchronization", () => {
       },
     });
     baseUrl = await app.listen({ host: "127.0.0.1", port: 0 });
+    replicaApp = buildApp({
+      authenticator: new TestAuthenticator(),
+      cursorCodec: new HmacCursorCodec(
+        "a-fictional-cursor-key-with-more-than-32-bytes",
+      ),
+      unitOfWork,
+      queries: createPostgresQueryPorts(unitOfWork),
+      readinessCheck: async () => ({ status: "ready" }),
+      clock: () => now,
+      requestIdFactory: () => requestId,
+      publicConfig: {
+        apiVersion: "v1",
+        productName: "Personal Intelligence Hub",
+        enabledUiCapabilities: ["second-brain"],
+      },
+      runtime: "test",
+      logger: false,
+      synchronization: {
+        eventBus: new EventBus(),
+        outboxStore: store,
+        heartbeatMilliseconds: 20,
+        pollMilliseconds: 20,
+      },
+    });
+    replicaBaseUrl = await replicaApp.listen({ host: "127.0.0.1", port: 0 });
   }, 120_000);
 
   beforeEach(async () => {
@@ -166,6 +193,7 @@ describe("outbox-backed synchronization", () => {
   });
 
   afterAll(async () => {
+    await replicaApp?.close();
     await app?.close();
     client?.release();
     await pool?.end();
@@ -257,6 +285,37 @@ describe("outbox-backed synchronization", () => {
 
     const restarted = new OutboxDispatcher(store, eventBus);
     expect(await restarted.runOnce()).toBe(2);
+    abort.abort();
+  });
+
+  test("tails persisted events across API processes with independent event buses", async () => {
+    const abort = new AbortController();
+    const response = await fetch(`${replicaBaseUrl}/v1/events`, {
+      headers: auth,
+      signal: abort.signal,
+    });
+    expect(response.status).toBe(200);
+
+    await client.query(
+      `INSERT INTO outbox_events
+         (event_id, aggregate_type, aggregate_id, aggregate_version, event_type,
+          payload, occurred_at, available_at)
+       VALUES
+         ('1b66dff9-1c2d-4c7e-8498-c21021104177', 'task',
+          '20000000-0000-4000-8000-000000000077', 1, 'task.created',
+          '{"kind":"task.created","taskId":"20000000-0000-4000-8000-000000000077"}', $1, $1)`,
+      [now],
+    );
+    expect(await dispatcher.runOnce()).toBe(1);
+
+    const frames = await readFrames(
+      response,
+      (frame) => frame.includes("id: 1"),
+    );
+    expect(parseEvent(frames.at(-1)!)).toMatchObject({
+      sequence: "1",
+      eventId: "1b66dff9-1c2d-4c7e-8498-c21021104177",
+    });
     abort.abort();
   });
 

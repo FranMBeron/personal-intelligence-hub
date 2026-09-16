@@ -222,10 +222,38 @@ describe("Second Brain REST API", () => {
     });
     expect(untagged.statusCode).toBe(200);
 
+    const relationWithoutPrecondition = await app.inject({
+      method: "POST",
+      url: "/v1/relations",
+      headers: mutationHeaders("api-rel-no-etag"),
+      payload: {
+        fromCardId: firstCard.id,
+        toCardId: secondCard.id,
+        type: "supports",
+      },
+    });
+    expect(relationWithoutPrecondition.statusCode).toBe(428);
+
+    const relationWithWrongAggregate = await app.inject({
+      method: "POST",
+      url: "/v1/relations",
+      headers: mutationHeaders("api-rel-bad-etag", {
+        "if-match": `"card:${secondCard.id}:4"`,
+      }),
+      payload: {
+        fromCardId: firstCard.id,
+        toCardId: secondCard.id,
+        type: "supports",
+      },
+    });
+    expect(relationWithWrongAggregate.statusCode).toBe(412);
+
     const relationResponse = await app.inject({
       method: "POST",
       url: "/v1/relations",
-      headers: mutationHeaders("api-relation01"),
+      headers: mutationHeaders("api-relation01", {
+        "if-match": `"card:${firstCard.id}:4"`,
+      }),
       payload: {
         fromCardId: firstCard.id,
         toCardId: secondCard.id,
@@ -499,6 +527,7 @@ describe("Second Brain REST API", () => {
       ["/v1/cards/{cardId}", "patch"],
       ["/v1/cards/{cardId}/tags/{tagId}", "put"],
       ["/v1/cards/{cardId}/tags/{tagId}", "delete"],
+      ["/v1/relations", "post"],
       ["/v1/relations/{relationId}", "delete"],
       ["/v1/tasks/{taskId}", "patch"],
       ["/v1/audit-events/{eventId}/compensations", "post"],

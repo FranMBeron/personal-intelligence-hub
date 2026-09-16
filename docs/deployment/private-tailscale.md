@@ -27,6 +27,11 @@ docker compose \
   config --quiet
 ```
 
+Compose runs the API image as a one-shot `migrate` service before API startup.
+It serializes migration attempts, records the applied migration checksum, and
+refuses to continue if an already-applied migration file has changed. Review
+the migration image and database backup before starting a new revision.
+
 The production example publishes API and web only on `127.0.0.1`; PostgreSQL
 has no host port. Expose the web/API listener through an already authorized
 Tailscale Serve or private reverse-proxy configuration. Verify from a tailnet

@@ -10,15 +10,16 @@ production configuration belong outside Git.
 
 ## Status
 
-The project is in its initial monorepo bootstrap. The first delivery target is
-an auditable and idempotent Second Brain API, followed by the full responsive
-Personal Intelligence Hub interface.
+The Second Brain core is implemented: shared contracts, the auditable and
+idempotent Fastify/PostgreSQL API, outbox-backed SSE and snapshot recovery, a
+restricted Hermes adapter, a minimal Next.js/PWA shell, and reproducible local
+containers. The four full product interfaces remain the next product stage.
 
 ## Development prerequisites
 
 - Node.js 22
 - pnpm 9.15.9 through Corepack
-- Docker with Compose for later PostgreSQL integration tests
+- Docker with Compose for PostgreSQL integration and local smoke tests
 
 Install the workspace dependencies:
 
@@ -26,11 +27,46 @@ Install the workspace dependencies:
 corepack enable
 pnpm install
 pnpm verify
+pnpm build
+pnpm test:integration
 ```
 
-Package-specific development commands will be added with each tested
-capability. The root workspace intentionally starts without an orchestration
-layer beyond pnpm.
+Generate and verify the committed OpenAPI document:
+
+```bash
+pnpm openapi:generate
+pnpm test:public
+pnpm openapi:check
+```
+
+## Fictional local stack
+
+The checked-in local Compose file uses fictional credentials only, publishes
+API/web on localhost, and never publishes PostgreSQL. A clean checkout can
+start PostgreSQL and the API with:
+
+```bash
+docker compose -f infrastructure/docker/compose.yaml up --build --detach --wait api
+curl --fail http://127.0.0.1:3001/health/live
+```
+
+Stop it and remove only its local development volume with:
+
+```bash
+docker compose -f infrastructure/docker/compose.yaml down --volumes
+```
+
+Run the same lifecycle, migration, restart, and port-boundary check used by CI:
+
+```bash
+pnpm test:compose
+pnpm verify:secrets
+```
+
+The OIDC values in local Compose use the reserved `example.test` domain. They
+are sufficient for liveness and infrastructure verification, not authenticated
+user sessions. Supply a real private OIDC configuration outside Git for an
+authorized deployment.
 
 ## Private deployment model
 
@@ -38,6 +74,13 @@ The software is designed to run behind a private network such as Tailscale.
 Cloning this public repository does not expose a deployment. Copy
 `.env.example` to an ignored local environment file and supply values through a
 secret manager or restrictive local file; never commit working credentials.
+
+Architecture details live in
+[`docs/architecture/second-brain.md`](docs/architecture/second-brain.md), with
+the trust boundary documented in
+[`docs/architecture/public-private-boundary.md`](docs/architecture/public-private-boundary.md).
+Private deployment and restore documents are runbooks only and do not authorize
+changes to any host.
 
 ## License
 

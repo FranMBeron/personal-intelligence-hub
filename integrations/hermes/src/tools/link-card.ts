@@ -1,4 +1,5 @@
 import {
+  CardSchema,
   CreateRelationBodySchema,
   RelationSchema,
   type CreateRelationBody,
@@ -10,10 +11,16 @@ import type { HermesSecondBrainClient } from "../client.js";
 export const linkCardTool = (client: HermesSecondBrainClient) => ({
   inputSchema: CreateRelationBodySchema,
   execute: (input: CreateRelationBody): Promise<Relation> =>
-    client.mutate({
-      method: "POST",
-      path: "/v1/relations",
-      body: CreateRelationBodySchema.parse(input),
-      responseSchema: RelationSchema,
-    }),
+    client.withEtag(
+      `/v1/cards/${input.fromCardId}`,
+      CardSchema,
+      (ifMatch) =>
+        client.mutate({
+          method: "POST",
+          path: "/v1/relations",
+          body: CreateRelationBodySchema.parse(input),
+          responseSchema: RelationSchema,
+          ifMatch,
+        }),
+    ),
 });

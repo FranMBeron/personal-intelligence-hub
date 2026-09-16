@@ -451,7 +451,9 @@ const createMutationPorts = (client: PoolClient): MutationPorts => ({
       removeCardTag(client, context, cardId, tagId),
     ),
   createRelation: (context, input) =>
-    executeMutation(client, context, { body: input }, () => createRelation(client, input)),
+    executeMutation(client, context, { body: input }, () =>
+      createRelation(client, context, input),
+    ),
   archiveRelation: (context, relationId) =>
     executeMutation(client, context, { path: { relationId }, body: null }, () =>
       archiveRelation(client, context, relationId),

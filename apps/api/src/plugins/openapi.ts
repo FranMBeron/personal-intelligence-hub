@@ -103,6 +103,7 @@ export const registerOpenApi = (app: FastifyInstance): void => {
         const names = {
           "idempotency-key": "Idempotency-Key",
           "if-match": "If-Match",
+          "last-event-id": "Last-Event-ID",
           "x-origin-channel": "X-Origin-Channel",
         } as const;
         for (const [runtimeName, documentedName] of Object.entries(names)) {
@@ -111,14 +112,36 @@ export const registerOpenApi = (app: FastifyInstance): void => {
             delete properties[runtimeName];
           }
         }
+        const lastEventId = properties["Last-Event-ID"];
+        if (typeof lastEventId === "object" && lastEventId !== null) {
+          properties["Last-Event-ID"] = {
+            ...lastEventId,
+            pattern: "^(?:0|[1-9]\\d*)$",
+          };
+        }
         if ("required" in headers && Array.isArray(headers.required)) {
           headers.required = headers.required.map(
             (name) => names[name as keyof typeof names] ?? name,
           );
         }
+        if (
+          "If-Match" in properties &&
+          "required" in headers &&
+          Array.isArray(headers.required) &&
+          !headers.required.includes("If-Match")
+        ) {
+          headers.required.push("If-Match");
+        }
       }
       return { schema: transformed, url };
     },
+    transformObject: (document) =>
+      "openapiObject" in document
+        ? {
+            ...document.openapiObject,
+            jsonSchemaDialect: "https://json-schema.org/draft/2020-12/schema",
+          }
+        : document.swaggerObject,
     openapi: {
       openapi: "3.1.0",
       info: {

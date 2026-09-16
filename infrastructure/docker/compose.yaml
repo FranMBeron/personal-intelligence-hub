@@ -14,7 +14,23 @@ services:
     restart: unless-stopped
     volumes:
       - pih-postgres-data:/var/lib/postgresql/data
-      - ../../packages/database/migrations/0000_initial.sql:/docker-entrypoint-initdb.d/001-initial.sql:ro
+    networks:
+      - data
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/api.Dockerfile
+    command: ["node", "packages/database/dist/src/migrate.js"]
+    environment:
+      DATABASE_URL: postgresql://pih_local:fictional-local-password@postgres:5432/pih_local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    restart: "no"
     networks:
       - data
 
@@ -37,8 +53,8 @@ services:
       OUTBOX_RETENTION_DAYS: "7"
       PORT: "3001"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD

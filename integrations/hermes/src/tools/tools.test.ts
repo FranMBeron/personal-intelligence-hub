@@ -202,6 +202,9 @@ describe("restricted Hermes Second Brain tools", () => {
     };
     const fetchImplementation = vi
       .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse(card, 200, { etag: `"card:${ids.card}:1"` }),
+      )
       .mockResolvedValueOnce(jsonResponse(relation, 201))
       .mockResolvedValueOnce(jsonResponse(task, 201));
     const tools = createHermesTools(makeClient(fetchImplementation));
@@ -218,11 +221,15 @@ describe("restricted Hermes Second Brain tools", () => {
     ).resolves.toEqual(task);
 
     const requests = fetchImplementation.mock.calls.map(([input]) => input as Request);
-    expect(requests.map(({ method }) => method)).toEqual(["POST", "POST"]);
+    expect(requests.map(({ method }) => method)).toEqual(["GET", "POST", "POST"]);
     expect(requests.map(({ url }) => url)).toEqual([
+      `http://api.internal.test:3001/v1/cards/${ids.card}`,
       "http://api.internal.test:3001/v1/relations",
       "http://api.internal.test:3001/v1/tasks",
     ]);
+    expect(requests[1]?.headers.get("if-match")).toBe(
+      `"card:${ids.card}:1"`,
+    );
   });
 
   test("throws a safe typed error for problem responses", async () => {

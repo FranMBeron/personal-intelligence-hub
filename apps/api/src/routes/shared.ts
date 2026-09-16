@@ -6,14 +6,21 @@ import type { MutationResult } from "../application/ports/unit-of-work.js";
 
 const problem = (description: string) => ({
   description,
+  headers: {
+    "X-Request-Id": { type: "string", format: "uuid" },
+  },
   content: {
     "application/problem+json": { schema: { $ref: "ApiProblem#" } },
   },
 });
 
-const responseHeaders = (options: { etag?: boolean; location?: boolean } = {}) => ({
+const responseHeaders = (
+  options: { etag?: boolean; idempotency?: boolean; location?: boolean } = {},
+) => ({
   "X-Request-Id": { type: "string", format: "uuid" },
-  "Idempotency-Replayed": { type: "string", const: "true" },
+  ...(options.idempotency
+    ? { "Idempotency-Replayed": { type: "string", const: "true" } }
+    : {}),
   ...(options.etag ? { ETag: { type: "string" } } : {}),
   ...(options.location ? { Location: { type: "string" } } : {}),
 });
@@ -21,7 +28,7 @@ const responseHeaders = (options: { etag?: boolean; location?: boolean } = {}) =
 const success = (
   description: string,
   schemaRef: string,
-  options: { etag?: boolean; location?: boolean } = {},
+  options: { etag?: boolean; idempotency?: boolean; location?: boolean } = {},
 ) => ({
   description,
   type: "object",
@@ -84,7 +91,6 @@ export const mutationRouteSchema = (
     required: [
       "idempotency-key",
       "x-origin-channel",
-      ...(options.requireIfMatch ? ["if-match"] : []),
     ],
     properties: {
       "idempotency-key": { type: "string", minLength: 8, maxLength: 255 },
@@ -109,6 +115,7 @@ export const mutationRouteSchema = (
             options.responseRef,
             {
               etag: true,
+              idempotency: true,
               ...(options.location === undefined
                 ? {}
                 : { location: options.location }),

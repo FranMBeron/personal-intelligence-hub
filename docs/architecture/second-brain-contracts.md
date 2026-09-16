@@ -248,8 +248,11 @@ an `OutboxStore` port between the HTTP/SSE adapter and PostgreSQL. The port
 exposes retained-range inspection, ordered replay, lease-based batch claiming,
 and explicit delivery success/failure acknowledgement. Its PostgreSQL adapter
 uses `FOR UPDATE SKIP LOCKED`; Fastify route handlers and the event bus contain
-no SQL. This is an internal ports-and-adapters boundary and does not change any
-external request, response, or event schema.
+no SQL. Each SSE process also tails this persisted port after its last emitted
+sequence; the process-local event bus only accelerates a drain. This preserves
+ordered delivery when a dispatcher and an SSE client run in different API
+processes. This is an internal ports-and-adapters boundary and does not change
+any external request, response, or event schema.
 
 An audit event records its UUID, principal subject, actor UUID/type, source,
 request UUID, route template, HTTP method, entity type/UUID/version, event

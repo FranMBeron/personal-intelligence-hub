@@ -22,4 +22,4 @@ WORKDIR /app
 COPY --from=build --chown=node:node /workspace /app
 USER node
 EXPOSE 3000
-CMD ["pnpm", "--filter", "@personal-intelligence-hub/web", "start"]
+CMD ["node", "apps/web/node_modules/next/dist/bin/next", "start", "apps/web"]

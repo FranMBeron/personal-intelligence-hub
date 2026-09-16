@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.9
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Scan the public checkout
+        run: pnpm verify:secrets
+
+      - name: Lint, typecheck, and test
+        run: pnpm verify
+
+      - name: Build every workspace package
+        run: pnpm build
+
+      - name: Run PostgreSQL integration suites
+        run: pnpm test:integration
+
+      - name: Verify generated OpenAPI
+        run: pnpm test:public && pnpm openapi:check
+
+      - name: Validate Compose and restart recovery
+        run: pnpm test:compose

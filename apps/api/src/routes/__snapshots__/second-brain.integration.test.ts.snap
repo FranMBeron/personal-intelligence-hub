@@ -3012,6 +3012,7 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
     "title": "Personal Intelligence Hub Second Brain API",
     "version": "0.1.0",
   },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "openapi": "3.1.0",
   "paths": {
     "/health/live": {
@@ -3027,12 +3028,6 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
             },
             "description": "Successful response.",
             "headers": {
-              "Idempotency-Replayed": {
-                "schema": {
-                  "const": "true",
-                  "type": "string",
-                },
-              },
               "X-Request-Id": {
                 "schema": {
                   "format": "uuid",
@@ -3050,6 +3045,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -3060,6 +3063,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -3070,6 +3081,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -3080,6 +3099,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [],
@@ -3098,12 +3125,6 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
             },
             "description": "Successful response.",
             "headers": {
-              "Idempotency-Replayed": {
-                "schema": {
-                  "const": "true",
-                  "type": "string",
-                },
-              },
               "X-Request-Id": {
                 "schema": {
                   "format": "uuid",
@@ -3121,6 +3142,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -3131,6 +3160,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -3141,6 +3178,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -3151,6 +3196,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -3196,12 +3249,6 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
             },
             "description": "Successful response.",
             "headers": {
-              "Idempotency-Replayed": {
-                "schema": {
-                  "const": "true",
-                  "type": "string",
-                },
-              },
               "X-Request-Id": {
                 "schema": {
                   "format": "uuid",
@@ -3219,6 +3266,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -3229,6 +3284,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -3239,6 +3302,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -3249,6 +3320,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -3354,6 +3433,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -3364,6 +3451,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -3374,6 +3469,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "409": {
             "content": {
@@ -3384,6 +3487,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The mutation conflicts with current state or idempotency history.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "412": {
             "content": {
@@ -3394,6 +3505,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The supplied resource version is stale.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -3404,6 +3523,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "428": {
             "content": {
@@ -3414,6 +3541,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -3459,12 +3594,6 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
             },
             "description": "Successful response.",
             "headers": {
-              "Idempotency-Replayed": {
-                "schema": {
-                  "const": "true",
-                  "type": "string",
-                },
-              },
               "X-Request-Id": {
                 "schema": {
                   "format": "uuid",
@@ -3482,6 +3611,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -3492,6 +3629,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -3502,6 +3647,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -3512,6 +3665,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -3602,6 +3763,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -3612,6 +3781,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -3622,6 +3799,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "409": {
             "content": {
@@ -3632,6 +3817,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The mutation conflicts with current state or idempotency history.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "412": {
             "content": {
@@ -3642,6 +3835,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The supplied resource version is stale.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -3652,6 +3853,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "428": {
             "content": {
@@ -3662,6 +3871,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -3700,12 +3917,6 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
                   "type": "string",
                 },
               },
-              "Idempotency-Replayed": {
-                "schema": {
-                  "const": "true",
-                  "type": "string",
-                },
-              },
               "X-Request-Id": {
                 "schema": {
                   "format": "uuid",
@@ -3723,6 +3934,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -3733,6 +3952,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -3743,6 +3970,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -3753,6 +3988,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -3845,6 +4088,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -3855,6 +4106,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -3865,6 +4124,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "409": {
             "content": {
@@ -3875,6 +4142,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The mutation conflicts with current state or idempotency history.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "412": {
             "content": {
@@ -3885,6 +4160,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The supplied resource version is stale.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -3895,6 +4178,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "428": {
             "content": {
@@ -3905,6 +4196,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -3943,12 +4242,6 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
                   "type": "string",
                 },
               },
-              "Idempotency-Replayed": {
-                "schema": {
-                  "const": "true",
-                  "type": "string",
-                },
-              },
               "X-Request-Id": {
                 "schema": {
                   "format": "uuid",
@@ -3966,6 +4259,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -3976,6 +4277,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -3986,6 +4295,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -3996,6 +4313,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -4099,6 +4424,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -4109,6 +4442,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -4119,6 +4460,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "409": {
             "content": {
@@ -4129,6 +4478,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The mutation conflicts with current state or idempotency history.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "412": {
             "content": {
@@ -4139,6 +4496,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The supplied resource version is stale.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -4149,6 +4514,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "428": {
             "content": {
@@ -4159,6 +4532,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -4263,6 +4644,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -4273,6 +4662,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -4283,6 +4680,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "409": {
             "content": {
@@ -4293,6 +4698,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The mutation conflicts with current state or idempotency history.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "412": {
             "content": {
@@ -4303,6 +4716,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The supplied resource version is stale.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -4313,6 +4734,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "428": {
             "content": {
@@ -4323,6 +4752,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -4435,6 +4872,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -4445,6 +4890,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -4455,6 +4908,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "409": {
             "content": {
@@ -4465,6 +4926,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The mutation conflicts with current state or idempotency history.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "412": {
             "content": {
@@ -4475,6 +4944,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The supplied resource version is stale.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -4485,6 +4962,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "428": {
             "content": {
@@ -4495,6 +4980,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -4517,12 +5010,6 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
             },
             "description": "Successful response.",
             "headers": {
-              "Idempotency-Replayed": {
-                "schema": {
-                  "const": "true",
-                  "type": "string",
-                },
-              },
               "X-Request-Id": {
                 "schema": {
                   "format": "uuid",
@@ -4540,6 +5027,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -4550,6 +5045,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -4560,6 +5063,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -4570,6 +5081,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -4589,6 +5108,15 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
             "schema": {
               "maxLength": 255,
               "minLength": 8,
+              "type": "string",
+            },
+          },
+          {
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "minLength": 1,
               "type": "string",
             },
           },
@@ -4662,6 +5190,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -4672,6 +5208,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -4682,6 +5226,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "409": {
             "content": {
@@ -4692,6 +5244,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The mutation conflicts with current state or idempotency history.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "412": {
             "content": {
@@ -4702,6 +5262,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The supplied resource version is stale.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -4712,6 +5280,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "428": {
             "content": {
@@ -4722,6 +5298,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -4817,6 +5401,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -4827,6 +5419,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -4837,6 +5437,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "409": {
             "content": {
@@ -4847,6 +5455,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The mutation conflicts with current state or idempotency history.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "412": {
             "content": {
@@ -4857,6 +5473,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The supplied resource version is stale.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -4867,6 +5491,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "428": {
             "content": {
@@ -4877,6 +5509,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -4899,12 +5539,6 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
             },
             "description": "Successful response.",
             "headers": {
-              "Idempotency-Replayed": {
-                "schema": {
-                  "const": "true",
-                  "type": "string",
-                },
-              },
               "X-Request-Id": {
                 "schema": {
                   "format": "uuid",
@@ -4922,6 +5556,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -4932,6 +5574,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -4942,6 +5592,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -4952,6 +5610,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -4997,12 +5663,6 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
             },
             "description": "Successful response.",
             "headers": {
-              "Idempotency-Replayed": {
-                "schema": {
-                  "const": "true",
-                  "type": "string",
-                },
-              },
               "X-Request-Id": {
                 "schema": {
                   "format": "uuid",
@@ -5020,6 +5680,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -5030,6 +5698,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -5040,6 +5716,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -5050,6 +5734,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -5140,6 +5832,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -5150,6 +5850,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -5160,6 +5868,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "409": {
             "content": {
@@ -5170,6 +5886,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The mutation conflicts with current state or idempotency history.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "412": {
             "content": {
@@ -5180,6 +5904,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The supplied resource version is stale.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -5190,6 +5922,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "428": {
             "content": {
@@ -5200,6 +5940,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [
@@ -5305,6 +6053,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Authentication required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "403": {
             "content": {
@@ -5315,6 +6071,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The principal is not authorized.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "404": {
             "content": {
@@ -5325,6 +6089,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The resource was not found.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "409": {
             "content": {
@@ -5335,6 +6107,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The mutation conflicts with current state or idempotency history.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "412": {
             "content": {
@@ -5345,6 +6125,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "The supplied resource version is stale.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "422": {
             "content": {
@@ -5355,6 +6143,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
           "428": {
             "content": {
@@ -5365,6 +6161,14 @@ exports[`Second Brain REST API > publishes complete security, concurrency, idemp
               },
             },
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "format": "uuid",
+                  "type": "string",
+                },
+              },
+            },
           },
         },
         "security": [

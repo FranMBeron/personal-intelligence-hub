@@ -23,6 +23,7 @@ export const registerRelationRoutes = (app: FastifyInstance): void => {
     {
       config: { pihSecurity: { scopes: ["second-brain:write"], mutation: true } },
       schema: mutationRouteSchema({
+        requireIfMatch: true,
         bodyRef: "CreateRelationBody",
         responseRef: "Relation",
         status: 201,

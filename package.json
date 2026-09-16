@@ -2,18 +2,22 @@
   "name": "personal-intelligence-hub",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@9.15.9",
   "engines": {
     "node": ">=22 <23"
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "typecheck": "pnpm -r --if-present typecheck",
+    "typecheck": "tsc -p tsconfig.scripts.json --noEmit && pnpm -r --if-present typecheck",
     "lint": "pnpm -r --if-present lint",
     "test": "pnpm -r --if-present test",
     "test:integration": "pnpm -r --if-present test:integration",
     "test:compose": "vitest run infrastructure/docker/compose.test.ts",
+    "test:public": "vitest run scripts/openapi.test.ts",
     "verify:secrets": "sh scripts/verify-no-secrets.sh",
+    "openapi:generate": "node --conditions=development --import tsx scripts/generate-openapi.ts",
+    "openapi:check": "node --conditions=development --import tsx scripts/generate-openapi.ts --check",
     "verify": "pnpm lint && pnpm typecheck && pnpm test",
     "db:generate": "pnpm --filter @personal-intelligence-hub/database db:generate",
     "db:migrate": "pnpm --filter @personal-intelligence-hub/database db:migrate"
@@ -21,7 +25,9 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "eslint": "10.10.0",
+    "tsx": "4.23.13",
     "typescript": "5.9.3",
-    "vitest": "5.0.1"
+    "vitest": "5.0.1",
+    "yaml": "2.9.1"
   }
 }
