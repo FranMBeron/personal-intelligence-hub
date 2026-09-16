@@ -12,6 +12,8 @@
     "lint": "pnpm -r --if-present lint",
     "test": "pnpm -r --if-present test",
     "test:integration": "pnpm -r --if-present test:integration",
+    "test:compose": "vitest run infrastructure/docker/compose.test.ts",
+    "verify:secrets": "sh scripts/verify-no-secrets.sh",
     "verify": "pnpm lint && pnpm typecheck && pnpm test",
     "db:generate": "pnpm --filter @personal-intelligence-hub/database db:generate",
     "db:migrate": "pnpm --filter @personal-intelligence-hub/database db:migrate"

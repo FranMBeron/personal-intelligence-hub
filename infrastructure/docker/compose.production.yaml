@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER outside Git}
+    secrets:
+      - postgres_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username $${POSTGRES_USER} --dbname $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    volumes:
+      - pih-postgres-data:/var/lib/postgresql/data
+    networks:
+      - data
+
+  api:
+    image: ${PIH_API_IMAGE:?set PIH_API_IMAGE to an immutable image reference}
+    env_file:
+      - ${PIH_API_ENV_FILE:?set PIH_API_ENV_FILE outside Git}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - 127.0.0.1:${PIH_API_PORT:-3001}:3001
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    restart: unless-stopped
+    networks:
+      - data
+      - edge
+
+  web:
+    image: ${PIH_WEB_IMAGE:?set PIH_WEB_IMAGE to an immutable image reference}
+    env_file:
+      - ${PIH_WEB_ENV_FILE:?set PIH_WEB_ENV_FILE outside Git}
+    depends_on:
+      - api
+    ports:
+      - 127.0.0.1:${PIH_WEB_PORT:-3000}:3000
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    restart: unless-stopped
+    networks:
+      - edge
+
+secrets:
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE:?set POSTGRES_PASSWORD_FILE outside Git}
+
+volumes:
+  pih-postgres-data:
+
+networks:
+  data:
+    internal: true
+  edge:

@@ -1,0 +1,13 @@
+.git
+.worktrees
+**/node_modules
+**/dist
+**/.next
+coverage
+.env
+.env.*
+!.env.example
+credentials
+secrets
+vaults
+backups

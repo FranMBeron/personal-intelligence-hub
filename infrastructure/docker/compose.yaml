@@ -1,0 +1,98 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pih_local
+      POSTGRES_PASSWORD: fictional-local-password
+      POSTGRES_USER: pih_local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username pih_local --dbname pih_local"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
+    restart: unless-stopped
+    volumes:
+      - pih-postgres-data:/var/lib/postgresql/data
+      - ../../packages/database/migrations/0000_initial.sql:/docker-entrypoint-initdb.d/001-initial.sql:ro
+    networks:
+      - data
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/api.Dockerfile
+    environment:
+      ALLOWED_ORIGINS: http://127.0.0.1:${PIH_WEB_PORT:-3000}
+      CURSOR_SIGNING_KEY: fictional-local-cursor-key-with-at-least-32-bytes
+      DATABASE_URL: postgresql://pih_local:fictional-local-password@postgres:5432/pih_local
+      HOST: 0.0.0.0
+      IDEMPOTENCY_RETENTION_HOURS: "24"
+      LOG_LEVEL: info
+      NODE_ENV: production
+      OIDC_ALLOWED_ALGORITHMS: RS256
+      OIDC_AUDIENCE: personal-intelligence-hub-local
+      OIDC_ISSUER: https://identity.example.test
+      OIDC_JWKS_URI: https://identity.example.test/.well-known/jwks.json
+      OUTBOX_RETENTION_DAYS: "7"
+      PORT: "3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3001/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
+    ports:
+      - 127.0.0.1:${PIH_API_PORT:-3001}:3001
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    restart: unless-stopped
+    networks:
+      - data
+      - edge
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/web.Dockerfile
+    environment:
+      HOSTNAME: 0.0.0.0
+      PIH_API_INTERNAL_URL: http://api:3001
+      PORT: "3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    ports:
+      - 127.0.0.1:${PIH_WEB_PORT:-3000}:3000
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    restart: unless-stopped
+    networks:
+      - edge
+
+volumes:
+  pih-postgres-data:
+
+networks:
+  data:
+    internal: true
+  edge:
