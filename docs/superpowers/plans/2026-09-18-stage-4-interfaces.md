@@ -111,7 +111,7 @@
 - Produces: `listRelations(client: PoolClient): Promise<readonly Relation[]>`
 - Preserves: `GET /v1/snapshot` as the only full read projection used by the web.
 
-- [ ] **Step 1: Write the failing contract test**
+- [x] **Step 1: Write the failing contract test**
 
 Add a relation to the snapshot fixture and require strict rejection when the
 property is absent:
@@ -138,13 +138,13 @@ expect(SnapshotSchema.parse(snapshot)).toEqual(snapshot);
 expect(() => SnapshotSchema.parse({ ...snapshot, relations: undefined })).toThrow();
 ```
 
-- [ ] **Step 2: Run the focused contract test and observe RED**
+- [x] **Step 2: Run the focused contract test and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/contracts test -- resources.test.ts`
 
 Expected: FAIL because `SnapshotSchema` rejects the new `relations` property.
 
-- [ ] **Step 3: Extend the schema minimally**
+- [x] **Step 3: Extend the schema minimally**
 
 Import `RelationSchema` and add the required property:
 
@@ -159,7 +159,7 @@ export const SnapshotSchema = z.object({
 }).strict();
 ```
 
-- [ ] **Step 4: Write the failing repository integration assertion**
+- [x] **Step 4: Write the failing repository integration assertion**
 
 After creating two cards and a relation, request `queries.snapshot.get()` and
 assert:
@@ -175,13 +175,13 @@ expect(snapshot.relations).toEqual([
 ]);
 ```
 
-- [ ] **Step 5: Run the repository test and observe RED**
+- [x] **Step 5: Run the repository test and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/database test:integration -- repositories.integration.test.ts`
 
 Expected: FAIL because snapshot reconstruction omits relations.
 
-- [ ] **Step 6: Add the read query and snapshot mapping**
+- [x] **Step 6: Add the read query and snapshot mapping**
 
 Implement an ordered, active-only query:
 
@@ -200,7 +200,7 @@ export const listRelations = async (client: PoolClient): Promise<readonly Relati
 
 Call it from `getSnapshot` and return `relations` beside cards and tasks.
 
-- [ ] **Step 7: Document the contract extension and regenerate OpenAPI**
+- [x] **Step 7: Document the contract extension and regenerate OpenAPI**
 
 Record that Stage 4 revealed the missing relation read path and that adding
 `relations` to the pre-release snapshot is the coordinated resolution. Run:
@@ -213,7 +213,7 @@ pnpm openapi:check
 
 Expected: all commands exit 0 and generated `Snapshot` requires `relations`.
 
-- [ ] **Step 8: Run affected verification and commit**
+- [x] **Step 8: Run affected verification and commit**
 
 Run:
 
@@ -237,7 +237,7 @@ Commit: `feat(contracts): expose snapshot relations`
 - Produces: `HermesCapabilitiesSchema`, `AgentSummarySchema`, `UploadedMediaSchema`, `ConversationSchema`, `MessageSchema`, `CreateConversationBodySchema`, `SendMessageBodySchema`, `HermesEventSchema`.
 - Produces: `HermesCapabilities`, `AgentSummary`, `UploadedMedia`, `Conversation`, `Message`, `CreateConversationBody`, `SendMessageBody`, `HermesEvent`.
 
-- [ ] **Step 1: Write failing schema tests**
+- [x] **Step 1: Write failing schema tests**
 
 Cover a text-only capability response, a complete agent, conversation creation,
 message delivery states, every event discriminator, inconsistent disabled
@@ -255,13 +255,13 @@ it.each(["actorId", "requestId", "idempotencyKey", "version"])(
 );
 ```
 
-- [ ] **Step 2: Run the focused test and observe RED**
+- [x] **Step 2: Run the focused test and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/contracts test -- hermes.test.ts`
 
 Expected: FAIL because `./hermes.js` does not exist.
 
-- [ ] **Step 3: Implement strict Zod schemas**
+- [x] **Step 3: Implement strict Zod schemas**
 
 Use these discriminators and limits:
 
@@ -282,7 +282,7 @@ export const MessagePartSchema = z.discriminatedUnion("kind", [
 Define `HermesEventSchema` as a discriminated union for the seven event names
 in the spec. Make all external body objects `.strict()`.
 
-- [ ] **Step 4: Export and verify**
+- [x] **Step 4: Export and verify**
 
 Export `./hermes.js` from `index.ts`. Run:
 
@@ -294,7 +294,7 @@ pnpm --filter @personal-intelligence-hub/contracts build
 
 Expected: all commands exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit: `feat(contracts): define Hermes interface`
 
@@ -322,7 +322,7 @@ Commit: `feat(contracts): define Hermes interface`
 - Produces: `PersonalDataGateway.health(context)` and `.snapshot(context)`.
 - Produces: `HermesGateway.capabilities`, `.agents`, `.createConversation`, `.sendMessage`, and `.events`.
 
-- [ ] **Step 1: Write failing configuration and context tests**
+- [x] **Step 1: Write failing configuration and context tests**
 
 Require uncredentialed HTTP(S) base URLs, optional Hermes configuration as one
 complete group, and delegated bearer authorization:
@@ -337,13 +337,13 @@ expect(deriveRequestContext(new Headers())).toEqual({
 });
 ```
 
-- [ ] **Step 2: Run focused tests and observe RED**
+- [x] **Step 2: Run focused tests and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/web test -- src/config/server.test.ts src/server/context.test.ts`
 
 Expected: FAIL because the loaders and context functions do not exist.
 
-- [ ] **Step 3: Implement validated server configuration**
+- [x] **Step 3: Implement validated server configuration**
 
 Export `loadServerConfig(environment = process.env)` with:
 
@@ -364,18 +364,18 @@ Read `PIH_API_INTERNAL_URL`, `HERMES_INTERNAL_URL`,
 `HERMES_SERVICE_TOKEN`, and `HERMES_DASHBOARD_URL`. Do not export their values
 from any client module.
 
-- [ ] **Step 4: Write failing adapter tests**
+- [x] **Step 4: Write failing adapter tests**
 
 Use stubbed `fetch` to assert authorization/request IDs, 2-second timeouts,
 schema validation, safe `ApiProblem` mapping, and no credential leakage.
 
-- [ ] **Step 5: Run adapter tests and observe RED**
+- [x] **Step 5: Run adapter tests and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/web test -- src/server/adapters`
 
 Expected: FAIL because the adapters do not exist.
 
-- [ ] **Step 6: Implement ports and adapters**
+- [x] **Step 6: Implement ports and adapters**
 
 Use exact method shapes:
 
@@ -403,7 +403,7 @@ Concrete adapters build `Request` objects, use `cache: "no-store"`, validate
 JSON with shared schemas, and map unreadable/non-problem failures to a safe
 `dependency_unavailable` problem.
 
-- [ ] **Step 7: Verify and commit**
+- [x] **Step 7: Verify and commit**
 
 Run:
 
@@ -431,7 +431,7 @@ Commit: `feat(web): add typed server gateways`
 - Consumes: Task 3 runtime and gateway ports.
 - Produces: the six `/api/ui/v1` resources defined by the spec.
 
-- [ ] **Step 1: Write failing handler tests**
+- [x] **Step 1: Write failing handler tests**
 
 Build handler factories around an in-memory `HermesGateway`. Test 401 without
 authorization, 422 for invalid strict bodies, 413 for oversized uploads, 415
@@ -452,13 +452,13 @@ expect(response.status).toBe(200);
 expect(gateway.sent[0]?.idempotencyKey).toBe("message-0001");
 ```
 
-- [ ] **Step 2: Run BFF tests and observe RED**
+- [x] **Step 2: Run BFF tests and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/web test -- src/app/api/ui/v1/routes.test.ts`
 
 Expected: FAIL because handler factories are absent.
 
-- [ ] **Step 3: Implement handlers and thin route files**
+- [x] **Step 3: Implement handlers and thin route files**
 
 Handlers derive context, parse shared schemas, call the gateway once, and
 serialize a problem with `application/problem+json` on failure. The upload
@@ -475,7 +475,7 @@ The events handler returns the upstream stream with only these public headers:
 }
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
@@ -504,25 +504,25 @@ Commit: `feat(web): expose Hermes BFF`
 **Interfaces:**
 - Produces: `AppShell`, `Icon`, `SourceState`, `StatusBadge`, `PageHeader`, and shared CSS tokens.
 
-- [ ] **Step 1: Write failing shell tests**
+- [x] **Step 1: Write failing shell tests**
 
 Assert one navigation landmark, four accessible links, Spanish labels, current
 route indication, a skip link, and status text that does not rely on color.
 
-- [ ] **Step 2: Run shell tests and observe RED**
+- [x] **Step 2: Run shell tests and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/web test -- src/app/_components`
 
 Expected: FAIL because the components do not exist.
 
-- [ ] **Step 3: Implement semantic shell and icons**
+- [x] **Step 3: Implement semantic shell and icons**
 
 Use a server `AppShell` with direct `next/link` imports and a tiny client
 navigation child only where `usePathname()` is required. SVGs use
 `currentColor`, `aria-hidden="true"`, and consistent stroke width. Set
 `<html lang="es">` and include the skip target around page content.
 
-- [ ] **Step 4: Implement visual tokens and responsive layout**
+- [x] **Step 4: Implement visual tokens and responsive layout**
 
 Define CSS custom properties for canvas, raised surfaces, text, muted text,
 accent, positive, warning, and danger states. Use concentric radii, explicit
@@ -530,12 +530,12 @@ focus rings, desktop sidebar above 880px, bottom navigation below 880px,
 `min-height: 44px` interactive controls, and safe-area insets. Use only named
 transition properties; active controls use `scale(0.96)`.
 
-- [ ] **Step 5: Add loading and error boundaries**
+- [x] **Step 5: Add loading and error boundaries**
 
 `loading.tsx` uses layout-stable skeleton surfaces. `error.tsx` is a client
 component with a Spanish explanation and `reset()` button.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 
@@ -566,32 +566,32 @@ Commit: `feat(web): add responsive application shell`
 - Produces: reusable `Conversation` client island with optional `agentId`.
 - Produces: `buildHoyView(snapshot, now)` with deterministic priority ordering.
 
-- [ ] **Step 1: Write failing pure state and priority tests**
+- [x] **Step 1: Write failing pure state and priority tests**
 
 Assert incomplete tasks precede done/cancelled tasks, priority order is
 critical/high/normal/low, due dates break ties, IDs are the stable final tie,
 and message events move only through valid delivery states.
 
-- [ ] **Step 2: Run focused tests and observe RED**
+- [x] **Step 2: Run focused tests and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/web test -- src/app/_lib/hoy.test.ts src/app/_components/conversation/state.test.ts`
 
 Expected: FAIL because the pure functions do not exist.
 
-- [ ] **Step 3: Implement pure view and conversation reducers**
+- [x] **Step 3: Implement pure view and conversation reducers**
 
 Use a reducer that replaces assistant text on full messages and appends only
 `message.delta` text for the matching message ID. Duplicate event IDs are
 ignored. Failed messages retain their user-visible content and expose retry
 with the original idempotency key.
 
-- [ ] **Step 4: Write failing component/page tests**
+- [x] **Step 4: Write failing component/page tests**
 
 Test text submission, disabled voice/attachment explanations, `aria-live`
 stream updates, no private value serialization, real priorities, and the
 explicit “Calendario no configurado” agenda state.
 
-- [ ] **Step 5: Implement composer, transcript, and Hoy**
+- [x] **Step 5: Implement composer, transcript, and Hoy**
 
 Generate one `crypto.randomUUID()` idempotency key per user submission. Upload
 capability-approved files first, use only returned opaque references in the
@@ -600,7 +600,7 @@ with `Last-Event-ID` on reconnect. Do not store messages or media in local
 storage. Render server-fetched priorities and independent source states around
 the client conversation.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 
@@ -626,26 +626,26 @@ Commit: `feat(web): deliver Hoy conversation`
 - Consumes: `HermesGateway.capabilities`, `HermesGateway.agents`, and Task 6 `Conversation`.
 - Produces: a real roster and agent-scoped chat entry point.
 
-- [ ] **Step 1: Write failing page tests**
+- [x] **Step 1: Write failing page tests**
 
 Assert all normalized statuses, omission of absent optional values, separate
 administrative Dashboard link, contextual chat only when supported, and
 independent unavailable/empty states.
 
-- [ ] **Step 2: Run page tests and observe RED**
+- [x] **Step 2: Run page tests and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/web test -- src/app/agents/page.test.tsx`
 
 Expected: FAIL because the route and cards do not exist.
 
-- [ ] **Step 3: Implement roster and contextual chat**
+- [x] **Step 3: Implement roster and contextual chat**
 
 Fetch capabilities and agents in parallel. Render each optional field only
 when supplied. Opening chat passes only the public agent ID to the shared
 conversation component; the server-managed conversation creation body is
 `{ agentId }`.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
@@ -674,38 +674,38 @@ Commit: `feat(web): add agent workspace`
 - Produces: URL-addressable `q`, `board`, `tag`, `status`, and `cursor` filters.
 - Produces: safe Obsidian links only for explicitly validated `obsidian://` values found in source content.
 
-- [ ] **Step 1: Write failing pure projection tests**
+- [x] **Step 1: Write failing pure projection tests**
 
 Build a fictional snapshot and assert board/column/card placement, tag filter,
 task status filter, relation labels, case-insensitive search, deterministic
 ordering, page-size 24, and rejection of `javascript:` links.
 
-- [ ] **Step 2: Run projection tests and observe RED**
+- [x] **Step 2: Run projection tests and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/web test -- src/app/second-brain/_lib/view.test.ts`
 
 Expected: FAIL because the projection does not exist.
 
-- [ ] **Step 3: Implement pure projection and cursor**
+- [x] **Step 3: Implement pure projection and cursor**
 
 Use a URL-safe base64 JSON cursor containing only `{ offset: number }`, parse
 it strictly, and clamp invalid cursors to the first page. Search only title,
 summary, original content, tag names, and task titles. Return plain serializable
 view models.
 
-- [ ] **Step 4: Write failing page tests**
+- [x] **Step 4: Write failing page tests**
 
 Assert filters use GET/search params, every entity type is visible, no direct
 mutation controls exist, Obsidian links have safe protocols, and empty/stale/
 unavailable states are distinct.
 
-- [ ] **Step 5: Implement the server route and components**
+- [x] **Step 5: Implement the server route and components**
 
 Await `searchParams`, fetch the snapshot once, project on the server, and pass
 only the current page to presentation components. Filters submit by GET so the
 URL remains shareable and server-readable.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 
@@ -733,25 +733,25 @@ Commit: `feat(web): add Second Brain explorer`
 - Consumes: `PersonalDataGateway.health` and `HermesGateway.capabilities`.
 - Produces: verified source cards for PIH API, Hermes, and Calendar configuration.
 
-- [ ] **Step 1: Write failing Sistema tests**
+- [x] **Step 1: Write failing Sistema tests**
 
 Assert reachable/unreachable/not-configured states, visible freshness time,
 capability list, Calendar not configured, Stage 6 explanation, and absence of
 uptime, queue, token, cost, and log claims.
 
-- [ ] **Step 2: Run tests and observe RED**
+- [x] **Step 2: Run tests and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/web test -- src/app/system/page.test.tsx`
 
 Expected: FAIL because the route does not exist.
 
-- [ ] **Step 3: Implement Sistema and PWA metadata**
+- [x] **Step 3: Implement Sistema and PWA metadata**
 
 Fetch source checks independently with `Promise.allSettled`. Render the check
 time with a server-supplied ISO value and `<time dateTime={...}>`. Update the
 manifest to Spanish naming and the final product colors used by CSS tokens.
 
-- [ ] **Step 4: Document public runtime names**
+- [x] **Step 4: Document public runtime names**
 
 Add placeholders, never values, for:
 
@@ -764,7 +764,7 @@ HERMES_DASHBOARD_URL=<https-url>
 Document the identity-aware ingress/delegated authorization requirement and
 the disabled behavior when Hermes is unconfigured.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 
@@ -792,7 +792,7 @@ Commit: `feat(web): add system status surface`
 - Consumes: every previous task.
 - Produces: one verified Stage 4 implementation commit after any integration fixes.
 
-- [ ] **Step 1: Add pinned browser-test tooling**
+- [x] **Step 1: Add pinned browser-test tooling**
 
 Run:
 
@@ -806,7 +806,7 @@ uses a desktop Chromium project and a mobile Chromium project, starts the
 fixture server and `next dev` on localhost-only ports, and supplies a fictional
 `Authorization: Bearer e2e-fictional-delegated-token` header.
 
-- [ ] **Step 2: Write failing browser scenarios with a controlled adapter server**
+- [x] **Step 2: Write failing browser scenarios with a controlled adapter server**
 
 The fixture server exposes deterministic PIH health/snapshot and Hermes
 capabilities/agents/conversation/message/SSE responses containing fictional
@@ -824,19 +824,19 @@ test("streams a Hoy response without exposing private runtime values", async ({ 
 });
 ```
 
-- [ ] **Step 3: Run browser tests and observe RED**
+- [x] **Step 3: Run browser tests and observe RED**
 
 Run: `pnpm --filter @personal-intelligence-hub/web test:e2e`
 
 Expected: FAIL until the fixture wiring and any browser-only defects are fixed.
 
-- [ ] **Step 4: Complete fixture wiring and make browser tests GREEN**
+- [x] **Step 4: Complete fixture wiring and make browser tests GREEN**
 
 Keep fixture behavior inside `apps/web/e2e`; production runtime code must not
 contain a fixture flag or sample response. Re-run the E2E command until both
 desktop and mobile projects pass.
 
-- [ ] **Step 5: Run the complete automated suite**
+- [x] **Step 5: Run the complete automated suite**
 
 Run:
 
@@ -853,44 +853,44 @@ git diff --check
 
 Expected: every command exits 0.
 
-- [ ] **Step 6: Run database integration coverage**
+- [x] **Step 6: Run database integration coverage**
 
 Run: `pnpm --filter @personal-intelligence-hub/database test:integration`
 
 Expected: snapshot relation coverage and the existing repository suite pass.
 
-- [ ] **Step 7: Start the verified local web surface**
+- [x] **Step 7: Start the verified local web surface**
 
 Use fictional environment values only. Start the web server with the existing
 workspace command on a localhost port, then use browser automation to inspect
 all four routes at desktop and mobile viewport sizes.
 
-- [ ] **Step 8: Verify browser behavior**
+- [x] **Step 8: Verify browser behavior**
 
 Check navigation, focus order, skip link, keyboard-only use, source-down
 states, text composer states, capability-disabled controls, no horizontal
 overflow, no hydration errors, reduced motion, and visible loading/error
 semantics. Capture screenshots for review outside Git; do not commit them.
 
-- [ ] **Step 9: Review privacy and bundle boundaries**
+- [x] **Step 9: Review privacy and bundle boundaries**
 
 Search `.next` and rendered HTML for fictional private sentinels used by tests.
 Confirm server configuration modules are absent from client chunks and no
 message body, cookie, authorization header, or credential is logged.
 
-- [ ] **Step 10: Review the complete diff**
+- [x] **Step 10: Review the complete diff**
 
 Compare every changed file to the design spec, confirm `remote-station` and
 private infrastructure are untouched, and verify no direct Second Brain
 mutation controls were introduced.
 
-- [ ] **Step 11: Commit browser coverage and integration fixes**
+- [x] **Step 11: Commit browser coverage and integration fixes**
 
 Commit browser coverage and any verified integration fixes as:
 
 `test(web): verify Stage 4 interfaces`
 
-- [ ] **Step 12: Record the outcome**
+- [x] **Step 12: Record the outcome**
 
 Store the final commit IDs, verification commands, known runtime requirements,
 and absence of push in Engram without secrets.
