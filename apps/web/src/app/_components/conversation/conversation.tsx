@@ -7,7 +7,7 @@ import {
   type HermesCapabilities,
   type MessagePart,
 } from "@personal-intelligence-hub/contracts";
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useId, useReducer, useState } from "react";
 
 import { SourceState } from "../source-state";
 import { Composer } from "./composer";
@@ -54,6 +54,7 @@ export function Conversation({
   unavailableState?: "not_configured" | "unavailable";
 }>) {
   const [state, dispatch] = useReducer(conversationReducer, initialConversationState);
+  const titleId = useId();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<readonly File[]>([]);
   const [voice, setVoice] = useState<File | null>(null);
@@ -200,9 +201,9 @@ export function Conversation({
   };
 
   return (
-    <section className="conversation surface" aria-labelledby="conversation-title">
+    <section className="conversation surface" aria-labelledby={titleId}>
       <header className="conversation__header">
-        <div><p className="eyebrow">Hermes</p><h2 id="conversation-title">Conversa con tu sistema</h2></div>
+        <div><p className="eyebrow">Hermes</p><h2 id={titleId}>Conversa con tu sistema</h2></div>
         <span className="conversation__privacy">No se guarda en el navegador</span>
       </header>
       <div className="conversation__log" role="log" aria-live="polite" aria-relevant="additions text">

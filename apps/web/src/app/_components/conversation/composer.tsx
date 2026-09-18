@@ -1,5 +1,5 @@
 import type { HermesCapabilities } from "@personal-intelligence-hub/contracts";
-import { useRef } from "react";
+import { useId, useRef } from "react";
 
 import { Icon } from "../icon";
 
@@ -16,6 +16,7 @@ export function Composer({ capabilities, text, submitting, attachments, voice, o
 }>) {
   const attachmentInput = useRef<HTMLInputElement>(null);
   const voiceInput = useRef<HTMLInputElement>(null);
+  const messageId = useId();
   const canSubmit = text.trim() !== "" || attachments.length > 0 || voice !== null;
 
   return (
@@ -23,8 +24,8 @@ export function Composer({ capabilities, text, submitting, attachments, voice, o
       event.preventDefault();
       if (canSubmit && !submitting) onSubmit();
     }}>
-      <label className="sr-only" htmlFor="hermes-message">Mensaje para Hermes</label>
-      <textarea id="hermes-message" name="message" placeholder="Pide un resumen, captura una idea o solicita un cambio…" rows={3} value={text} onChange={(event) => onTextChange(event.target.value)} />
+      <label className="sr-only" htmlFor={messageId}>Mensaje para Hermes</label>
+      <textarea id={messageId} name="message" placeholder="Pide un resumen, captura una idea o solicita un cambio…" rows={3} value={text} onChange={(event) => onTextChange(event.target.value)} />
       {attachments.length === 0 && voice === null ? null : (
         <div className="composer__selection" aria-live="polite">
           {attachments.map((file) => <span key={`${file.name}-${file.size}`}>{file.name}</span>)}

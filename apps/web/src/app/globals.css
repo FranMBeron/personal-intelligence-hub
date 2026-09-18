@@ -188,6 +188,22 @@ a { color: inherit; }
 .composer__selection span { padding: 0.3rem 0.55rem; border-radius: 999px; background: var(--surface-quiet); font-size: 0.72rem; }
 .capability-note { margin: 0.55rem 0 0; color: var(--muted); font-size: 0.7rem; }
 
+.agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; align-items: start; }
+.agent-card { padding: 1.25rem; }
+.agent-card__header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.8rem; }
+.agent-card__avatar { display: grid; width: 3rem; height: 3rem; place-items: center; border-radius: 16px; background: var(--accent-soft); color: var(--accent); font-size: 0.82rem; font-weight: 800; }
+.agent-card h2 { margin: 0; font-size: 1rem; text-transform: capitalize; }
+.agent-card__id { margin: 0.25rem 0 0; overflow: hidden; color: var(--muted); font-size: 0.7rem; text-overflow: ellipsis; white-space: nowrap; }
+.agent-card__details { display: grid; gap: 0.65rem; margin: 1rem 0; }
+.agent-card__details:empty { display: none; }
+.agent-card__details div { padding: 0.75rem; border-radius: 14px; background: var(--surface-quiet); }
+.agent-card__details dt { color: var(--muted); font-size: 0.68rem; font-weight: 760; letter-spacing: 0.05em; text-transform: uppercase; }
+.agent-card__details dd { margin: 0.35rem 0 0; line-height: 1.45; }
+.agent-card__conversation-note { margin: 1rem 0 0; color: var(--muted); font-size: 0.78rem; }
+.agent-conversation { margin-top: 1rem; }
+.agent-conversation__panel { margin-top: 1rem; }
+.agent-conversation__panel .conversation { box-shadow: none; }
+
 .skeleton-grid { display: grid; gap: 1rem; grid-template-columns: repeat(12, 1fr); }
 .skeleton { min-height: 11rem; grid-column: span 12; border-radius: var(--radius-outer); background: linear-gradient(100deg, var(--surface-quiet) 30%, var(--surface) 50%, var(--surface-quiet) 70%); background-size: 240% 100%; animation: skeleton-shift 1.4s linear infinite; }
 .skeleton:first-child { min-height: 6rem; }
