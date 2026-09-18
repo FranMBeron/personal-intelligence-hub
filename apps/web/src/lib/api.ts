@@ -7,7 +7,7 @@ export type ApiHealth = "available" | "unavailable";
 export async function getApiHealth(): Promise<ApiHealth> {
   try {
     const response = await fetch(
-      new URL("/health/live", serverConfig.apiInternalUrl),
+      new URL("/health/live", serverConfig.pihApiInternalUrl),
       {
         cache: "no-store",
         signal: AbortSignal.timeout(2_000),
