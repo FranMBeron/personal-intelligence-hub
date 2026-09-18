@@ -7,11 +7,11 @@ export default async function HomePage() {
   const apiHealth = await getApiHealth();
 
   return (
-    <main>
-      <h1>{publicConfig.productName}</h1>
+    <section aria-labelledby="home-title">
+      <h1 id="home-title">{publicConfig.productName}</h1>
       <p role="status" aria-live="polite">
         API status: {apiHealth}
       </p>
-    </main>
+    </section>
   );
 }
