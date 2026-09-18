@@ -11,6 +11,7 @@ export const metadata: Metadata = {
     template: "%s · Personal Intelligence Hub",
   },
   description: "Espacio privado para prioridades, agentes y conocimiento personal.",
+  icons: { icon: "/favicon.svg" },
   manifest: "/manifest.webmanifest",
 };
 
@@ -22,7 +23,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="es">
+    <html lang="es" data-scroll-behavior="smooth">
       <body><AppShell>{children}</AppShell></body>
     </html>
   );

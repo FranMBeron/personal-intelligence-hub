@@ -154,6 +154,21 @@ describe("Hermes BFF handlers", () => {
     await expect(response.json()).resolves.toMatchObject({ code: "forbidden" });
   });
 
+  it("accepts the application origin reconstructed by a trusted ingress", async () => {
+    const response = await createConversationHandler(new FakeHermesGateway())(
+      new Request("http://internal-web:3000/api/ui/v1/conversations", {
+        method: "POST",
+        headers: authenticatedHeaders({
+          "x-forwarded-host": "pih.example",
+          "x-forwarded-proto": "https",
+        }),
+        body: "{}",
+      }),
+    );
+
+    expect(response.status).toBe(201);
+  });
+
   it("returns normalized capabilities and agents", async () => {
     const gateway = new FakeHermesGateway();
     const capabilityResponse = await createCapabilitiesHandler(gateway)(

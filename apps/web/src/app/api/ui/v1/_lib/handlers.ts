@@ -90,7 +90,20 @@ const requireSameOrigin = (
   context: RequestContext,
 ): Response | null => {
   const origin = request.headers.get("origin");
-  if (origin === new URL(request.url).origin) return null;
+  const requestUrl = new URL(request.url);
+  const firstForwardedValue = (name: string): string | null =>
+    request.headers.get(name)?.split(",", 1)[0]?.trim() || null;
+  const host = firstForwardedValue("x-forwarded-host") ?? request.headers.get("host");
+  const protocol = firstForwardedValue("x-forwarded-proto") ?? requestUrl.protocol.slice(0, -1);
+  const acceptedOrigins = new Set([requestUrl.origin]);
+  if (host !== null && (protocol === "http" || protocol === "https")) {
+    try {
+      acceptedOrigins.add(new URL(`${protocol}://${host}`).origin);
+    } catch {
+      // Invalid forwarding metadata cannot authorize a state change.
+    }
+  }
+  if (origin !== null && acceptedOrigins.has(origin)) return null;
   return problemResponse(
     problem(
       request,

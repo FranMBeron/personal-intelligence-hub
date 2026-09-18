@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude '**/*.integration.test.ts'",
     "test:integration": "vitest run src/routes/second-brain.integration.test.ts src/routes/events.integration.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

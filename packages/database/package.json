@@ -14,7 +14,7 @@
     "build": "tsc -p tsconfig.build.json",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --import tsx src/migrate.ts",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude '**/*.integration.test.ts'",
     "test:integration": "vitest run src/schema/schema.integration.test.ts src/repositories/repositories.integration.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

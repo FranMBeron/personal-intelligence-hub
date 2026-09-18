@@ -8,5 +8,13 @@
   "scope": "/",
   "display": "standalone",
   "background_color": "#f3f4ef",
-  "theme_color": "#15231e"
+  "theme_color": "#15231e",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
 }

@@ -74,7 +74,8 @@ describe("SystemPage", () => {
     expect(screen.getByText("Streaming")).toBeTruthy();
     expect(screen.getByText("Adjuntos")).toBeTruthy();
     expect(screen.getByText("Voz no disponible")).toBeTruthy();
-    expect(screen.getByText(/Etapa 6/u)).toBeTruthy();
+    expect(screen.getByText(/calendario está prevista para la Etapa 5/u)).toBeTruthy();
+    expect(screen.getByText(/observabilidad operativa detallada.*Etapa 6/u)).toBeTruthy();
     const checkedAt = screen.getByText("Última comprobación").parentElement?.querySelector("time");
     expect(checkedAt?.getAttribute("datetime")).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
     expect(document.body.textContent).not.toMatch(/Uptime|Cola|Tokens|Coste|Logs|fictional-service-token/u);

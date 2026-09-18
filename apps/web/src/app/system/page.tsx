@@ -123,10 +123,13 @@ export default async function SystemPage() {
         </SourceCard>
         <SourceCard
           title="Calendar"
-          description="La integración de calendario está prevista para la Etapa 6 y aún no forma parte del runtime."
+          description="La integración de calendario está prevista para la Etapa 5 y aún no forma parte del runtime."
           status="not_configured"
         />
       </div>
+      <p className="system-roadmap">
+        La observabilidad operativa detallada se incorporará en la Etapa 6; hasta entonces esta vista muestra únicamente estados que cada fuente puede verificar.
+      </p>
     </div>
   );
 }
