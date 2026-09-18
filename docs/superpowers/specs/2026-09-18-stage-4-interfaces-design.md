@@ -150,6 +150,8 @@ The shared model defines:
 
 - A conversation identifier and optional target agent identifier.
 - Message identifiers, roles, timestamps, content parts, and delivery state.
+- An uploaded-media receipt containing an opaque reference, media kind,
+  display name, MIME type, and byte size.
 - Content parts for text, attachment references, and voice references.
 - Delivery states `sending`, `accepted`, `streaming`, `completed`, and
   `failed`.
@@ -193,14 +195,19 @@ Initial resources are:
 
 - `GET /api/ui/v1/hermes/capabilities`
 - `GET /api/ui/v1/agents`
+- `POST /api/ui/v1/hermes/uploads`
 - `POST /api/ui/v1/conversations`
 - `POST /api/ui/v1/conversations/{conversationId}/messages`
 - `GET /api/ui/v1/conversations/{conversationId}/events`
 
-The message endpoint requires `Idempotency-Key`. The event endpoint uses SSE
-and accepts `Last-Event-ID` for resumption. Route Handlers validate request
-and response schemas, authenticate the request, enforce authorization, attach
-request identifiers, and delegate without embedding business decisions.
+The upload endpoint accepts one capability-approved voice or attachment file,
+enforces its advertised MIME and byte limits before forwarding, and returns an
+opaque media reference. It does not persist file content in PIH. The message
+endpoint requires `Idempotency-Key` and accepts only those opaque references.
+The event endpoint uses SSE and accepts `Last-Event-ID` for resumption. Route
+Handlers validate request and response schemas, authenticate the request,
+enforce authorization, attach request identifiers, and delegate without
+embedding business decisions.
 
 Server Components call server-only gateways directly for initial reads rather
 than making an unnecessary HTTP request back into the same Next.js process.
@@ -299,14 +306,16 @@ successful sections from rendering.
 Message submission follows this sequence:
 
 1. The client obtains the current capabilities.
-2. The client generates an idempotency key and sends the validated message to
-   the BFF.
-3. The BFF derives identity and tracing context and invokes `HermesGateway`.
-4. The UI renders the local message as `sending`, then `accepted` after the
+2. When media is present, the client uploads each approved file to the BFF and
+   receives an opaque, short-lived reference.
+3. The client generates an idempotency key and sends the validated message and
+   any media references to the BFF.
+4. The BFF derives identity and tracing context and invokes `HermesGateway`.
+5. The UI renders the local message as `sending`, then `accepted` after the
    server acknowledges it.
-5. The client consumes normalized SSE events and moves the message through
+6. The client consumes normalized SSE events and moves the message through
    `streaming` to `completed`, or to `failed`.
-6. `agent.changed` and `second-brain.changed` events trigger refetch or route
+7. `agent.changed` and `second-brain.changed` events trigger refetch or route
    refresh of the authoritative data.
 
 SSE reconnects with `Last-Event-ID`. If an upstream Hermes transport lacks
@@ -424,6 +433,7 @@ Implementation follows RED-GREEN-REFACTOR at each boundary.
 - Message submission requires and preserves `Idempotency-Key`.
 - Forbidden identity and transport fields in bodies are rejected.
 - Attachment limits and MIME validation run before upstream calls.
+- Upload receipts are opaque, schema-valid, and never expose storage paths.
 - SSE sends stable IDs, heartbeats, completion, failure, and resumption.
 - Private runtime values never appear in responses.
 
