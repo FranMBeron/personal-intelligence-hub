@@ -10,10 +10,10 @@ production configuration belong outside Git.
 
 ## Status
 
-The Second Brain core is implemented: shared contracts, the auditable and
-idempotent Fastify/PostgreSQL API, outbox-backed SSE and snapshot recovery, a
-restricted Hermes adapter, a minimal Next.js/PWA shell, and reproducible local
-containers. The four full product interfaces remain the next product stage.
+The Second Brain core and its four product interfaces are implemented: shared
+contracts, the auditable and idempotent Fastify/PostgreSQL API, outbox-backed
+SSE and snapshot recovery, a restricted Hermes adapter, responsive Hoy,
+Agentes, Second Brain and Sistema surfaces, and reproducible local containers.
 
 ## Development prerequisites
 
@@ -74,6 +74,15 @@ The software is designed to run behind a private network such as Tailscale.
 Cloning this public repository does not expose a deployment. Copy
 `.env.example` to an ignored local environment file and supply values through a
 secret manager or restrictive local file; never commit working credentials.
+
+The web application expects an identity-aware ingress to validate the user and
+forward a delegated `Authorization: Bearer ...` header. `PIH_API_INTERNAL_URL`
+selects the private personal-data API. Hermes is enabled only when both
+`HERMES_INTERNAL_URL` and `HERMES_SERVICE_TOKEN` are present; without that
+complete server-only pair, conversation and agent features remain visibly
+disabled. `HERMES_DASHBOARD_URL` is optional and only exposes an administrative
+link. These values must never use `NEXT_PUBLIC_` or be serialized to the
+browser.
 
 Architecture details live in
 [`docs/architecture/second-brain.md`](docs/architecture/second-brain.md), with

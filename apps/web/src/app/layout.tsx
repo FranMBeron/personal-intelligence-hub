@@ -5,8 +5,12 @@ import { AppShell } from "./_components/app-shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Personal Intelligence Hub",
-  description: "A private workspace for personal intelligence.",
+  applicationName: "Centro de Inteligencia Personal",
+  title: {
+    default: "Personal Intelligence Hub",
+    template: "%s · Personal Intelligence Hub",
+  },
+  description: "Espacio privado para prioridades, agentes y conocimiento personal.",
   manifest: "/manifest.webmanifest",
 };
 
