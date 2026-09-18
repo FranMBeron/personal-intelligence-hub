@@ -356,14 +356,34 @@ describe("audit, outbox and snapshot contracts", () => {
   });
 
   it("parses a recovery snapshot carrying the latest outbox sequence", () => {
+    const relation = {
+      id: ids.relation,
+      fromCardId: ids.card,
+      toCardId: "7516cb83-7e06-4b41-ab6e-00d293962dcc",
+      type: "supports",
+      version: 1,
+      archivedAt: null,
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
+    } as const;
     const snapshot = {
       generatedAt: occurredAt,
       lastSequence: "42",
       boards: [],
       cards: [],
+      relations: [relation],
       tasks: [],
     };
 
     expect(SnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect(() =>
+      SnapshotSchema.parse({
+        generatedAt: occurredAt,
+        lastSequence: "42",
+        boards: [],
+        cards: [],
+        tasks: [],
+      }),
+    ).toThrow();
   });
 });

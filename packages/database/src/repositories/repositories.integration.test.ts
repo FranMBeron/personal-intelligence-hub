@@ -212,6 +212,9 @@ describe("PostgreSQL repositories", () => {
         },
       ),
     );
+    const recoverySnapshot = await unitOfWork.execute(({ queries }) =>
+      queries.snapshot.get(),
+    );
     const archivedRelation = await unitOfWork.execute(({ mutations }) =>
       mutations.archiveRelation(
         context("DELETE", "/v1/relations/:relationId", "relation-del-01", 1),
@@ -235,6 +238,7 @@ describe("PostgreSQL repositories", () => {
     expect(moved.body).toMatchObject({ columnId: board.columns[1]!.id, position: 1, version: 2 });
     expect(tagged.body).toMatchObject({ cardVersion: 3, tagId });
     expect(untagged.body).toMatchObject({ cardVersion: 4, tagId, tags: [] });
+    expect(recoverySnapshot.relations).toEqual([relation.body]);
     expect(archivedRelation.body).toMatchObject({ version: 2 });
     expect(archivedRelation.body.archivedAt).not.toBeNull();
     expect(completedTask.body).toMatchObject({ status: "done", version: 2 });

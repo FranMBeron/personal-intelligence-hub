@@ -35,3 +35,14 @@ export const getRelation = async (
   );
   return result.rows[0] === undefined ? null : mapRelation(result.rows[0]);
 };
+
+export const listRelations = async (client: PoolClient): Promise<Relation[]> => {
+  const result = await client.query<RelationRow>(
+    `SELECT id, from_card_id, to_card_id, relation_type, version,
+            archived_at, created_at, updated_at
+     FROM relations
+     WHERE archived_at IS NULL
+     ORDER BY updated_at DESC, id DESC`,
+  );
+  return result.rows.map(mapRelation);
+};

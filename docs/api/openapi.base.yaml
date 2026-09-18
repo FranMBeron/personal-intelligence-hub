@@ -891,7 +891,7 @@ components:
     Snapshot:
       type: object
       additionalProperties: false
-      required: [generatedAt, lastSequence, boards, cards, tasks]
+      required: [generatedAt, lastSequence, boards, cards, relations, tasks]
       properties:
         generatedAt:
           $ref: '#/components/schemas/Timestamp'
@@ -905,6 +905,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Card'
+        relations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Relation'
         tasks:
           type: array
           items:

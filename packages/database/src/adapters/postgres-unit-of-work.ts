@@ -23,6 +23,7 @@ import {
   type MutationOutcome,
 } from "../repositories/mutations.js";
 import { insertOutboxEvent } from "../repositories/outbox.js";
+import { listRelations } from "../repositories/relations.js";
 import { getTask, listTasks } from "../repositories/tasks.js";
 import {
   RepositoryError,
@@ -409,6 +410,7 @@ const getSnapshot = async (
     `SELECT id FROM cards WHERE archived_at IS NULL ORDER BY updated_at DESC, id DESC`,
   );
   const cards = await Promise.all(cardIds.rows.map(async ({ id }) => getCard(client, id)));
+  const relations = await listRelations(client);
   const taskIds = await client.query<{ id: string }>(
     `SELECT id FROM tasks WHERE archived_at IS NULL ORDER BY updated_at DESC, id DESC`,
   );
@@ -418,6 +420,7 @@ const getSnapshot = async (
     lastSequence: sequence.rows[0]?.last_sequence ?? "0",
     boards: boards.filter((board): board is NonNullable<typeof board> => board !== null),
     cards: cards.filter((card): card is NonNullable<typeof card> => card !== null),
+    relations,
     tasks: tasks.filter((task): task is NonNullable<typeof task> => task !== null),
   };
 };

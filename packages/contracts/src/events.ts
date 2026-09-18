@@ -12,6 +12,7 @@ import {
   VersionSchema,
 } from "./common.js";
 import { MutationMethodSchema } from "./http.js";
+import { RelationSchema } from "./relations.js";
 import { TaskSchema } from "./tasks.js";
 
 export const AuditEventSchema = z
@@ -193,6 +194,7 @@ export const SnapshotSchema = z
     lastSequence: DecimalSequenceSchema,
     boards: z.array(BoardSnapshotSchema),
     cards: z.array(CardSchema),
+    relations: z.array(RelationSchema),
     tasks: z.array(TaskSchema),
   })
   .strict();

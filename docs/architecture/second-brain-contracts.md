@@ -279,8 +279,13 @@ for seven days. An ID older than retained history returns 409
 `cursor_expired` with a link to `/v1/snapshot`.
 
 A snapshot is strict and carries `generatedAt`, the transactionally observed
-decimal `lastSequence`, and current board snapshots, cards and tasks. Clients
-replace local state with it and reconnect after that sequence.
+decimal `lastSequence`, and current board snapshots, cards, relations and
+tasks. Clients replace local state with it and reconnect after that sequence.
+Stage 4 identified that the read-only Second Brain graph could not be rebuilt
+from the original snapshot because relations were omitted. Before a public
+release, the required `relations` collection was therefore added in one
+coordinated change to the shared schema, PostgreSQL query, documentation and
+OpenAPI contract; clients must not treat its absence as an empty collection.
 
 Example outbox event:
 
