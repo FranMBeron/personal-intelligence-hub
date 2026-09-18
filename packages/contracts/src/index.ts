@@ -5,6 +5,7 @@ export * from "./common.js";
 export * from "./errors.js";
 export * from "./events.js";
 export * from "./http.js";
+export * from "./hermes.js";
 export * from "./relations.js";
 export * from "./tags.js";
 export * from "./tasks.js";
