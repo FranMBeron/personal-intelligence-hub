@@ -70,7 +70,7 @@ describe("AgentsPage", () => {
       ]),
     );
     const { default: AgentsPage } = await import("./page");
-    render(await AgentsPage());
+    const { container } = render(await AgentsPage());
 
     for (const label of [
       "Disponible",
@@ -84,6 +84,16 @@ describe("AgentsPage", () => {
     expect(screen.getByText("Organizando el día")).toBeTruthy();
     expect(screen.getByText("Prioridades revisadas")).toBeTruthy();
     expect(screen.getByText("Luna")).toBeTruthy();
+    for (const label of [
+      "Disponibles",
+      "Trabajando ahora",
+      "Resultados listos",
+      "Requieren atención",
+    ]) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+    expect(container.querySelector(".agent-summary")).not.toBeNull();
+    expect(container.querySelector(".agent-activity")).not.toBeNull();
     expect(screen.queryByText("Sin actividad")).toBeNull();
     expect(screen.getByRole("link", { name: "Administrar en Hermes" }).getAttribute("href")).toBe(
       "https://dashboard.example.test/hermes",
@@ -105,6 +115,8 @@ describe("AgentsPage", () => {
     const { default: EmptyPage } = await import("./page");
     const empty = render(await EmptyPage());
     expect(screen.getByText("No hay agentes publicados")).toBeTruthy();
+    expect(empty.container.querySelector(".agent-summary")).not.toBeNull();
+    expect(empty.container.querySelector(".agent-roster")).not.toBeNull();
     empty.unmount();
 
     vi.resetModules();

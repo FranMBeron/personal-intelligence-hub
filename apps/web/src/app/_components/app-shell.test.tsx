@@ -11,12 +11,19 @@ afterEach(cleanup);
 
 describe("AppShell", () => {
   it("provides one stable, accessible navigation on every viewport", () => {
-    render(
+    const { container } = render(
       <AppShell>
         <h1>Agentes</h1>
       </AppShell>,
     );
 
+    expect(container.querySelector(".app-stage")).not.toBeNull();
+    expect(container.querySelector(".app-bar")).not.toBeNull();
+    expect(container.querySelector(".app-navigation")).not.toBeNull();
+    expect(container.querySelector(".app-navigation")?.parentElement?.className).toBe(
+      "app-shell",
+    );
+    expect(container.querySelector(".app-navigation--sidebar")).toBeNull();
     expect(screen.getAllByRole("navigation")).toHaveLength(1);
     const links = screen.getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual([

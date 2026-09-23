@@ -105,7 +105,9 @@ describe("SecondBrainPage", () => {
   it("renders every entity read-only with URL-addressable GET filters and safe links", async () => {
     configureSnapshot(Response.json(completeSnapshot));
     const { default: SecondBrainPage } = await import("./page");
-    render(await SecondBrainPage({ searchParams: Promise.resolve({ q: "source" }) }));
+    const { container } = render(
+      await SecondBrainPage({ searchParams: Promise.resolve({ q: "source" }) }),
+    );
 
     const form = screen.getByRole("search");
     expect(form.getAttribute("method")).toBe("get");
@@ -124,6 +126,9 @@ describe("SecondBrainPage", () => {
     expect(document.querySelector('a[href^="javascript:"]')).toBeNull();
     expect(screen.queryByRole("button", { name: /Crear|Editar|Eliminar|Mover/u })).toBeNull();
     expect(screen.getByText("Datos antiguos")).toBeTruthy();
+    expect(container.querySelector(".brain-capture")).not.toBeNull();
+    expect(container.querySelector(".brain-workspace")).not.toBeNull();
+    expect(container.querySelector(".brain-collections")).not.toBeNull();
   });
 
   it("distinguishes empty and unavailable results", async () => {
@@ -139,12 +144,16 @@ describe("SecondBrainPage", () => {
     const { default: EmptyPage } = await import("./page");
     const empty = render(await EmptyPage({ searchParams: Promise.resolve({}) }));
     expect(screen.getByText("No hay contenido que coincida")).toBeTruthy();
+    expect(empty.container.querySelector(".brain-workspace")).not.toBeNull();
     empty.unmount();
 
     vi.resetModules();
     configureSnapshot(new Response(null, { status: 503 }));
     const { default: UnavailablePage } = await import("./page");
-    render(await UnavailablePage({ searchParams: Promise.resolve({}) }));
+    const unavailable = render(
+      await UnavailablePage({ searchParams: Promise.resolve({}) }),
+    );
     expect(screen.getByText("Second Brain no disponible")).toBeTruthy();
+    expect(unavailable.container.querySelector(".brain-workspace")).not.toBeNull();
   });
 });

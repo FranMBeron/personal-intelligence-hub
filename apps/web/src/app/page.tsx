@@ -1,9 +1,7 @@
 import type { HermesCapabilities, Snapshot, Task } from "@personal-intelligence-hub/contracts";
 import { headers } from "next/headers";
 
-import { PageHeader } from "./_components/app-shell";
 import { Conversation } from "./_components/conversation/conversation";
-import { Icon } from "./_components/icon";
 import { SourceState } from "./_components/source-state";
 import { StatusBadge } from "./_components/status-badge";
 import { buildHoyView } from "./_lib/hoy";
@@ -48,34 +46,45 @@ export default async function HomePage() {
 
   return (
     <div className="hoy-page">
-      <PageHeader
-        eyebrow={view?.dateLabel ?? "Hoy"}
-        title={view?.greeting ?? "Tu día, en contexto"}
-        description="Prioridades reales, fuentes explícitas y una conversación para actuar sin perder el hilo."
-        aside={
-          <div className="freshness">
-            <StatusBadge tone={snapshotResult.ok ? "positive" : "warning"}>
-              {snapshotResult.ok ? "Datos actualizados" : "Datos no disponibles"}
-            </StatusBadge>
-            {view === null ? null : (
-              <time dateTime={view.generatedAt}>
-                Lectura de {new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit" }).format(new Date(view.generatedAt))}
-              </time>
-            )}
-          </div>
-        }
-      />
+      <section className="hoy-hero" aria-labelledby="hoy-title">
+        <div className="hoy-hero__copy">
+          <p className="eyebrow">{view?.dateLabel ?? "Hoy"}</p>
+          <h1 id="hoy-title">{view?.greeting ?? "Tu día, en contexto"}</h1>
+          <p>
+            {view === null
+              ? "Las fuentes de tu día no están disponibles en este momento."
+              : view.activePriorityCount === 0
+                ? "No tenés prioridades activas registradas para hoy."
+                : `Tenés ${view.activePriorityCount} ${view.activePriorityCount === 1 ? "prioridad activa" : "prioridades activas"} para hoy.`}
+          </p>
+        </div>
+        <div className="hoy-hero__next">
+          <p className="eyebrow">Próximo evento</p>
+          <strong>Agenda todavía sin conectar</strong>
+          <span>La agenda se conectará en la Etapa 5.</span>
+          <StatusBadge tone={snapshotResult.ok ? "positive" : "warning"}>
+            {snapshotResult.ok ? "Datos actualizados" : "Datos no disponibles"}
+          </StatusBadge>
+          {view === null ? null : (
+            <time dateTime={view.generatedAt}>
+              Lectura de {new Intl.DateTimeFormat("es-ES", { hour: "2-digit", minute: "2-digit" }).format(new Date(view.generatedAt))}
+            </time>
+          )}
+        </div>
+      </section>
 
-      <div className="hoy-grid">
-        <section className="priority-panel surface" aria-labelledby="priorities-title">
-          <header className="section-heading">
-            <div><p className="eyebrow">En foco</p><h2 id="priorities-title">Prioridades</h2></div>
-            <span className="section-count">{view?.activePriorityCount ?? 0}</span>
+      <div className="day-grid">
+        <section className="priority-panel panel" aria-labelledby="priorities-title">
+          <header className="panel-heading">
+            <h2 id="priorities-title">Prioridades de hoy</h2>
+            <span className="panel-count">
+              {view?.activePriorityCount ?? 0} {view?.activePriorityCount === 1 ? "activa" : "activas"}
+            </span>
           </header>
           {view === null ? (
-            <SourceState state="unavailable" title="Prioridades no disponibles" detail="La API de datos personales no respondió. No se muestran tareas inventadas." />
+            <SourceState compact state="unavailable" title="Prioridades no disponibles" detail="La API de datos personales no respondió. No se muestran tareas inventadas." />
           ) : view.priorities.length === 0 ? (
-            <SourceState state="empty" title="No hay prioridades registradas" />
+            <SourceState compact state="empty" title="No hay prioridades registradas" detail="Este espacio se completará cuando existan tareas reales." />
           ) : (
             <ol className="priority-list">
               {view.priorities.map((task) => (
@@ -84,33 +93,38 @@ export default async function HomePage() {
                   <div>
                     <h3>{task.title}</h3>
                     <p>
-                      {priorityLabel[task.priority]}
-                      {task.dueAt === null ? " · Sin fecha límite" : ` · ${new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(task.dueAt))}`}
+                      {task.dueAt === null ? "Sin fecha límite" : new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(task.dueAt))}
                     </p>
                   </div>
-                  <StatusBadge tone={task.status === "in_progress" ? "accent" : "neutral"}>
-                    {task.status === "in_progress" ? "En curso" : task.status === "todo" ? "Pendiente" : task.status === "done" ? "Hecha" : "Cancelada"}
-                  </StatusBadge>
+                  <span className={`priority priority--${task.priority}`}>
+                    {priorityLabel[task.priority]}
+                  </span>
                 </li>
               ))}
             </ol>
           )}
+          <p className="panel-hint">Pedile a Hermes que complete, mueva o reordene una prioridad.</p>
         </section>
 
-        <section className="agenda-panel surface" aria-labelledby="agenda-title">
-          <header className="section-heading">
-            <div><p className="eyebrow">Agenda</p><h2 id="agenda-title">Siguiente</h2></div>
-            <span className="agenda-panel__icon"><Icon name="calendar" /></span>
+        <section className="agenda-panel panel" aria-labelledby="agenda-title">
+          <header className="panel-heading">
+            <h2 id="agenda-title">Línea de tiempo</h2>
+            <span className="panel-count">Google Calendar</span>
           </header>
-          <SourceState state="not_configured" title="Calendario no configurado" detail="La agenda se activará en la Etapa 5. Hasta entonces no mostramos eventos de ejemplo." />
+          <div className="agenda-track" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <SourceState compact state="not_configured" title="Calendario no configurado" detail="La agenda se activará en la Etapa 5. Hasta entonces no mostramos eventos de ejemplo." />
         </section>
+      </div>
 
-        <div className="hoy-conversation">
-          <Conversation
-            capabilities={capabilitiesResult.ok ? capabilitiesResult.value : null}
-            unavailableState={serverRuntime.hermes === null ? "not_configured" : "unavailable"}
-          />
-        </div>
+      <div className="hoy-conversation">
+        <Conversation
+          capabilities={capabilitiesResult.ok ? capabilitiesResult.value : null}
+          unavailableState={serverRuntime.hermes === null ? "not_configured" : "unavailable"}
+        />
       </div>
     </div>
   );

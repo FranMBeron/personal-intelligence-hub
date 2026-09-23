@@ -17,13 +17,6 @@ export function AppNavigation() {
 
   return (
     <nav className="app-navigation" aria-label="Navegación principal">
-      <div className="app-navigation__brand" aria-hidden="true">
-        <span className="app-navigation__mark"><Icon name="spark" /></span>
-        <span className="app-navigation__identity">
-          <strong>Personal</strong>
-          <span>Intelligence Hub</span>
-        </span>
-      </div>
       <div className="app-navigation__links">
         {items.map((item) => {
           const current =
@@ -43,7 +36,6 @@ export function AppNavigation() {
           );
         })}
       </div>
-      <p className="app-navigation__privacy">Privado · fuentes verificadas</p>
     </nav>
   );
 }

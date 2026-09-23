@@ -77,8 +77,15 @@ describe("HomePage", () => {
       /Buenos días|Buenas tardes|Buenas noches/u,
     );
     expect(screen.getByText("Revisar el diseño de interfaces")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Prioridades de hoy" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Línea de tiempo" })).toBeTruthy();
     expect(screen.getByText("Calendario no configurado")).toBeTruthy();
     expect(screen.getByLabelText("Mensaje para Hermes")).toBeTruthy();
+    expect(container.querySelector(".hoy-hero")).not.toBeNull();
+    expect(container.querySelector(".day-grid")).not.toBeNull();
+    expect(
+      screen.getByText("Calendario no configurado").closest(".source-state--compact"),
+    ).not.toBeNull();
     expect(container.textContent).not.toContain(privateSentinel);
     expect(container.textContent).not.toContain(secretSentinel);
   });

@@ -24,4 +24,19 @@ describe("SourceState", () => {
     render(<StatusBadge tone="positive">Disponible</StatusBadge>);
     expect(screen.getByText("Disponible").textContent).toBe("Disponible");
   });
+
+  it("supports a compact state inside an existing panel", () => {
+    render(
+      <SourceState
+        compact
+        state="not_configured"
+        title="Calendario no configurado"
+        detail="La estructura de la agenda permanece visible."
+      />,
+    );
+
+    const state = screen.getByRole("status");
+    expect(state.classList.contains("source-state--compact")).toBe(true);
+    expect(state.textContent).toContain("Calendario no configurado");
+  });
 });

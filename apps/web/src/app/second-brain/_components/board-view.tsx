@@ -36,7 +36,9 @@ export function BoardView({
               <section className="brain-column" key={column.id} aria-labelledby={`column-${column.id}`}>
                 <header><h3 id={`column-${column.id}`}>{column.name}</h3><span>{column.cards.length}</span></header>
                 <div className="brain-column__cards">
-                  {column.cards.map((card) => (
+                  {column.cards.length === 0 ? (
+                    <p className="brain-column__empty">Sin tarjetas en esta etapa</p>
+                  ) : column.cards.map((card) => (
                     <article className="brain-card" key={card.id}>
                       <h4>{card.title}</h4>
                       {card.summary === null ? null : <p className="brain-card__summary">{card.summary}</p>}

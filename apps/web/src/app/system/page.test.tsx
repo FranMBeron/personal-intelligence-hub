@@ -62,7 +62,7 @@ describe("SystemPage", () => {
   it("reports independently verified sources and Hermes capabilities", async () => {
     configure();
     const { default: SystemPage } = await import("./page");
-    render(await SystemPage());
+    const { container } = render(await SystemPage());
 
     expect(screen.getByRole("heading", { name: "Sistema" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "PIH API" })).toBeTruthy();
@@ -79,6 +79,10 @@ describe("SystemPage", () => {
     const checkedAt = screen.getByText("Última comprobación").parentElement?.querySelector("time");
     expect(checkedAt?.getAttribute("datetime")).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
     expect(document.body.textContent).not.toMatch(/Uptime|Cola|Tokens|Coste|Logs|fictional-service-token/u);
+    expect(container.querySelector(".system-health")).not.toBeNull();
+    expect(container.querySelector(".system-metrics")).not.toBeNull();
+    expect(container.querySelector(".system-services")).not.toBeNull();
+    expect(container.querySelector(".system-observability")).not.toBeNull();
   });
 
   it("distinguishes unreachable and not-configured sources", async () => {
@@ -86,6 +90,8 @@ describe("SystemPage", () => {
     const { default: UnreachablePage } = await import("./page");
     const unreachable = render(await UnreachablePage());
     expect(screen.getAllByText("No disponible")).toHaveLength(2);
+    expect(unreachable.container.querySelectorAll('.service-list [data-state="unavailable"]')).toHaveLength(2);
+    expect(unreachable.container.querySelectorAll('.service-list [data-state="not_configured"]')).toHaveLength(1);
     unreachable.unmount();
 
     vi.resetModules();

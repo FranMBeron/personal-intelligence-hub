@@ -59,8 +59,33 @@ test("shows verified source-down states", async ({ page, request }) => {
   await page.goto("/");
   await expect(page.getByText("Prioridades no disponibles")).toBeVisible();
   await expect(page.getByText("Hermes no disponible")).toBeVisible();
+  await expect(page.locator(".hoy-hero")).toBeVisible();
+  await expect(page.locator(".day-grid")).toBeVisible();
   await page.goto("/system");
   await expect(page.getByText("No disponible", { exact: true })).toHaveCount(2);
+  await expect(page.locator(".system-health")).toBeVisible();
+  await expect(page.locator(".system-metrics")).toBeVisible();
+});
+
+test("renders the approved shell and page compositions", async ({ page }, testInfo) => {
+  const routes = [
+    { path: "/", name: "hoy", composition: ".hoy-hero" },
+    { path: "/agents", name: "agentes", composition: ".agent-summary" },
+    { path: "/second-brain", name: "second-brain", composition: ".brain-workspace" },
+    { path: "/system", name: "sistema", composition: ".system-health" },
+  ];
+
+  for (const route of routes) {
+    await page.goto(route.path);
+    await expect(page.locator(".app-bar")).toBeVisible();
+    await expect(page.locator(".app-shell > .app-navigation")).toBeVisible();
+    await expect(page.locator(".app-navigation--sidebar")).toHaveCount(0);
+    await expect(page.locator(route.composition)).toBeVisible();
+    await page.screenshot({
+      path: `/tmp/pih-after/${testInfo.project.name}-${route.name}.png`,
+      fullPage: true,
+    });
+  }
 });
 
 test("supports keyboard entry, reduced motion, and contained responsive layouts", async ({ page }) => {

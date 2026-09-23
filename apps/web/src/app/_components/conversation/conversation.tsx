@@ -78,13 +78,16 @@ export function Conversation({
 
   if (capabilities === null) {
     return (
-      <SourceState
-        state={unavailableState}
-        title={unavailableState === "not_configured" ? "Hermes no configurado" : "Hermes no disponible"}
-        detail={unavailableState === "not_configured"
-          ? "Configura el adaptador del servidor para activar la conversación."
-          : "La integración está configurada, pero no respondió a esta consulta."}
-      />
+      <section className="conversation conversation--unavailable surface">
+        <SourceState
+          compact
+          state={unavailableState}
+          title={unavailableState === "not_configured" ? "Hermes no configurado" : "Hermes no disponible"}
+          detail={unavailableState === "not_configured"
+            ? "Configura el adaptador del servidor para activar la conversación."
+            : "La integración está configurada, pero no respondió a esta consulta."}
+        />
+      </section>
     );
   }
 
@@ -201,7 +204,10 @@ export function Conversation({
   };
 
   return (
-    <section className="conversation surface" aria-labelledby={titleId}>
+    <section
+      className={`conversation surface ${state.messages.length === 0 ? "conversation--empty" : "conversation--active"}`}
+      aria-labelledby={titleId}
+    >
       <header className="conversation__header">
         <div><p className="eyebrow">Hermes</p><h2 id={titleId}>Conversa con tu sistema</h2></div>
         <span className="conversation__privacy">No se guarda en el navegador</span>

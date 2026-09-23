@@ -34,13 +34,28 @@ export default async function AgentsPage() {
     capabilitiesPromise,
     agentsPromise,
   ]);
+  const agents = agentsResult.ok ? agentsResult.value : [];
+  const availableCount = agents.filter(({ status }) => status === "available").length;
+  const workingCount = agents.filter(({ status }) => status === "working").length;
+  const readyCount = agents.filter(({ status }) => status === "waiting").length;
+  const attentionCount = agents.filter(({ status }) =>
+    status === "offline" || status === "unknown"
+  ).length;
+  const activity = agents.flatMap((agent) => {
+    if (agent.currentWork !== undefined) {
+      return [{ id: `${agent.id}-work`, name: agent.displayName, detail: `En curso · ${agent.currentWork}` }];
+    }
+    if (agent.lastResult !== undefined) {
+      return [{ id: `${agent.id}-result`, name: agent.displayName, detail: `Resultado · ${agent.lastResult}` }];
+    }
+    return [];
+  }).slice(0, 3);
 
   return (
     <div className="agents-page">
       <PageHeader
-        eyebrow="Hermes"
         title="Agentes"
-        description="Estado operativo y conversaciones contextuales. La configuración permanece en Hermes Dashboard."
+        description="Estado, trabajo actual y acceso directo."
         aside={serverRuntime.hermesDashboardUrl === undefined ? undefined : (
           <a className="button button--quiet" href={serverRuntime.hermesDashboardUrl} target="_blank" rel="noreferrer">
             Administrar en Hermes <Icon name="arrow-up-right" />
@@ -48,23 +63,57 @@ export default async function AgentsPage() {
         )}
       />
 
-      {gateway === null ? (
-        <SourceState state="not_configured" title="Hermes no configurado" detail="Configura el adaptador del servidor para consultar el roster." />
-      ) : !agentsResult.ok ? (
-        <SourceState state="unavailable" title="Roster no disponible" detail="Hermes está configurado, pero el roster no respondió." />
-      ) : agentsResult.value.length === 0 ? (
-        <SourceState state="empty" title="No hay agentes publicados" detail="Hermes respondió correctamente sin agentes visibles." />
-      ) : (
-        <div className="agent-grid">
-          {agentsResult.value.map((agent) => (
-            <AgentCard
-              agent={agent}
-              capabilities={capabilitiesResult.ok ? capabilitiesResult.value : null}
-              key={agent.id}
-            />
-          ))}
-        </div>
-      )}
+      <div className="agent-filters" aria-label="Resumen del roster">
+        <span className="filter-pill filter-pill--active">Todos</span>
+        <span className="filter-pill">En actividad</span>
+        <span className="filter-pill">Con alertas</span>
+      </div>
+
+      <section className="agent-summary" aria-label="Resumen de agentes">
+        <article className="summary-metric"><span>Disponibles</span><strong>{availableCount}</strong><small>{availableCount === 1 ? "1 agente conectado" : `${availableCount} agentes conectados`}</small></article>
+        <article className="summary-metric"><span>Trabajando ahora</span><strong>{workingCount}</strong><small>{workingCount === 0 ? "Sin trabajos publicados" : "Actividad en curso"}</small></article>
+        <article className="summary-metric"><span>Resultados listos</span><strong>{readyCount}</strong><small>{readyCount === 0 ? "Sin resultados pendientes" : "Revisión disponible"}</small></article>
+        <article className="summary-metric"><span>Requieren atención</span><strong>{attentionCount}</strong><small>{attentionCount === 0 ? "Sin bloqueos" : "Revisar estado"}</small></article>
+      </section>
+
+      <section className="agent-roster" aria-label="Roster de agentes">
+        {gateway === null ? (
+          <SourceState compact state="not_configured" title="Hermes no configurado" detail="Configura el adaptador del servidor para consultar el roster." />
+        ) : !agentsResult.ok ? (
+          <SourceState compact state="unavailable" title="Roster no disponible" detail="Hermes está configurado, pero el roster no respondió." />
+        ) : agents.length === 0 ? (
+          <SourceState compact state="empty" title="No hay agentes publicados" detail="Hermes respondió correctamente sin agentes visibles." />
+        ) : (
+          <div className="agent-grid">
+            {agents.map((agent) => (
+              <AgentCard
+                agent={agent}
+                capabilities={capabilitiesResult.ok ? capabilitiesResult.value : null}
+                key={agent.id}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="agent-activity panel" aria-labelledby="agent-activity-title">
+        <header className="panel-heading">
+          <h2 id="agent-activity-title">Actividad reciente</h2>
+          <span className="panel-count">Hermes</span>
+        </header>
+        {activity.length === 0 ? (
+          <SourceState compact state="empty" title="Sin actividad publicada" detail="La actividad aparecerá cuando Hermes informe trabajo o resultados reales." />
+        ) : (
+          <div className="activity-feed">
+            {activity.map((item) => (
+              <article className="activity-item" key={item.id}>
+                <strong>{item.name}</strong>
+                <span>{item.detail}</span>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

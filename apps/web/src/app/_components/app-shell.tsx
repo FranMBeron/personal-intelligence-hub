@@ -4,14 +4,23 @@ import { AppNavigation } from "./app-navigation";
 
 export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <div className="app-shell">
-      <a className="skip-link" href="#contenido-principal">
-        Saltar al contenido
-      </a>
-      <AppNavigation />
-      <main className="app-main" id="contenido-principal" tabIndex={-1}>
-        <div className="app-main__inner">{children}</div>
-      </main>
+    <div className="app-stage">
+      <div className="app-shell">
+        <a className="skip-link" href="#contenido-principal">
+          Saltar al contenido
+        </a>
+        <header className="app-bar">
+          <div className="app-brand">
+            <span className="app-brand__mark" aria-hidden="true" />
+            <span>Personal Intelligence Hub</span>
+          </div>
+          <span className="app-bar__privacy">Espacio privado</span>
+        </header>
+        <main className="app-main" id="contenido-principal" tabIndex={-1}>
+          <div className="app-main__inner">{children}</div>
+        </main>
+        <AppNavigation />
+      </div>
     </div>
   );
 }
