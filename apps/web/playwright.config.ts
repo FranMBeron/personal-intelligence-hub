@@ -43,6 +43,7 @@ export default defineConfig({
       timeout: 60_000,
       env: {
         PIH_API_INTERNAL_URL: fixtureURL,
+        PUBLIC_ORIGIN: baseURL,
         HERMES_INTERNAL_URL: fixtureURL,
         HERMES_SERVICE_TOKEN: "e2e-fictional-service-token",
         HERMES_DASHBOARD_URL: "https://dashboard.example.test/hermes",

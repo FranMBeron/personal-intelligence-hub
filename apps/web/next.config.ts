@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-const contentSecurityPolicy = [
+export const buildContentSecurityPolicy = (development: boolean) => [
   "default-src 'self'",
   "base-uri 'self'",
   "connect-src 'self'",
@@ -9,14 +9,17 @@ const contentSecurityPolicy = [
   "frame-ancestors 'none'",
   "img-src 'self' data:",
   "object-src 'none'",
-  "script-src 'self' 'unsafe-inline'",
+  `script-src 'self' 'unsafe-inline'${development ? " 'unsafe-eval'" : ""}`,
   "style-src 'self' 'unsafe-inline'",
 ].join("; ");
+
+const contentSecurityPolicy = buildContentSecurityPolicy(
+  process.env.NODE_ENV === "development",
+);
 
 const securityHeaders = [
   { key: "Content-Security-Policy", value: contentSecurityPolicy },
   { key: "Referrer-Policy", value: "no-referrer" },
-  { key: "Strict-Transport-Security", value: "max-age=31536000" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
   {

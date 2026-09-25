@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import nextConfig from "../next.config";
+import nextConfig, { buildContentSecurityPolicy } from "../next.config";
 
 describe("Next.js production security", () => {
   it("applies the browser security policy to every route", async () => {
@@ -19,8 +19,11 @@ describe("Next.js production security", () => {
     expect(headers.get("x-content-type-options")).toBe("nosniff");
     expect(headers.get("referrer-policy")).toBe("no-referrer");
     expect(headers.get("permissions-policy")).toContain("camera=()");
-    expect(headers.get("strict-transport-security")).toBe(
-      "max-age=31536000",
-    );
+    expect(headers.get("strict-transport-security")).toBeNull();
+  });
+
+  it("allows webpack evaluation only outside the production CSP", () => {
+    expect(buildContentSecurityPolicy(true)).toContain("'unsafe-eval'");
+    expect(buildContentSecurityPolicy(false)).not.toContain("'unsafe-eval'");
   });
 });
