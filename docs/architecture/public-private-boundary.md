@@ -30,11 +30,13 @@ production configuration.
 
 ## Automated boundary
 
-CI runs `pnpm verify:secrets`, validates the committed OpenAPI document against
-the frozen base, checks the container confinement policy, inspects Compose
-through its smoke test, and performs all tests/builds from a frozen lockfile.
-Only the pnpm store is cached. Dependabot tracks workspace, GitHub Actions, and
-Docker dependencies.
+CI scans the complete Git history for secrets, audits all dependencies at
+moderate severity, performs real lint/type/unit/integration/E2E/build/OpenAPI
+checks, verifies container confinement, and exercises Compose restart recovery.
+Separate jobs run CodeQL, generate a CycloneDX SBOM for each application image,
+and fail on high-severity image vulnerabilities. Every external action is
+pinned to a full commit SHA. Only the pnpm store is cached. Dependabot tracks
+workspace, GitHub Actions, and Docker dependencies.
 
 Before publishing any revision, inspect tracked filenames, staged diffs,
 generated OpenAPI, container host ports, and Git history. A passing scanner is

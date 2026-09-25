@@ -97,8 +97,10 @@ export const registerEventRoute = (
       const seen = new Set<string>();
       let lastSequence = startSequence;
       let closed = false;
-      let heartbeat: NodeJS.Timeout | undefined;
-      let poller: NodeJS.Timeout | undefined;
+      const timers: {
+        heartbeat?: NodeJS.Timeout;
+        poller?: NodeJS.Timeout;
+      } = {};
       let unsubscribe = (): void => undefined;
       let draining: Promise<void> | undefined;
 
@@ -114,8 +116,8 @@ export const registerEventRoute = (
       const cleanup = (): void => {
         if (closed) return;
         closed = true;
-        if (heartbeat !== undefined) clearInterval(heartbeat);
-        if (poller !== undefined) clearInterval(poller);
+        if (timers.heartbeat !== undefined) clearInterval(timers.heartbeat);
+        if (timers.poller !== undefined) clearInterval(timers.poller);
         unsubscribe();
       };
       const fail = (error: unknown): void => {
@@ -149,17 +151,17 @@ export const registerEventRoute = (
         "x-request-id": request.pihRequestId,
       });
       reply.raw.write(": connected\n\n");
-      heartbeat = setInterval(() => {
+      timers.heartbeat = setInterval(() => {
         if (!closed) reply.raw.write(": heartbeat\n\n");
       }, dependencies.heartbeatMilliseconds ?? 15_000);
-      heartbeat.unref();
+      timers.heartbeat.unref();
       unsubscribe = dependencies.eventBus.subscribe(() => {
         void drain().catch(fail);
       });
-      poller = setInterval(() => {
+      timers.poller = setInterval(() => {
         void drain().catch(fail);
       }, dependencies.pollMilliseconds ?? 1_000);
-      poller.unref();
+      timers.poller.unref();
 
       try {
         await drain();
