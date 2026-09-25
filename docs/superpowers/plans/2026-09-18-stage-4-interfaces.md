@@ -23,7 +23,7 @@
 - Do not add Calendar data, operational metrics, or fabricated values.
 - Do not persist conversation content or media in browser storage.
 - Meet WCAG 2.2 AA and honor `prefers-reduced-motion`.
-- Do not modify `remote-station`, private infrastructure, Git remotes, or secrets; do not push.
+- Do not modify the private host, private infrastructure, Git remotes, or secrets; do not push.
 - Follow RED-GREEN-REFACTOR and commit each independently verified task.
 
 ## File Structure
@@ -880,7 +880,7 @@ message body, cookie, authorization header, or credential is logged.
 
 - [x] **Step 10: Review the complete diff**
 
-Compare every changed file to the design spec, confirm `remote-station` and
+Compare every changed file to the design spec, confirm the private host and
 private infrastructure are untouched, and verify no direct Second Brain
 mutation controls were introduced.
 

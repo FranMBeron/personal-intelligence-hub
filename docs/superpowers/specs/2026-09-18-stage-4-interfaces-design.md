@@ -46,7 +46,7 @@ administrative interface, and Obsidian remains the full knowledge editor.
 - Full metrics, logs, infrastructure controls, or operational dashboards;
   those belong to Stage 6.
 - Editing Hermes agents, profiles, models, or routing rules.
-- Modifying `remote-station`, private infrastructure, or deployment secrets.
+- Modifying the private host, private infrastructure, or deployment secrets.
 - Publishing, pushing, or changing Git remotes as part of this work.
 - Replacing the existing Second Brain API with a UI-specific aggregate API.
 - Persisting uploaded media or conversation history in the browser.
@@ -480,7 +480,7 @@ The milestone is accepted only when all of the following are freshly true:
 9. Typecheck, lint, production build, secret review, and `git diff --check`
    pass.
 10. The complete diff is reviewed, and no private infrastructure or
-    `remote-station` content changed.
+    private-host content changed.
 
 ## 17. Delivery boundary
 

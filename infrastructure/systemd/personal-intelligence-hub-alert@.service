@@ -1,0 +1,11 @@
+[Unit]
+Description=Private alert for failed Personal Intelligence Hub unit %i
+
+[Service]
+Type=oneshot
+EnvironmentFile=/srv/personal-intelligence-hub/secrets/alert.env
+ExecStart=/srv/personal-intelligence-hub/current/infrastructure/operations/send-alert.sh %i
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

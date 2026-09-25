@@ -1,0 +1,22 @@
+[Unit]
+Description=Encrypted Personal Intelligence Hub backup
+Wants=network-online.target
+After=network-online.target docker.service personal-intelligence-hub.service
+Requires=docker.service
+OnFailure=personal-intelligence-hub-alert@%n.service
+
+[Service]
+Type=oneshot
+Environment=PIH_ROOT=/srv/personal-intelligence-hub
+EnvironmentFile=/srv/personal-intelligence-hub/config/backup.env
+EnvironmentFile=/srv/personal-intelligence-hub/secrets/restic.env
+ExecStart=/srv/personal-intelligence-hub/current/infrastructure/operations/backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/personal-intelligence-hub/backups
+TimeoutStartSec=6h

@@ -1,0 +1,27 @@
+[Unit]
+Description=Personal Intelligence Hub private application
+Wants=network-online.target tailscaled.service
+After=network-online.target docker.service tailscaled.service
+Requires=docker.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PIH_ROOT=/srv/personal-intelligence-hub
+ExecStart=/srv/personal-intelligence-hub/current/infrastructure/operations/compose-current.sh up --detach --wait --remove-orphans
+ExecReload=/srv/personal-intelligence-hub/current/infrastructure/operations/compose-current.sh up --detach --wait --remove-orphans
+ExecStop=/srv/personal-intelligence-hub/current/infrastructure/operations/compose-current.sh down
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=15min
+TimeoutStopSec=2min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/personal-intelligence-hub
+
+[Install]
+WantedBy=multi-user.target
