@@ -40,6 +40,7 @@ services:
       dockerfile: infrastructure/docker/api.Dockerfile
     environment:
       ALLOWED_ORIGINS: http://127.0.0.1:${PIH_WEB_PORT:-3000}
+      AUTH_MODE: oidc
       CURSOR_SIGNING_KEY: fictional-local-cursor-key-with-at-least-32-bytes
       DATABASE_URL: postgresql://pih_local:fictional-local-password@postgres:5432/pih_local
       HOST: 0.0.0.0
@@ -80,6 +81,7 @@ services:
       context: ../..
       dockerfile: infrastructure/docker/web.Dockerfile
     environment:
+      AUTH_MODE: oidc
       HOSTNAME: 0.0.0.0
       PIH_API_INTERNAL_URL: http://api:3001
       PUBLIC_ORIGIN: http://127.0.0.1:${PIH_WEB_PORT:-3000}

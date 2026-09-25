@@ -20,7 +20,11 @@ const safely = async <T,>(operation: Promise<T>): Promise<Result<T>> => {
 };
 
 export default async function AgentsPage() {
-  const requestContext = deriveRequestContext(await headers());
+  const requestContext = await deriveRequestContext(
+    await headers(),
+    undefined,
+    serverRuntime.identity,
+  );
   const gateway = serverRuntime.hermes;
   const capabilitiesPromise: Promise<Result<HermesCapabilities>> =
     requestContext.ok && gateway !== null

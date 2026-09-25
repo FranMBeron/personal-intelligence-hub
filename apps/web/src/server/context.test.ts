@@ -5,9 +5,32 @@ import { deriveRequestContext } from "./context";
 const generatedRequestId = "5af093d0-84f1-4759-a92e-bbe2949ab957";
 
 describe("deriveRequestContext", () => {
-  it("rejects a request without delegated bearer authorization", () => {
+  it("uses the configured identity adapter instead of forwarding a browser bearer", async () => {
+    const identity = {
+      resolve: async () => ({
+        ok: true as const,
+        authorization: "Bearer signed-internal-identity",
+      }),
+    };
+
     expect(
-      deriveRequestContext(new Headers(), () => generatedRequestId),
+      await deriveRequestContext(
+        new Headers({ authorization: "Bearer forged-browser-token" }),
+        () => generatedRequestId,
+        identity,
+      ),
+    ).toEqual({
+      ok: true,
+      context: {
+        authorization: "Bearer signed-internal-identity",
+        requestId: generatedRequestId,
+      },
+    });
+  });
+
+  it("rejects a request without delegated bearer authorization", async () => {
+    expect(
+      await deriveRequestContext(new Headers(), () => generatedRequestId),
     ).toEqual({
       ok: false,
       problem: expect.objectContaining({
@@ -18,9 +41,9 @@ describe("deriveRequestContext", () => {
     });
   });
 
-  it("rejects other authorization schemes", () => {
+  it("rejects other authorization schemes", async () => {
     expect(
-      deriveRequestContext(
+      await deriveRequestContext(
         new Headers({ authorization: "Basic dXNlcjpwYXNz" }),
         () => generatedRequestId,
       ),
@@ -30,10 +53,10 @@ describe("deriveRequestContext", () => {
     });
   });
 
-  it("preserves a valid request ID and delegated bearer value", () => {
+  it("preserves a valid request ID and delegated bearer value", async () => {
     const requestId = "99acb7b5-9dbe-44bf-a590-00824cfd2893";
     expect(
-      deriveRequestContext(
+      await deriveRequestContext(
         new Headers({
           authorization: "Bearer delegated-access-token",
           "x-request-id": requestId,
@@ -49,9 +72,9 @@ describe("deriveRequestContext", () => {
     });
   });
 
-  it("replaces an invalid external request ID", () => {
+  it("replaces an invalid external request ID", async () => {
     expect(
-      deriveRequestContext(
+      await deriveRequestContext(
         new Headers({
           authorization: "Bearer delegated-access-token",
           "x-request-id": "not-a-uuid",

@@ -75,16 +75,24 @@ Cloning this public repository does not expose a deployment. Copy
 `.env.example` to an ignored local environment file and supply values through a
 secret manager or restrictive local file; never commit working credentials.
 
-The web application expects an identity-aware ingress to validate the user and
-forward a delegated `Authorization: Bearer ...` header. `PUBLIC_ORIGIN`
-declares the one browser origin allowed to perform mutations; client-supplied
-forwarding headers are never trusted to derive it. `PIH_API_INTERNAL_URL`
-selects the private personal-data API. Hermes is enabled only when both
+The generic `AUTH_MODE=oidc` mode expects a delegated
+`Authorization: Bearer ...` token and remains the default. The optional
+`AUTH_MODE=tailscale` adapter accepts `Tailscale-User-Login` only on the
+localhost-bound web service behind Tailscale Serve, checks an external
+allow-list, replaces browser credentials with a short-lived signed token, and
+lets the private API reconstruct the same actor. `PUBLIC_ORIGIN` declares the
+one browser origin allowed to perform mutations; client-supplied forwarding
+headers are never trusted to derive it. `PIH_API_INTERNAL_URL` selects the
+private personal-data API. Hermes is enabled only when both
 `HERMES_INTERNAL_URL` and `HERMES_SERVICE_TOKEN` are present; without that
 complete server-only pair, conversation and agent features remain visibly
 disabled. `HERMES_DASHBOARD_URL` is optional and only exposes an administrative
 link. These values must never use `NEXT_PUBLIC_` or be serialized to the
 browser.
+
+Web and API must receive the same `PIH_INTERNAL_AUTH_KEY` in Tailscale mode.
+Only web receives `TAILSCALE_ALLOWED_USERS`; use `login=actor-uuid` entries and
+keep both values outside Git. OIDC settings are required only in OIDC mode.
 
 Architecture details live in
 [`docs/architecture/second-brain.md`](docs/architecture/second-brain.md), with

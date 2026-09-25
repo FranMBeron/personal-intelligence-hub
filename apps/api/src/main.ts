@@ -31,7 +31,9 @@ const main = async (): Promise<void> => {
     publicConfig: {
       apiVersion: "v1",
       productName: "Personal Intelligence Hub",
-      publicOidcIssuer: config.oidcIssuer,
+      ...(config.authMode === "oidc"
+        ? { publicOidcIssuer: config.oidcIssuer }
+        : {}),
       enabledUiCapabilities: ["second-brain"],
     },
     synchronization: { eventBus, outboxStore },

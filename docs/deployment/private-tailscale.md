@@ -18,6 +18,14 @@ or production environment files. Do not run these steps against
    path. Keep `DATABASE_URL`, OIDC values, and signing keys in the private API
    environment file.
 
+Configure both web and API with `AUTH_MODE=tailscale` and the same externally
+generated `PIH_INTERNAL_AUTH_KEY`. Configure only web with an external
+`TAILSCALE_ALLOWED_USERS` mapping of `login=actor-uuid` entries. Tailscale Serve
+removes client-provided identity headers before adding its own; the web service
+must still listen only on localhost, because localhost is the trust boundary
+for those headers. The web tier discards browser authorization and emits a
+short-lived internal token for API and audit attribution.
+
 Validate without starting services:
 
 ```bash

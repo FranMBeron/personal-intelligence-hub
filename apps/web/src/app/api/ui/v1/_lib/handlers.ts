@@ -14,7 +14,11 @@ import {
 } from "@personal-intelligence-hub/contracts";
 import { z, ZodError } from "zod";
 
-import { deriveRequestContext, type RequestContext } from "../../../../../server/context";
+import {
+  deriveRequestContext,
+  type RequestContext,
+  type RequestIdentityAdapter,
+} from "../../../../../server/context";
 import type { HermesGateway } from "../../../../../server/ports/hermes-gateway";
 import { GatewayError } from "../../../../../server/problems";
 
@@ -30,6 +34,7 @@ type ContextualRouteHandler = (
 
 export type RequestPolicy = Readonly<{
   publicOrigin: string;
+  identity: RequestIdentityAdapter;
 }>;
 
 const problemResponse = (problem: ApiProblem): Response =>
@@ -82,12 +87,15 @@ const validationProblem = (
 
 const requireContext = (
   request: Request,
-): { ok: true; context: RequestContext } | { ok: false; response: Response } => {
-  const result = deriveRequestContext(request.headers);
-  return result.ok
-    ? result
-    : { ok: false, response: problemResponse(result.problem) };
-};
+  policy: RequestPolicy,
+): Promise<
+  { ok: true; context: RequestContext } | { ok: false; response: Response }
+> =>
+  deriveRequestContext(request.headers, undefined, policy.identity).then((result) =>
+    result.ok
+      ? result
+      : { ok: false, response: problemResponse(result.problem) },
+  );
 
 const requireSameOrigin = (
   request: Request,
@@ -155,9 +163,10 @@ const parseJson = async <T>(request: Request, schema: z.ZodType<T>): Promise<T> 
 
 export const createCapabilitiesHandler = (
   gateway: HermesGateway | null,
+  policy: RequestPolicy,
 ): RouteHandler =>
   async (request) => {
-    const authenticated = requireContext(request);
+    const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
     const availableGateway = requireGateway(request, authenticated.context, gateway);
     if (availableGateway instanceof Response) return availableGateway;
@@ -171,9 +180,12 @@ export const createCapabilitiesHandler = (
     }
   };
 
-export const createAgentsHandler = (gateway: HermesGateway | null): RouteHandler =>
+export const createAgentsHandler = (
+  gateway: HermesGateway | null,
+  policy: RequestPolicy,
+): RouteHandler =>
   async (request) => {
-    const authenticated = requireContext(request);
+    const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
     const availableGateway = requireGateway(request, authenticated.context, gateway);
     if (availableGateway instanceof Response) return availableGateway;
@@ -192,7 +204,7 @@ export const createConversationHandler = (
   policy: RequestPolicy,
 ): RouteHandler =>
   async (request) => {
-    const authenticated = requireContext(request);
+    const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
     const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
@@ -214,7 +226,7 @@ export const createSendMessageHandler = (
   policy: RequestPolicy,
 ): ContextualRouteHandler =>
   async (request, routeContext) => {
-    const authenticated = requireContext(request);
+    const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
     const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
@@ -257,7 +269,7 @@ export const createUploadHandler = (
   policy: RequestPolicy,
 ): RouteHandler =>
   async (request) => {
-    const authenticated = requireContext(request);
+    const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
     const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
@@ -321,9 +333,10 @@ export const createUploadHandler = (
 
 export const createEventsHandler = (
   gateway: HermesGateway | null,
+  policy: RequestPolicy,
 ): ContextualRouteHandler =>
   async (request, routeContext) => {
-    const authenticated = requireContext(request);
+    const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
     const availableGateway = requireGateway(request, authenticated.context, gateway);
     if (availableGateway instanceof Response) return availableGateway;

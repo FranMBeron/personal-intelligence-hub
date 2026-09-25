@@ -11,8 +11,11 @@ imports.
 
 ## Trust boundary
 
-Authentication validates an OIDC bearer token and produces a framework-free
-principal:
+Authentication produces one framework-free principal. Generic deployments
+validate an OIDC bearer token. A deployment may explicitly enable the optional
+Tailscale adapter, in which the localhost-bound web tier accepts a Tailscale
+Serve identity header, replaces it with a short-lived signed internal token,
+and the API validates that token before constructing the same principal:
 
 ```ts
 type Principal = Readonly<{
@@ -40,7 +43,9 @@ normalizes it.
 Every `/v1/*` route and `/health/ready` require `Authorization: Bearer <JWT>`.
 Only `/health/live` is anonymous. Production accepts OIDC JWTs validated
 against configured issuer, audience, JWKS and an allow-list containing only
-`RS256` or `ES256`. The injected local/test signer is forbidden in production.
+`RS256` or `ES256`. Tailscale mode accepts only the private web tier's HS256
+token with its fixed issuer/audience and a maximum 60-second lifetime. The
+injected local/test signer is forbidden in production.
 
 Read routes require `second-brain:read`; normal mutations require
 `second-brain:write`; compensation also requires

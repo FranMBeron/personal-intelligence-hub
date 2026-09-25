@@ -24,6 +24,7 @@ const validEnvironment = {
 describe("private configuration", () => {
   test("validates and normalizes all server-only settings", () => {
     expect(loadPrivateConfig(validEnvironment)).toEqual({
+      authMode: "oidc",
       nodeEnv: "production",
       databaseUrl: validEnvironment.DATABASE_URL,
       oidcIssuer: validEnvironment.OIDC_ISSUER,
@@ -60,6 +61,37 @@ describe("private configuration", () => {
       loadPrivateConfig({
         ...validEnvironment,
         OUTBOX_RETENTION_DAYS: "6",
+      }),
+    ).toThrow();
+  });
+
+  test("accepts Tailscale mode without generic OIDC settings", () => {
+    const {
+      OIDC_ISSUER: _issuer,
+      OIDC_AUDIENCE: _audience,
+      OIDC_JWKS_URI: _jwks,
+      OIDC_ALLOWED_ALGORITHMS: _algorithms,
+      ...commonEnvironment
+    } = validEnvironment;
+
+    expect(
+      loadPrivateConfig({
+        ...commonEnvironment,
+        AUTH_MODE: "tailscale",
+        PIH_INTERNAL_AUTH_KEY: "fictional-internal-auth-key-at-least-32-bytes",
+      }),
+    ).toMatchObject({
+      authMode: "tailscale",
+      internalAuthKey: "fictional-internal-auth-key-at-least-32-bytes",
+    });
+  });
+
+  test("requires the internal signing key only in Tailscale mode", () => {
+    expect(() =>
+      loadPrivateConfig({
+        ...validEnvironment,
+        AUTH_MODE: "tailscale",
+        PIH_INTERNAL_AUTH_KEY: undefined,
       }),
     ).toThrow();
   });

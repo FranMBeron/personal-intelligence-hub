@@ -28,7 +28,11 @@ const priorityLabel: Record<Task["priority"], string> = {
 };
 
 export default async function HomePage() {
-  const requestContext = deriveRequestContext(await headers());
+  const requestContext = await deriveRequestContext(
+    await headers(),
+    undefined,
+    serverRuntime.identity,
+  );
   const snapshotPromise: Promise<Result<Snapshot>> = requestContext.ok
     ? safely(serverRuntime.personalData.snapshot(requestContext.context))
     : Promise.resolve({ ok: false });

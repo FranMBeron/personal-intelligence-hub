@@ -5,6 +5,7 @@ import { loadServerConfig } from "./server";
 describe("loadServerConfig", () => {
   it("uses the local PIH API default without configuring Hermes", () => {
     expect(loadServerConfig({})).toEqual({
+      authMode: "oidc",
       pihApiInternalUrl: "http://127.0.0.1:3001/",
       publicOrigin: "http://127.0.0.1:3000",
     });
@@ -20,12 +21,41 @@ describe("loadServerConfig", () => {
         HERMES_DASHBOARD_URL: "https://dashboard.example.test/hermes",
       }),
     ).toEqual({
+      authMode: "oidc",
       pihApiInternalUrl: "https://api.example.test/base",
       publicOrigin: "https://pih.example.test",
       hermesInternalUrl: "https://hermes.example.test/",
       hermesServiceToken: "fictional-service-token",
       hermesDashboardUrl: "https://dashboard.example.test/hermes",
     });
+  });
+
+  it("builds a Tailscale identity configuration from a private allow-list", () => {
+    expect(
+      loadServerConfig({
+        AUTH_MODE: "tailscale",
+        PIH_INTERNAL_AUTH_KEY: "fictional-internal-auth-key-at-least-32-bytes",
+        TAILSCALE_ALLOWED_USERS:
+          "owner@example.test=a03f7492-09f0-4e8f-95d0-12b7c616aaea",
+      }),
+    ).toMatchObject({
+      authMode: "tailscale",
+      internalAuthKey: "fictional-internal-auth-key-at-least-32-bytes",
+      tailscaleAllowedUsers: {
+        "owner@example.test": "a03f7492-09f0-4e8f-95d0-12b7c616aaea",
+      },
+    });
+  });
+
+  it("requires a signing key and allowed user mapping in Tailscale mode", () => {
+    expect(() => loadServerConfig({ AUTH_MODE: "tailscale" })).toThrow();
+    expect(() =>
+      loadServerConfig({
+        AUTH_MODE: "tailscale",
+        PIH_INTERNAL_AUTH_KEY: "fictional-internal-auth-key-at-least-32-bytes",
+        TAILSCALE_ALLOWED_USERS: "invalid-mapping",
+      }),
+    ).toThrow();
   });
 
   it("requires Hermes URL and token together", () => {

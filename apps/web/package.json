@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@personal-intelligence-hub/contracts": "workspace:*",
+    "jose": "6.2.12",
     "next": "16.3.5",
     "react": "19.3.0",
     "react-dom": "19.3.0",

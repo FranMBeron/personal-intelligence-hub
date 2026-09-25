@@ -11,7 +11,10 @@ import type {
 } from "@personal-intelligence-hub/contracts";
 import { describe, expect, it } from "vitest";
 
-import type { RequestContext } from "../../../../server/context";
+import {
+  oidcRequestIdentity,
+  type RequestContext,
+} from "../../../../server/context";
 import type { HermesGateway } from "../../../../server/ports/hermes-gateway";
 import { dependencyUnavailable } from "../../../../server/problems";
 import {
@@ -128,11 +131,17 @@ const authenticatedHeaders = (extra?: HeadersInit): Headers => {
   return headers;
 };
 
-const requestPolicy = { publicOrigin: "https://pih.example" } as const;
+const requestPolicy = {
+  publicOrigin: "https://pih.example",
+  identity: oidcRequestIdentity,
+} as const;
 
 describe("Hermes BFF handlers", () => {
   it("returns a problem when delegated authorization is missing", async () => {
-    const response = await createCapabilitiesHandler(new FakeHermesGateway())(
+    const response = await createCapabilitiesHandler(
+      new FakeHermesGateway(),
+      requestPolicy,
+    )(
       new Request("https://pih.example/api/ui/v1/hermes/capabilities"),
     );
 
@@ -198,12 +207,12 @@ describe("Hermes BFF handlers", () => {
 
   it("returns normalized capabilities and agents", async () => {
     const gateway = new FakeHermesGateway();
-    const capabilityResponse = await createCapabilitiesHandler(gateway)(
+    const capabilityResponse = await createCapabilitiesHandler(gateway, requestPolicy)(
       new Request("https://pih.example/api/ui/v1/hermes/capabilities", {
         headers: authenticatedHeaders(),
       }),
     );
-    const agentResponse = await createAgentsHandler(gateway)(
+    const agentResponse = await createAgentsHandler(gateway, requestPolicy)(
       new Request("https://pih.example/api/ui/v1/agents", {
         headers: authenticatedHeaders(),
       }),
@@ -335,7 +344,7 @@ describe("Hermes BFF handlers", () => {
   it("serializes safe gateway problems", async () => {
     const gateway = new FakeHermesGateway();
     gateway.failCapabilities = true;
-    const response = await createCapabilitiesHandler(gateway)(
+    const response = await createCapabilitiesHandler(gateway, requestPolicy)(
       new Request("https://pih.example/api/ui/v1/hermes/capabilities", {
         headers: authenticatedHeaders(),
       }),
@@ -347,7 +356,7 @@ describe("Hermes BFF handlers", () => {
 
   it("forwards SSE resumption and exposes only public stream headers", async () => {
     const gateway = new FakeHermesGateway();
-    const response = await createEventsHandler(gateway)(
+    const response = await createEventsHandler(gateway, requestPolicy)(
       new Request(
         "https://pih.example/api/ui/v1/conversations/conversation-01/events",
         {

@@ -62,7 +62,11 @@ const capabilityItems = (capabilities: HermesCapabilities): readonly string[] =>
 
 export default async function SystemPage() {
   const checkedAt = new Date().toISOString();
-  const requestContext = deriveRequestContext(await headers());
+  const requestContext = await deriveRequestContext(
+    await headers(),
+    undefined,
+    serverRuntime.identity,
+  );
   const pihCheck = serverRuntime.personalData.health(
     requestContext.ok ? requestContext.context : undefined,
   );

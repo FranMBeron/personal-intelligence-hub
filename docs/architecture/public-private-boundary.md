@@ -17,6 +17,12 @@ production configuration.
   `PUBLIC_ORIGIN` used for same-origin mutation checks. Forwarded host and
   protocol headers never authorize a request. Client code may import only the
   explicit `NEXT_PUBLIC_*` allow-list.
+- `AUTH_MODE=oidc` is the generic default. `AUTH_MODE=tailscale` is an optional
+  localhost-only ingress adapter: web validates the Tailscale login against an
+  external `login=actor-uuid` allow-list, discards browser credentials, and
+  signs a 30-second internal JWT. API accepts that JWT only in the matching
+  mode with fixed HS256 issuer and audience checks. The shared key and
+  allow-list remain outside Git.
 - `integrations/hermes` receives its base URL and bearer credential at runtime.
   It never logs either the credential or original user content.
 - Example environment files contain placeholders or clearly fictional local

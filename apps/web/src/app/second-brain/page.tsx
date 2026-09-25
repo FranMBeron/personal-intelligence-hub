@@ -45,7 +45,11 @@ export default async function SecondBrainPage({
   searchParams,
 }: Readonly<{ searchParams: Promise<SearchParams> }>) {
   const filters = parseFilters(await searchParams);
-  const requestContext = deriveRequestContext(await headers());
+  const requestContext = await deriveRequestContext(
+    await headers(),
+    undefined,
+    serverRuntime.identity,
+  );
   const snapshotPromise: Promise<Result<Snapshot>> = requestContext.ok
     ? safely(serverRuntime.personalData.snapshot(requestContext.context))
     : Promise.resolve({ ok: false });

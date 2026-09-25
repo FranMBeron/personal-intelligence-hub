@@ -5,6 +5,25 @@ import { z } from "zod";
 const defaultApiInternalUrl = "http://127.0.0.1:3001";
 const defaultPublicOrigin = "http://127.0.0.1:3000";
 
+const parseAllowedUsers = (
+  value: string | undefined,
+): Record<string, string> | undefined => {
+  if (value === undefined) return undefined;
+  const result: Record<string, string> = {};
+  for (const entry of value.split(",")) {
+    const separator = entry.indexOf("=");
+    if (separator <= 0 || separator === entry.length - 1) {
+      throw new Error("TAILSCALE_ALLOWED_USERS must contain login=actor-uuid entries.");
+    }
+    const login = entry.slice(0, separator).toLowerCase();
+    if (Object.hasOwn(result, login)) {
+      throw new Error("TAILSCALE_ALLOWED_USERS contains a duplicate login.");
+    }
+    result[login] = entry.slice(separator + 1);
+  }
+  return result;
+};
+
 const uncredentialedHttpUrl = z
   .string()
   .min(1)
@@ -27,6 +46,9 @@ const uncredentialedHttpUrl = z
 
 const ServerConfigSchema = z
   .object({
+    authMode: z.enum(["oidc", "tailscale"]),
+    internalAuthKey: z.string().min(32).optional(),
+    tailscaleAllowedUsers: z.record(z.string(), z.uuid()).optional(),
     pihApiInternalUrl: uncredentialedHttpUrl,
     publicOrigin: uncredentialedHttpUrl.transform((value, context) => {
       const url = new URL(value);
@@ -50,6 +72,17 @@ const ServerConfigSchema = z
   .strict()
   .superRefine((value, context) => {
     if (
+      value.authMode === "tailscale" &&
+      (value.internalAuthKey === undefined ||
+        value.tailscaleAllowedUsers === undefined ||
+        Object.keys(value.tailscaleAllowedUsers).length === 0)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Tailscale mode requires an internal key and at least one allowed user.",
+      });
+    }
+    if (
       (value.hermesInternalUrl === undefined) !==
       (value.hermesServiceToken === undefined)
     ) {
@@ -66,6 +99,9 @@ export const loadServerConfig = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): ServerConfig =>
   ServerConfigSchema.parse({
+    authMode: environment.AUTH_MODE ?? "oidc",
+    internalAuthKey: environment.PIH_INTERNAL_AUTH_KEY,
+    tailscaleAllowedUsers: parseAllowedUsers(environment.TAILSCALE_ALLOWED_USERS),
     pihApiInternalUrl:
       environment.PIH_API_INTERNAL_URL ?? defaultApiInternalUrl,
     publicOrigin: environment.PUBLIC_ORIGIN ?? defaultPublicOrigin,
