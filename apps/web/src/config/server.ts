@@ -3,6 +3,7 @@ import "server-only";
 import { z } from "zod";
 
 const defaultApiInternalUrl = "http://127.0.0.1:3001";
+const defaultPublicOrigin = "http://127.0.0.1:3000";
 
 const uncredentialedHttpUrl = z
   .string()
@@ -27,6 +28,21 @@ const uncredentialedHttpUrl = z
 const ServerConfigSchema = z
   .object({
     pihApiInternalUrl: uncredentialedHttpUrl,
+    publicOrigin: uncredentialedHttpUrl.transform((value, context) => {
+      const url = new URL(value);
+      if (
+        url.pathname !== "/" ||
+        url.search !== "" ||
+        url.hash !== ""
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "Expected an origin without a path, query, or fragment.",
+        });
+        return z.NEVER;
+      }
+      return url.origin;
+    }),
     hermesInternalUrl: uncredentialedHttpUrl.optional(),
     hermesServiceToken: z.string().min(1).optional(),
     hermesDashboardUrl: uncredentialedHttpUrl.optional(),
@@ -52,6 +68,7 @@ export const loadServerConfig = (
   ServerConfigSchema.parse({
     pihApiInternalUrl:
       environment.PIH_API_INTERNAL_URL ?? defaultApiInternalUrl,
+    publicOrigin: environment.PUBLIC_ORIGIN ?? defaultPublicOrigin,
     hermesInternalUrl: environment.HERMES_INTERNAL_URL,
     hermesServiceToken: environment.HERMES_SERVICE_TOKEN,
     hermesDashboardUrl: environment.HERMES_DASHBOARD_URL,

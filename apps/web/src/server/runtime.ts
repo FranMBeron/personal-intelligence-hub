@@ -10,12 +10,14 @@ export type ServerRuntime = Readonly<{
   personalData: PersonalDataGateway;
   hermes: HermesGateway | null;
   hermesDashboardUrl?: string;
+  requestPolicy: Readonly<{ publicOrigin: string }>;
 }>;
 
 export const serverRuntime: ServerRuntime = Object.freeze({
   personalData: new HttpPersonalDataGateway({
     baseUrl: serverConfig.pihApiInternalUrl,
   }),
+  requestPolicy: { publicOrigin: serverConfig.publicOrigin },
   hermes:
     serverConfig.hermesInternalUrl !== undefined &&
     serverConfig.hermesServiceToken !== undefined

@@ -13,8 +13,10 @@ production configuration.
   port settings for server composition only.
 - `GET /v1/config/public` serializes an explicit `PublicConfig` allow-list.
   Arbitrary environment spreading is forbidden.
-- `apps/web/src/config/server.ts` owns `PIH_API_INTERNAL_URL`; client code may
-  import only the explicit `NEXT_PUBLIC_*` allow-list.
+- `apps/web/src/config/server.ts` owns `PIH_API_INTERNAL_URL` and the explicit
+  `PUBLIC_ORIGIN` used for same-origin mutation checks. Forwarded host and
+  protocol headers never authorize a request. Client code may import only the
+  explicit `NEXT_PUBLIC_*` allow-list.
 - `integrations/hermes` receives its base URL and bearer credential at runtime.
   It never logs either the credential or original user content.
 - Example environment files contain placeholders or clearly fictional local

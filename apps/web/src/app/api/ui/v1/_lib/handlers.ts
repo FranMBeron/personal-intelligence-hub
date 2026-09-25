@@ -28,6 +28,10 @@ type ContextualRouteHandler = (
   context: RouteContext,
 ) => Promise<Response>;
 
+export type RequestPolicy = Readonly<{
+  publicOrigin: string;
+}>;
+
 const problemResponse = (problem: ApiProblem): Response =>
   new Response(JSON.stringify(ApiProblemSchema.parse(problem)), {
     status: problem.status,
@@ -88,22 +92,10 @@ const requireContext = (
 const requireSameOrigin = (
   request: Request,
   context: RequestContext,
+  policy: RequestPolicy,
 ): Response | null => {
   const origin = request.headers.get("origin");
-  const requestUrl = new URL(request.url);
-  const firstForwardedValue = (name: string): string | null =>
-    request.headers.get(name)?.split(",", 1)[0]?.trim() || null;
-  const host = firstForwardedValue("x-forwarded-host") ?? request.headers.get("host");
-  const protocol = firstForwardedValue("x-forwarded-proto") ?? requestUrl.protocol.slice(0, -1);
-  const acceptedOrigins = new Set([requestUrl.origin]);
-  if (host !== null && (protocol === "http" || protocol === "https")) {
-    try {
-      acceptedOrigins.add(new URL(`${protocol}://${host}`).origin);
-    } catch {
-      // Invalid forwarding metadata cannot authorize a state change.
-    }
-  }
-  if (origin !== null && acceptedOrigins.has(origin)) return null;
+  if (origin !== null && origin === policy.publicOrigin) return null;
   return problemResponse(
     problem(
       request,
@@ -197,11 +189,12 @@ export const createAgentsHandler = (gateway: HermesGateway | null): RouteHandler
 
 export const createConversationHandler = (
   gateway: HermesGateway | null,
+  policy: RequestPolicy,
 ): RouteHandler =>
   async (request) => {
     const authenticated = requireContext(request);
     if (!authenticated.ok) return authenticated.response;
-    const originFailure = requireSameOrigin(request, authenticated.context);
+    const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
     const availableGateway = requireGateway(request, authenticated.context, gateway);
     if (availableGateway instanceof Response) return availableGateway;
@@ -218,11 +211,12 @@ export const createConversationHandler = (
 
 export const createSendMessageHandler = (
   gateway: HermesGateway | null,
+  policy: RequestPolicy,
 ): ContextualRouteHandler =>
   async (request, routeContext) => {
     const authenticated = requireContext(request);
     if (!authenticated.ok) return authenticated.response;
-    const originFailure = requireSameOrigin(request, authenticated.context);
+    const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
     const idempotency = IdempotencyKeySchema.safeParse(
       request.headers.get("idempotency-key"),
@@ -258,11 +252,14 @@ export const createSendMessageHandler = (
     }
   };
 
-export const createUploadHandler = (gateway: HermesGateway | null): RouteHandler =>
+export const createUploadHandler = (
+  gateway: HermesGateway | null,
+  policy: RequestPolicy,
+): RouteHandler =>
   async (request) => {
     const authenticated = requireContext(request);
     if (!authenticated.ok) return authenticated.response;
-    const originFailure = requireSameOrigin(request, authenticated.context);
+    const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
     const availableGateway = requireGateway(request, authenticated.context, gateway);
     if (availableGateway instanceof Response) return availableGateway;

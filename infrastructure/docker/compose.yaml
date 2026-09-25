@@ -82,6 +82,7 @@ services:
     environment:
       HOSTNAME: 0.0.0.0
       PIH_API_INTERNAL_URL: http://api:3001
+      PUBLIC_ORIGIN: http://127.0.0.1:${PIH_WEB_PORT:-3000}
       PORT: "3000"
     depends_on:
       api:

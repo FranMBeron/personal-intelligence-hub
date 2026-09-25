@@ -76,7 +76,9 @@ Cloning this public repository does not expose a deployment. Copy
 secret manager or restrictive local file; never commit working credentials.
 
 The web application expects an identity-aware ingress to validate the user and
-forward a delegated `Authorization: Bearer ...` header. `PIH_API_INTERNAL_URL`
+forward a delegated `Authorization: Bearer ...` header. `PUBLIC_ORIGIN`
+declares the one browser origin allowed to perform mutations; client-supplied
+forwarding headers are never trusted to derive it. `PIH_API_INTERNAL_URL`
 selects the private personal-data API. Hermes is enabled only when both
 `HERMES_INTERNAL_URL` and `HERMES_SERVICE_TOKEN` are present; without that
 complete server-only pair, conversation and agent features remain visibly

@@ -128,6 +128,8 @@ const authenticatedHeaders = (extra?: HeadersInit): Headers => {
   return headers;
 };
 
+const requestPolicy = { publicOrigin: "https://pih.example" } as const;
+
 describe("Hermes BFF handlers", () => {
   it("returns a problem when delegated authorization is missing", async () => {
     const response = await createCapabilitiesHandler(new FakeHermesGateway())(
@@ -142,7 +144,10 @@ describe("Hermes BFF handlers", () => {
   });
 
   it("rejects cross-origin state changes", async () => {
-    const response = await createConversationHandler(new FakeHermesGateway())(
+    const response = await createConversationHandler(
+      new FakeHermesGateway(),
+      requestPolicy,
+    )(
       new Request("https://pih.example/api/ui/v1/conversations", {
         method: "POST",
         headers: authenticatedHeaders({ origin: "https://attacker.example" }),
@@ -154,13 +159,35 @@ describe("Hermes BFF handlers", () => {
     await expect(response.json()).resolves.toMatchObject({ code: "forbidden" });
   });
 
-  it("accepts the application origin reconstructed by a trusted ingress", async () => {
-    const response = await createConversationHandler(new FakeHermesGateway())(
+  it("rejects an origin authorized only by client-supplied forwarding headers", async () => {
+    const response = await createConversationHandler(
+      new FakeHermesGateway(),
+      requestPolicy,
+    )(
       new Request("http://internal-web:3000/api/ui/v1/conversations", {
         method: "POST",
         headers: authenticatedHeaders({
-          "x-forwarded-host": "pih.example",
+          origin: "https://attacker.example",
+          "x-forwarded-host": "attacker.example",
           "x-forwarded-proto": "https",
+        }),
+        body: "{}",
+      }),
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it("accepts the configured public origin behind the local ingress", async () => {
+    const response = await createConversationHandler(
+      new FakeHermesGateway(),
+      requestPolicy,
+    )(
+      new Request("http://internal-web:3000/api/ui/v1/conversations", {
+        method: "POST",
+        headers: authenticatedHeaders({
+          "x-forwarded-host": "attacker.example",
+          "x-forwarded-proto": "http",
         }),
         body: "{}",
       }),
@@ -190,7 +217,10 @@ describe("Hermes BFF handlers", () => {
   });
 
   it("rejects strict conversation bodies with trusted metadata", async () => {
-    const response = await createConversationHandler(new FakeHermesGateway())(
+    const response = await createConversationHandler(
+      new FakeHermesGateway(),
+      requestPolicy,
+    )(
       new Request("https://pih.example/api/ui/v1/conversations", {
         method: "POST",
         headers: authenticatedHeaders({ "content-type": "application/json" }),
@@ -210,7 +240,10 @@ describe("Hermes BFF handlers", () => {
     async (idempotencyKey) => {
       const headers = authenticatedHeaders({ "content-type": "application/json" });
       if (idempotencyKey !== undefined) headers.set("idempotency-key", idempotencyKey);
-      const response = await createSendMessageHandler(new FakeHermesGateway())(
+      const response = await createSendMessageHandler(
+        new FakeHermesGateway(),
+        requestPolicy,
+      )(
         new Request(
           "https://pih.example/api/ui/v1/conversations/conversation-01/messages",
           {
@@ -232,7 +265,7 @@ describe("Hermes BFF handlers", () => {
   it("forwards a validated message exactly once", async () => {
     const gateway = new FakeHermesGateway();
     const body = { parts: [{ kind: "text", text: "Hello" }] };
-    const response = await createSendMessageHandler(gateway)(
+    const response = await createSendMessageHandler(gateway, requestPolicy)(
       new Request(
         "https://pih.example/api/ui/v1/conversations/conversation-01/messages",
         {
@@ -266,7 +299,10 @@ describe("Hermes BFF handlers", () => {
     const form = new FormData();
     form.set("kind", "attachment");
     form.set("media", file);
-    const response = await createUploadHandler(new FakeHermesGateway())(
+    const response = await createUploadHandler(
+      new FakeHermesGateway(),
+      requestPolicy,
+    )(
       new Request("https://pih.example/api/ui/v1/hermes/uploads", {
         method: "POST",
         headers: authenticatedHeaders(),
@@ -281,7 +317,7 @@ describe("Hermes BFF handlers", () => {
     const form = new FormData();
     form.set("kind", "attachment");
     form.set("media", new File(["1234"], "note.txt", { type: "text/plain" }));
-    const response = await createUploadHandler(gateway)(
+    const response = await createUploadHandler(gateway, requestPolicy)(
       new Request("https://pih.example/api/ui/v1/hermes/uploads", {
         method: "POST",
         headers: authenticatedHeaders(),
