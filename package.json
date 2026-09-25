@@ -14,6 +14,7 @@
     "test": "pnpm -r --if-present test",
     "test:integration": "pnpm -r --if-present test:integration",
     "test:compose": "vitest run infrastructure/docker/compose.test.ts",
+    "test:docker-policy": "vitest run infrastructure/docker/hardening.test.ts",
     "test:public": "vitest run scripts/openapi.test.ts",
     "verify:secrets": "sh scripts/verify-no-secrets.sh",
     "openapi:generate": "node --conditions=development --import tsx scripts/generate-openapi.ts",

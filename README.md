@@ -59,6 +59,7 @@ docker compose -f infrastructure/docker/compose.yaml down --volumes
 Run the same lifecycle, migration, restart, and port-boundary check used by CI:
 
 ```bash
+pnpm test:docker-policy
 pnpm test:compose
 pnpm verify:secrets
 ```

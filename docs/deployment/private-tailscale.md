@@ -40,12 +40,26 @@ It serializes migration attempts, records the applied migration checksum, and
 refuses to continue if an already-applied migration file has changed. Review
 the migration image and database backup before starting a new revision.
 
-The production example publishes API and web only on `127.0.0.1`; PostgreSQL
-has no host port. Expose the web/API listener through an already authorized
-Tailscale Serve or private reverse-proxy configuration. Verify from a tailnet
-client and separately confirm the service is unreachable from public network
-interfaces. Do not change firewall, DNS, Tailscale ACL, or Serve state as part
-of this repository plan.
+The production example publishes only web on `127.0.0.1`. API and PostgreSQL
+have no host ports and remain reachable only on private Compose networks.
+Expose the web listener through an authorized Tailscale Serve configuration.
+Verify from a tailnet client and separately confirm the service is unreachable
+from public network interfaces. Never enable Funnel for this deployment.
+
+## Container baseline updates
+
+The Dockerfiles pin the exact multi-platform digest for their Node build and
+runtime base. Production Compose does the same for PostgreSQL. To update a
+base, obtain the current index digest from the official image registry, change
+the human-readable patch tag and digest together, rebuild both images, and run
+the Docker policy, image vulnerability, Compose lifecycle, and functional
+checks before committing. Do not update only the movable tag.
+
+Application runtimes contain the standalone web output or the API production
+dependency bundle rather than a workspace copy. Compose drops all application
+capabilities, prevents privilege escalation, makes their filesystems
+read-only, caps processes/CPU/memory, and rotates local container logs. Do not
+mount the Docker socket or host paths into application containers.
 
 ## Future directory migration
 

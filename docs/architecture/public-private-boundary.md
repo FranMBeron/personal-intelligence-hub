@@ -31,9 +31,10 @@ production configuration.
 ## Automated boundary
 
 CI runs `pnpm verify:secrets`, validates the committed OpenAPI document against
-the frozen base, inspects Compose through its smoke test, and performs all
-tests/builds from a frozen lockfile. Only the pnpm store is cached. Dependabot
-tracks workspace, GitHub Actions, and Docker dependencies.
+the frozen base, checks the container confinement policy, inspects Compose
+through its smoke test, and performs all tests/builds from a frozen lockfile.
+Only the pnpm store is cached. Dependabot tracks workspace, GitHub Actions, and
+Docker dependencies.
 
 Before publishing any revision, inspect tracked filenames, staged diffs,
 generated OpenAPI, container host ports, and Git history. A passing scanner is

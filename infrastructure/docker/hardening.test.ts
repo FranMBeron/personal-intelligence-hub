@@ -1,0 +1,100 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
+import { parse } from "yaml";
+import { describe, expect, it } from "vitest";
+
+const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
+
+type Service = {
+  cap_drop?: string[];
+  cpus?: number | string;
+  image?: string;
+  mem_limit?: string;
+  pids_limit?: number;
+  ports?: string[];
+  privileged?: boolean;
+  read_only?: boolean;
+  security_opt?: string[];
+  volumes?: Array<string | { source?: string; target?: string }>;
+  command?: string[];
+};
+
+const read = (path: string) => readFile(`${repositoryRoot}/${path}`, "utf8");
+
+const readCompose = async (path: string) =>
+  parse(await read(path)) as { services: Record<string, Service> };
+
+const volumeTargets = (service: Service): string[] =>
+  (service.volumes ?? []).map((volume) =>
+    typeof volume === "string" ? volume.split(":").at(-1) ?? volume : volume.target ?? "",
+  );
+
+describe.each([
+  "infrastructure/docker/compose.yaml",
+  "infrastructure/docker/compose.production.yaml",
+])("container policy in %s", (composePath) => {
+  it("confines application containers without host or Docker control", async () => {
+    const { services } = await readCompose(composePath);
+
+    for (const serviceName of ["migrate", "api", "web"]) {
+      const service = services[serviceName];
+      expect(service, `${serviceName} is missing`).toBeDefined();
+      expect(service?.cap_drop).toContain("ALL");
+      expect(service?.security_opt).toContain("no-new-privileges:true");
+      expect(service?.pids_limit).toBeGreaterThan(0);
+      expect(service?.mem_limit).toMatch(/^\d+[mg]$/);
+      expect(Number(service?.cpus)).toBeGreaterThan(0);
+      expect(service?.read_only).toBe(true);
+      expect(service?.privileged ?? false).toBe(false);
+      expect(volumeTargets(service ?? {})).not.toContain("/var/run/docker.sock");
+    }
+  });
+
+  it("never publishes PostgreSQL", async () => {
+    const { services } = await readCompose(composePath);
+    expect(services.postgres?.ports ?? []).toEqual([]);
+  });
+
+  it("runs migrations from the production dependency bundle", async () => {
+    const { services } = await readCompose(composePath);
+    expect(services.migrate?.command).toEqual([
+      "node",
+      "node_modules/@personal-intelligence-hub/database/dist/src/migrate.js",
+    ]);
+  });
+});
+
+describe("production network boundary", () => {
+  it("publishes only the web service and binds it to loopback", async () => {
+    const { services } = await readCompose(
+      "infrastructure/docker/compose.production.yaml",
+    );
+
+    expect(services.api?.ports ?? []).toEqual([]);
+    expect(services.web?.ports).toEqual([
+      "127.0.0.1:${PIH_WEB_PORT:-3000}:3000",
+    ]);
+  });
+});
+
+describe.each(["api", "web"])("%s runtime image", (application) => {
+  it("uses a pinned base, drops privileges and avoids copying the workspace", async () => {
+    const dockerfile = await read(`infrastructure/docker/${application}.Dockerfile`);
+
+    expect(dockerfile).toMatch(
+      /node:22\.23\.3-alpine3\.24@sha256:[a-f0-9]{64}/,
+    );
+    expect(dockerfile).toContain("USER node");
+    expect(dockerfile).not.toMatch(/COPY --from=build[^\n]*\/workspace\s+\/app/);
+  });
+});
+
+describe("Docker build context", () => {
+  it("excludes private local documentation and secrets", async () => {
+    const dockerignore = await read(".dockerignore");
+    expect(dockerignore).toMatch(/^\.local-docs$/m);
+    expect(dockerignore).toMatch(/^\.env\.\*$/m);
+    expect(dockerignore).toMatch(/^secrets$/m);
+  });
+});

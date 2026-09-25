@@ -1,4 +1,5 @@
 .git
+.local-docs
 .worktrees
 **/node_modules
 **/dist

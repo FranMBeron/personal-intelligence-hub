@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine3.24@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
     environment:
       POSTGRES_DB: pih_local
       POSTGRES_PASSWORD: fictional-local-password
@@ -12,6 +12,27 @@ services:
       retries: 30
       start_period: 3s
     restart: unless-stopped
+    init: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    cpus: "2.0"
+    mem_limit: 1g
+    shm_size: 128m
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     volumes:
       - pih-postgres-data:/var/lib/postgresql/data
     networks:
@@ -21,16 +42,29 @@ services:
     build:
       context: ../..
       dockerfile: infrastructure/docker/api.Dockerfile
-    command: ["node", "packages/database/dist/src/migrate.js"]
+    command: ["node", "node_modules/@personal-intelligence-hub/database/dist/src/migrate.js"]
     environment:
       DATABASE_URL: postgresql://pih_local:fictional-local-password@postgres:5432/pih_local
     depends_on:
       postgres:
         condition: service_healthy
     read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    cpus: "0.5"
+    mem_limit: 256m
     tmpfs:
       - /tmp:size=16m,mode=1777
     restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     networks:
       - data
 
@@ -70,9 +104,23 @@ services:
     ports:
       - 127.0.0.1:${PIH_API_PORT:-3001}:3001
     read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    cpus: "1.0"
+    mem_limit: 512m
     tmpfs:
       - /tmp:size=16m,mode=1777
     restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     networks:
       - data
       - edge
@@ -107,9 +155,23 @@ services:
     ports:
       - 127.0.0.1:${PIH_WEB_PORT:-3000}:3000
     read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    cpus: "1.0"
+    mem_limit: 512m
     tmpfs:
       - /tmp:size=16m,mode=1777
     restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     networks:
       - edge
 
