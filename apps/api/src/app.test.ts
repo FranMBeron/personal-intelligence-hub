@@ -84,6 +84,7 @@ const transactionPorts: TransactionPorts = { mutations, queries };
 const makeApp = (
   authenticator: Authenticator = new FakeAuthenticator(),
   config: PublicConfig = publicConfig,
+  bodyLimit = 1_048_576,
 ) =>
   buildApp({
     authenticator,
@@ -98,6 +99,7 @@ const makeApp = (
     requestIdFactory: () => requestId,
     publicConfig: config,
     runtime: "test",
+    bodyLimit,
     logger: false,
   });
 
@@ -334,6 +336,43 @@ describe("API foundation", () => {
         },
       ],
     });
+  });
+
+  test("rejects a request body above the configured byte limit before the handler", async () => {
+    const app = makeApp(new FakeAuthenticator(), publicConfig, 64);
+    apps.push(app);
+    app.post(
+      "/v1/testing/mutation",
+      {
+        config: {
+          pihSecurity: { scopes: ["second-brain:write"], mutation: true },
+        },
+      },
+      async () => ({ accepted: true }),
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/testing/mutation",
+      headers: {
+        authorization: "Bearer valid-token",
+        "x-origin-channel": "test",
+        "idempotency-key": "test-key-123",
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ value: "x".repeat(128) }),
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(response.json()).toEqual(
+      expectedProblem(
+        "payload_too_large",
+        "Payload too large",
+        413,
+        "The request body exceeds the configured byte limit.",
+        "/v1/testing/mutation",
+      ),
+    );
   });
 
   test("turns an invalid caller request ID into a validation problem with a safe generated ID", async () => {

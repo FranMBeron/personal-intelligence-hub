@@ -41,6 +41,7 @@ export type AppDependencies = Readonly<{
   requestIdFactory: RequestIdFactory;
   publicConfig: PublicConfig;
   runtime: RuntimeEnvironment;
+  bodyLimit?: number;
   logger?: AppLoggerOptions;
   allowedOrigins?: readonly string[];
   synchronization?: SynchronizationDependencies;
@@ -100,6 +101,7 @@ export const buildApp = (dependencies: AppDependencies): FastifyInstance => {
 
   const app = fastify({
     logger: resolveLoggerOptions(dependencies.logger),
+    bodyLimit: dependencies.bodyLimit ?? 1_048_576,
     ajv: { customOptions: { removeAdditional: false } },
   });
   app.decorate("pihDependencies", {

@@ -41,6 +41,20 @@ describe("API problem contract", () => {
     ).toThrow();
   });
 
+  it("documents request payloads that exceed an operator limit", () => {
+    expect(
+      ApiProblemSchema.parse({
+        type: "https://pih.example/problems/payload-too-large",
+        title: "Payload too large",
+        status: 413,
+        detail: "The request body exceeds the configured byte limit.",
+        instance: "/v1/cards",
+        code: "payload_too_large",
+        requestId,
+      }),
+    ).toMatchObject({ status: 413, code: "payload_too_large" });
+  });
+
   it("rejects malformed statuses and request identifiers", () => {
     expect(() =>
       ApiProblemSchema.parse({

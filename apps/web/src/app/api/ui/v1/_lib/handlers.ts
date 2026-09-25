@@ -21,6 +21,14 @@ import {
 } from "../../../../../server/context";
 import type { HermesGateway } from "../../../../../server/ports/hermes-gateway";
 import { GatewayError } from "../../../../../server/problems";
+import {
+  IdentityConcurrencyLimitError,
+  type IdentityConcurrencyLimiter,
+} from "../../../../../server/identity-concurrency";
+import {
+  IdentityRateLimitError,
+  type IdentityRateLimiter,
+} from "../../../../../server/identity-rate-limit";
 
 type RouteContext = Readonly<{
   params: Promise<{ conversationId: string }>;
@@ -35,6 +43,9 @@ type ContextualRouteHandler = (
 export type RequestPolicy = Readonly<{
   publicOrigin: string;
   identity: RequestIdentityAdapter;
+  maxUploadBodyBytes: number;
+  agentConcurrency: IdentityConcurrencyLimiter;
+  agentRateLimit: IdentityRateLimiter | null;
 }>;
 
 const problemResponse = (problem: ApiProblem): Response =>
@@ -138,6 +149,21 @@ const failureResponse = (
   context: RequestContext,
   error: unknown,
 ): Response => {
+  if (
+    error instanceof IdentityConcurrencyLimitError ||
+    error instanceof IdentityRateLimitError
+  ) {
+    return problemResponse(
+      problem(
+        request,
+        context,
+        429,
+        "too_many_requests",
+        "Too many requests",
+        "The configured per-identity concurrency limit was reached.",
+      ),
+    );
+  }
   if (error instanceof GatewayError) return problemResponse(error.problem);
   if (error instanceof ZodError) return problemResponse(validationProblem(request, context, error));
   return problemResponse(
@@ -211,9 +237,13 @@ export const createConversationHandler = (
     const availableGateway = requireGateway(request, authenticated.context, gateway);
     if (availableGateway instanceof Response) return availableGateway;
     try {
+      policy.agentRateLimit?.consume(authenticated.context.concurrencyKey);
       const body = await parseJson(request, CreateConversationBodySchema);
       const value = ConversationSchema.parse(
-        await availableGateway.createConversation(authenticated.context, body),
+        await policy.agentConcurrency.run(
+          authenticated.context.concurrencyKey,
+          () => availableGateway.createConversation(authenticated.context, body),
+        ),
       );
       return jsonResponse(value, authenticated.context.requestId, 201);
     } catch (error) {
@@ -248,14 +278,19 @@ export const createSendMessageHandler = (
     const availableGateway = requireGateway(request, authenticated.context, gateway);
     if (availableGateway instanceof Response) return availableGateway;
     try {
+      policy.agentRateLimit?.consume(authenticated.context.concurrencyKey);
       const body = await parseJson(request, SendMessageBodySchema);
       const { conversationId } = await routeContext.params;
       const value = MessageSchema.parse(
-        await availableGateway.sendMessage(
-          authenticated.context,
-          conversationId,
-          idempotency.data,
-          body,
+        await policy.agentConcurrency.run(
+          authenticated.context.concurrencyKey,
+          () =>
+            availableGateway.sendMessage(
+              authenticated.context,
+              conversationId,
+              idempotency.data,
+              body,
+            ),
         ),
       );
       return jsonResponse(value, authenticated.context.requestId);
@@ -273,9 +308,27 @@ export const createUploadHandler = (
     if (!authenticated.ok) return authenticated.response;
     const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
+    const declaredLength = request.headers.get("content-length");
+    if (
+      declaredLength !== null &&
+      /^\d+$/u.test(declaredLength) &&
+      Number(declaredLength) > policy.maxUploadBodyBytes
+    ) {
+      return problemResponse(
+        problem(
+          request,
+          authenticated.context,
+          413,
+          "payload_too_large",
+          "Payload too large",
+          "The upload request exceeds the configured byte limit.",
+        ),
+      );
+    }
     const availableGateway = requireGateway(request, authenticated.context, gateway);
     if (availableGateway instanceof Response) return availableGateway;
     try {
+      policy.agentRateLimit?.consume(authenticated.context.concurrencyKey);
       const form = await request.formData();
       const mediaEntries = form.getAll("media");
       const media = mediaEntries[0];
@@ -294,7 +347,10 @@ export const createUploadHandler = (
         ]);
       }
       const capabilities = HermesCapabilitiesSchema.parse(
-        await availableGateway.capabilities(authenticated.context),
+        await policy.agentConcurrency.run(
+          authenticated.context.concurrencyKey,
+          () => availableGateway.capabilities(authenticated.context),
+        ),
       );
       const negotiated =
         kind === "voice" ? capabilities.voice : capabilities.attachments;
@@ -323,7 +379,10 @@ export const createUploadHandler = (
         );
       }
       const value = UploadedMediaSchema.parse(
-        await availableGateway.upload(authenticated.context, media, kind),
+        await policy.agentConcurrency.run(
+          authenticated.context.concurrencyKey,
+          () => availableGateway.upload(authenticated.context, media, kind),
+        ),
       );
       return jsonResponse(value, authenticated.context.requestId, 201);
     } catch (error) {

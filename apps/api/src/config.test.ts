@@ -19,6 +19,7 @@ const validEnvironment = {
   OUTBOX_RETENTION_DAYS: "7",
   HOST: "127.0.0.1",
   PORT: "3001",
+  MAX_REQUEST_BODY_BYTES: "1048576",
 } satisfies NodeJS.ProcessEnv;
 
 describe("private configuration", () => {
@@ -41,6 +42,7 @@ describe("private configuration", () => {
       outboxRetentionDays: 7,
       host: "127.0.0.1",
       port: 3001,
+      maxRequestBodyBytes: 1_048_576,
     });
   });
 

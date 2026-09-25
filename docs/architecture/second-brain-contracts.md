@@ -225,12 +225,20 @@ this strict RFC 9457-compatible shape:
 ```
 
 Allowed codes are `authentication_required`, `invalid_token`, `forbidden`,
-`validation_failed`, `not_found`, `precondition_required`,
+`payload_too_large`, `too_many_requests`, `validation_failed`, `not_found`, `precondition_required`,
 `version_conflict`, `idempotency_key_required`, `idempotency_key_reused`,
 `invalid_cursor`, `cursor_expired`, `conflict`, `internal_error`, and
 `dependency_unavailable`. Fastify, Zod, authentication, domain and unexpected
 errors all pass through one mapper. Internal messages and stacks are never
 returned.
+
+Fastify rejects bodies above `MAX_REQUEST_BODY_BYTES` before route handling.
+The web tier rejects a declared upload above `MAX_UPLOAD_BODY_BYTES` before
+multipart parsing. Agent mutations use per-identity concurrency and an optional
+simple per-minute loop guard; these local bounds are operational safety controls,
+not a distributed Internet abuse-prevention system. Non-streaming upstream
+requests use a configurable abort timeout, and mutation retries preserve their
+idempotency and request identifiers.
 
 ## Audit, outbox and recovery
 

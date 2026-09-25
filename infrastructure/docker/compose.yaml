@@ -46,6 +46,7 @@ services:
       HOST: 0.0.0.0
       IDEMPOTENCY_RETENTION_HOURS: "24"
       LOG_LEVEL: info
+      MAX_REQUEST_BODY_BYTES: "1048576"
       NODE_ENV: production
       OIDC_ALLOWED_ALGORITHMS: RS256
       OIDC_AUDIENCE: personal-intelligence-hub-local
@@ -85,6 +86,10 @@ services:
       HOSTNAME: 0.0.0.0
       PIH_API_INTERNAL_URL: http://api:3001
       PUBLIC_ORIGIN: http://127.0.0.1:${PIH_WEB_PORT:-3000}
+      MAX_UPLOAD_BODY_BYTES: "10485760"
+      MAX_CONCURRENT_AGENT_OPERATIONS: "2"
+      UPSTREAM_TIMEOUT_MS: "5000"
+      AGENT_REQUESTS_PER_MINUTE: "0"
       PORT: "3000"
     depends_on:
       api:

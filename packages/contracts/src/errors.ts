@@ -6,6 +6,8 @@ export const ApiProblemCodeSchema = z.enum([
   "authentication_required",
   "invalid_token",
   "forbidden",
+  "payload_too_large",
+  "too_many_requests",
   "validation_failed",
   "not_found",
   "precondition_required",

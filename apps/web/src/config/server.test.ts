@@ -6,6 +6,10 @@ describe("loadServerConfig", () => {
   it("uses the local PIH API default without configuring Hermes", () => {
     expect(loadServerConfig({})).toEqual({
       authMode: "oidc",
+      maxUploadBodyBytes: 10_485_760,
+      maxConcurrentAgentOperations: 2,
+      upstreamTimeoutMs: 5_000,
+      agentRequestsPerMinute: 0,
       pihApiInternalUrl: "http://127.0.0.1:3001/",
       publicOrigin: "http://127.0.0.1:3000",
     });
@@ -22,6 +26,10 @@ describe("loadServerConfig", () => {
       }),
     ).toEqual({
       authMode: "oidc",
+      maxUploadBodyBytes: 10_485_760,
+      maxConcurrentAgentOperations: 2,
+      upstreamTimeoutMs: 5_000,
+      agentRequestsPerMinute: 0,
       pihApiInternalUrl: "https://api.example.test/base",
       publicOrigin: "https://pih.example.test",
       hermesInternalUrl: "https://hermes.example.test/",

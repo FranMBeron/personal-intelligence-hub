@@ -1,3 +1,4 @@
+import { CardSchema } from "@personal-intelligence-hub/contracts";
 import { describe, expect, test, vi } from "vitest";
 
 import { HermesApiError, HermesSecondBrainClient } from "../client.js";
@@ -129,6 +130,43 @@ describe("restricted Hermes Second Brain tools", () => {
         originalContent: card.originalContent,
       });
     }
+  });
+
+  test("bounds each idempotent transport attempt with a configurable timeout", async () => {
+    const requests: Request[] = [];
+    const fetchImplementation = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const request = input as Request;
+      requests.push(request);
+      return new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener("abort", () => reject(request.signal.reason));
+      });
+    });
+    const client = new HermesSecondBrainClient({
+      baseUrl: "http://api.internal.test:3001",
+      credential: "fictional-runtime-credential",
+      fetch: fetchImplementation as typeof fetch,
+      idempotencyKeyFactory: () => "hermes-idempotency-timeout",
+      requestIdFactory: () => "70000000-0000-4000-8000-000000000081",
+      timeoutMs: 100,
+    });
+
+    const outcome = client
+      .mutate({
+        method: "PATCH",
+        path: `/v1/cards/${ids.card}`,
+        responseSchema: CardSchema,
+        body: { title: "Bounded request" },
+      })
+      .then(() => "unexpected-success", () => "aborted");
+
+    await expect(
+      Promise.race([
+        outcome,
+        new Promise<string>((resolve) => setTimeout(() => resolve("too-slow"), 500)),
+      ]),
+    ).resolves.toBe("aborted");
+    expect(requests).toHaveLength(2);
+    expect(requests.every(({ signal }) => signal.aborted)).toBe(true);
   });
 
   test.each([

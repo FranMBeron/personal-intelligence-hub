@@ -24,6 +24,7 @@ type Options = Readonly<{
   baseUrl: string;
   serviceToken: string;
   fetcher?: typeof fetch;
+  timeoutMs?: number;
 }>;
 
 type JsonMethod = "GET" | "POST";
@@ -32,11 +33,13 @@ export class HttpHermesGateway implements HermesGateway {
   readonly #baseUrl: string;
   readonly #serviceToken: string;
   readonly #fetcher: typeof fetch;
+  readonly #timeoutMs: number;
 
-  constructor({ baseUrl, serviceToken, fetcher = fetch }: Options) {
+  constructor({ baseUrl, serviceToken, fetcher = fetch, timeoutMs = 2_000 }: Options) {
     this.#baseUrl = baseUrl;
     this.#serviceToken = serviceToken;
     this.#fetcher = fetcher;
+    this.#timeoutMs = timeoutMs;
   }
 
   #headers(context: RequestContext): Headers {
@@ -66,7 +69,7 @@ export class HttpHermesGateway implements HermesGateway {
         method,
         cache: "no-store",
         headers,
-        signal: AbortSignal.timeout(2_000),
+        signal: AbortSignal.timeout(this.#timeoutMs),
       };
       if (body !== undefined) requestInit.body = JSON.stringify(body);
       const response = await this.#fetcher(
@@ -103,7 +106,7 @@ export class HttpHermesGateway implements HermesGateway {
           cache: "no-store",
           headers: this.#headers(context),
           body: form,
-          signal: AbortSignal.timeout(2_000),
+          signal: AbortSignal.timeout(this.#timeoutMs),
         }),
       );
       if (!response.ok) throw dependencyUnavailable("Hermes", context.requestId);

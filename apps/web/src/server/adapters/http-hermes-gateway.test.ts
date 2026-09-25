@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GatewayError } from "../problems";
 import { HttpHermesGateway } from "./http-hermes-gateway";
 
 const context = {
   authorization: "Bearer delegated-access-token",
+  concurrencyKey: "oidc:fictional-identity",
   requestId: "5af093d0-84f1-4759-a92e-bbe2949ab957",
 } as const;
 const occurredAt = "2026-09-18T12:00:00.000Z";
@@ -22,6 +23,10 @@ const createGateway = (fetcher: typeof fetch) =>
     serviceToken: "fictional-hermes-service-token",
     fetcher,
   });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("HttpHermesGateway", () => {
   it("keeps service authentication separate from delegated identity", async () => {
@@ -123,5 +128,33 @@ describe("HttpHermesGateway", () => {
     expect(JSON.stringify((error as GatewayError).problem)).not.toMatch(
       /fictional-hermes-service-token|private diagnostic|hermes\.example/u,
     );
+  });
+
+  it("aborts non-streaming requests at the configured timeout", async () => {
+    const fetcher = vi.fn(
+      async (input: RequestInfo | URL) =>
+        new Promise<Response>((_resolve, reject) => {
+          const request = input as Request;
+          request.signal.addEventListener("abort", () => reject(request.signal.reason));
+        }),
+    );
+    const gateway = new HttpHermesGateway({
+      baseUrl: "https://hermes.example.test",
+      serviceToken: "fictional-hermes-service-token",
+      fetcher: fetcher as typeof fetch,
+      timeoutMs: 100,
+    });
+
+    const failure = gateway.capabilities(context).catch((error: unknown) => error);
+    const request = (fetcher.mock.calls as unknown as [Request][])[0]?.[0] as Request;
+    expect(request.signal.aborted).toBe(false);
+    await expect(
+      Promise.race([
+        failure.then(() => "aborted"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("too-slow"), 500)),
+      ]),
+    ).resolves.toBe("aborted");
+    expect(request.signal.aborted).toBe(true);
+    await expect(failure).resolves.toBeInstanceOf(GatewayError);
   });
 });

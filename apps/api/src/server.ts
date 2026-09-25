@@ -57,6 +57,7 @@ export const createServer = (
     requestIdFactory: randomUUID,
     publicConfig: buildPublicConfig(dependencies.publicConfig),
     runtime: config.nodeEnv,
+    bodyLimit: config.maxRequestBodyBytes,
     logger: { level: config.logLevel },
     allowedOrigins: config.allowedOrigins,
     ...(dependencies.synchronization === undefined

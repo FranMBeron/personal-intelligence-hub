@@ -1,11 +1,12 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { UuidSchema, type ApiProblem } from "@personal-intelligence-hub/contracts";
 
 export type RequestContext = Readonly<{
   authorization: string;
+  concurrencyKey: string;
   requestId: string;
 }>;
 
@@ -14,7 +15,7 @@ export type RequestContextResult =
   | Readonly<{ ok: false; problem: ApiProblem }>;
 
 export type IdentityResolution =
-  | Readonly<{ ok: true; authorization: string }>
+  | Readonly<{ ok: true; authorization: string; concurrencyKey: string }>
   | Readonly<{
       ok: false;
       status: 401 | 403;
@@ -37,7 +38,11 @@ export const oidcRequestIdentity: RequestIdentityAdapter = {
         detail: "A delegated bearer authorization is required.",
       };
     }
-    return { ok: true, authorization };
+    return {
+      ok: true,
+      authorization,
+      concurrencyKey: `oidc:${createHash("sha256").update(authorization).digest("base64url")}`,
+    };
   },
 };
 
@@ -72,7 +77,11 @@ export const deriveRequestContext = (
 
   return {
     ok: true,
-    context: { authorization: resolution.authorization, requestId },
+    context: {
+      authorization: resolution.authorization,
+      concurrencyKey: resolution.concurrencyKey,
+      requestId,
+    },
   };
   }
 };

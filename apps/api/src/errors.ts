@@ -35,6 +35,16 @@ const problems: Readonly<Record<ApiProblemCode, ProblemDefinition>> = {
     detail:
       "The authenticated principal is not allowed to perform this operation.",
   },
+  payload_too_large: {
+    status: 413,
+    title: "Payload too large",
+    detail: "The request body exceeds the configured byte limit.",
+  },
+  too_many_requests: {
+    status: 429,
+    title: "Too many requests",
+    detail: "The configured concurrency limit was reached.",
+  },
   validation_failed: {
     status: 422,
     title: "Validation failed",
@@ -164,6 +174,14 @@ const normalizeError = (error: unknown): ApplicationError => {
   }
   if (error instanceof ZodError) {
     return new ValidationError(zodErrors(error));
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "FST_ERR_CTP_BODY_TOO_LARGE"
+  ) {
+    return new ApplicationError("payload_too_large", { cause: error });
   }
   if (typeof error === "object" && error !== null && "code" in error) {
     const parsedCode = ApiProblemCodeSchema.safeParse(error.code);

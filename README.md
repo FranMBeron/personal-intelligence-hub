@@ -93,6 +93,10 @@ browser.
 Web and API must receive the same `PIH_INTERNAL_AUTH_KEY` in Tailscale mode.
 Only web receives `TAILSCALE_ALLOWED_USERS`; use `login=actor-uuid` entries and
 keep both values outside Git. OIDC settings are required only in OIDC mode.
+Operators can configure API/request and upload byte limits, per-identity agent
+concurrency, upstream timeouts, and a simple per-minute loop guard. The loop
+guard is optional and local to one web process; it is not advertised as a
+distributed public rate limiter.
 
 Architecture details live in
 [`docs/architecture/second-brain.md`](docs/architecture/second-brain.md), with

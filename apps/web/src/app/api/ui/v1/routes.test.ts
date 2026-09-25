@@ -15,6 +15,8 @@ import {
   oidcRequestIdentity,
   type RequestContext,
 } from "../../../../server/context";
+import { IdentityConcurrencyLimiter } from "../../../../server/identity-concurrency";
+import { IdentityRateLimiter } from "../../../../server/identity-rate-limit";
 import type { HermesGateway } from "../../../../server/ports/hermes-gateway";
 import { dependencyUnavailable } from "../../../../server/problems";
 import {
@@ -122,6 +124,24 @@ class FakeHermesGateway implements HermesGateway {
   }
 }
 
+class SlowHermesGateway extends FakeHermesGateway {
+  active = 0;
+  maximumActive = 0;
+
+  override async sendMessage(
+    context: RequestContext,
+    conversationId: string,
+    idempotencyKey: string,
+    body: SendMessageBody,
+  ): Promise<Message> {
+    this.active += 1;
+    this.maximumActive = Math.max(this.maximumActive, this.active);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    this.active -= 1;
+    return super.sendMessage(context, conversationId, idempotencyKey, body);
+  }
+}
+
 const authenticatedHeaders = (extra?: HeadersInit): Headers => {
   const headers = new Headers({
     authorization: "Bearer delegated-access-token",
@@ -134,6 +154,9 @@ const authenticatedHeaders = (extra?: HeadersInit): Headers => {
 const requestPolicy = {
   publicOrigin: "https://pih.example",
   identity: oidcRequestIdentity,
+  maxUploadBodyBytes: 1_048_576,
+  agentConcurrency: new IdentityConcurrencyLimiter(2),
+  agentRateLimit: null,
 } as const;
 
 describe("Hermes BFF handlers", () => {
@@ -298,6 +321,68 @@ describe("Hermes BFF handlers", () => {
     });
   });
 
+  it("rejects concurrent agent work above the per-identity limit", async () => {
+    const gateway = new SlowHermesGateway();
+    const handler = createSendMessageHandler(gateway, {
+      ...requestPolicy,
+      agentConcurrency: new IdentityConcurrencyLimiter(1),
+    });
+    const request = () =>
+      new Request(
+        "https://pih.example/api/ui/v1/conversations/conversation-01/messages",
+        {
+          method: "POST",
+          headers: authenticatedHeaders({
+            "content-type": "application/json",
+            "idempotency-key": "message-concurrency-0001",
+          }),
+          body: JSON.stringify({ parts: [{ kind: "text", text: "Hello" }] }),
+        },
+      );
+
+    const responses = await Promise.all([
+      handler(request(), { params: Promise.resolve({ conversationId: "conversation-01" }) }),
+      handler(request(), { params: Promise.resolve({ conversationId: "conversation-01" }) }),
+    ]);
+
+    expect(responses.map(({ status }) => status).toSorted()).toEqual([200, 429]);
+    expect(gateway.maximumActive).toBe(1);
+    await expect(
+      responses.find(({ status }) => status === 429)?.json(),
+    ).resolves.toMatchObject({ code: "too_many_requests" });
+  });
+
+  it("stops an accidental per-identity request loop when configured", async () => {
+    const gateway = new FakeHermesGateway();
+    const handler = createSendMessageHandler(gateway, {
+      ...requestPolicy,
+      agentRateLimit: new IdentityRateLimiter({ maximum: 1 }),
+    });
+    const request = () =>
+      new Request(
+        "https://pih.example/api/ui/v1/conversations/conversation-01/messages",
+        {
+          method: "POST",
+          headers: authenticatedHeaders({
+            "content-type": "application/json",
+            "idempotency-key": "message-loop-0001",
+          }),
+          body: JSON.stringify({ parts: [{ kind: "text", text: "Hello" }] }),
+        },
+      );
+    const routeContext = {
+      params: Promise.resolve({ conversationId: "conversation-01" }),
+    };
+
+    expect((await handler(request(), routeContext)).status).toBe(200);
+    const rejected = await handler(request(), routeContext);
+    expect(rejected.status).toBe(429);
+    await expect(rejected.json()).resolves.toMatchObject({
+      code: "too_many_requests",
+    });
+    expect(gateway.sent).toHaveLength(1);
+  });
+
   it.each([
     { file: new File(["12345"], "large.txt", { type: "text/plain" }), status: 413 },
     {
@@ -319,6 +404,27 @@ describe("Hermes BFF handlers", () => {
       }),
     );
     expect(response.status).toBe(status);
+  });
+
+  it("rejects a declared oversized upload before parsing multipart data", async () => {
+    const response = await createUploadHandler(new FakeHermesGateway(), {
+      ...requestPolicy,
+      maxUploadBodyBytes: 8,
+    })(
+      new Request("https://pih.example/api/ui/v1/hermes/uploads", {
+        method: "POST",
+        headers: authenticatedHeaders({
+          "content-length": "9",
+          "content-type": "multipart/form-data; boundary=invalid",
+        }),
+        body: "not parsed",
+      }),
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "payload_too_large",
+    });
   });
 
   it("returns only an opaque receipt for an approved upload", async () => {

@@ -5,6 +5,7 @@ import { HttpPersonalDataGateway } from "./http-personal-data-gateway";
 
 const context = {
   authorization: "Bearer delegated-access-token",
+  concurrencyKey: "oidc:fictional-identity",
   requestId: "5af093d0-84f1-4759-a92e-bbe2949ab957",
 } as const;
 const checkedAt = "2026-09-18T12:00:00.000Z";

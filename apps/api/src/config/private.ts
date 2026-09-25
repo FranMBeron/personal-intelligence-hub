@@ -34,6 +34,7 @@ const commonConfigShape = {
   outboxRetentionDays: z.number().int().min(7),
   host: z.string().min(1),
   port: z.number().int().min(1).max(65_535),
+  maxRequestBodyBytes: z.number().int().min(1_024).max(10_485_760),
 } as const;
 
 const oidcPrivateConfigSchema = z
@@ -77,6 +78,9 @@ export const loadPrivateConfig = (
     outboxRetentionDays: Number(environment.OUTBOX_RETENTION_DAYS ?? "7"),
     host: environment.HOST ?? "127.0.0.1",
     port: Number(environment.PORT ?? "3001"),
+    maxRequestBodyBytes: Number(
+      environment.MAX_REQUEST_BODY_BYTES ?? "1048576",
+    ),
   };
   const authMode = environment.AUTH_MODE ?? "oidc";
   return privateConfigSchema.parse(

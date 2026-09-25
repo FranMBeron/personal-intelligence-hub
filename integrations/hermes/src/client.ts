@@ -12,6 +12,7 @@ export type MutationRequest<T extends z.ZodType> = Readonly<{
   responseSchema: T;
   body?: unknown;
   ifMatch?: string;
+  signal?: AbortSignal;
 }>;
 
 export class HermesApiError extends Error {
@@ -27,6 +28,7 @@ export class HermesSecondBrainClient {
   readonly #fetch: FetchImplementation;
   readonly #idempotencyKeyFactory: () => string;
   readonly #requestIdFactory: () => string;
+  readonly #timeoutMs: number;
 
   constructor(options: Readonly<{
     baseUrl: string;
@@ -34,6 +36,7 @@ export class HermesSecondBrainClient {
     fetch?: FetchImplementation;
     idempotencyKeyFactory: () => string;
     requestIdFactory: () => string;
+    timeoutMs?: number;
   }>) {
     const baseUrl = new URL(options.baseUrl);
     if (
@@ -53,6 +56,15 @@ export class HermesSecondBrainClient {
     this.#fetch = options.fetch ?? fetch;
     this.#idempotencyKeyFactory = options.idempotencyKeyFactory;
     this.#requestIdFactory = options.requestIdFactory;
+    this.#timeoutMs = options.timeoutMs ?? 5_000;
+    if (!Number.isInteger(this.#timeoutMs) || this.#timeoutMs < 100) {
+      throw new Error("Hermes request timeout must be an integer of at least 100 ms.");
+    }
+  }
+
+  #signal(external?: AbortSignal): AbortSignal {
+    const timeout = AbortSignal.timeout(this.#timeoutMs);
+    return external === undefined ? timeout : AbortSignal.any([external, timeout]);
   }
 
   #url(path: `/v1/${string}`): URL {
@@ -99,6 +111,7 @@ export class HermesSecondBrainClient {
           authorization: `Bearer ${this.#credential}`,
           "x-request-id": requestId,
         },
+        signal: this.#signal(),
       }),
     );
     return {
@@ -131,11 +144,12 @@ export class HermesSecondBrainClient {
                 : { "if-match": request.ifMatch }),
             },
             ...(body === undefined ? {} : { body }),
+            signal: this.#signal(request.signal),
           }),
         );
         break;
       } catch (error) {
-        if (attempt === 2) throw error;
+        if (attempt === 2 || request.signal?.aborted === true) throw error;
       }
     }
     if (response === undefined) {

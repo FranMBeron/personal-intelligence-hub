@@ -10,6 +10,7 @@ describe("deriveRequestContext", () => {
       resolve: async () => ({
         ok: true as const,
         authorization: "Bearer signed-internal-identity",
+        concurrencyKey: "test:identity",
       }),
     };
 
@@ -23,6 +24,7 @@ describe("deriveRequestContext", () => {
       ok: true,
       context: {
         authorization: "Bearer signed-internal-identity",
+        concurrencyKey: "test:identity",
         requestId: generatedRequestId,
       },
     });
@@ -67,6 +69,7 @@ describe("deriveRequestContext", () => {
       ok: true,
       context: {
         authorization: "Bearer delegated-access-token",
+        concurrencyKey: expect.stringMatching(/^oidc:/u),
         requestId,
       },
     });

@@ -92,6 +92,10 @@ export class TailscaleRequestIdentity implements RequestIdentityAdapter {
       .setExpirationTime(issuedAt + 30)
       .sign(this.#signingKey);
 
-    return { ok: true, authorization: `Bearer ${token}` };
+    return {
+      ok: true,
+      authorization: `Bearer ${token}`,
+      concurrencyKey: `tailscale:${login}`,
+    };
   }
 }

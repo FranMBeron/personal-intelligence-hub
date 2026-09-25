@@ -49,6 +49,10 @@ const ServerConfigSchema = z
     authMode: z.enum(["oidc", "tailscale"]),
     internalAuthKey: z.string().min(32).optional(),
     tailscaleAllowedUsers: z.record(z.string(), z.uuid()).optional(),
+    maxUploadBodyBytes: z.number().int().min(1_024).max(104_857_600),
+    maxConcurrentAgentOperations: z.number().int().min(1).max(16),
+    upstreamTimeoutMs: z.number().int().min(100).max(60_000),
+    agentRequestsPerMinute: z.number().int().min(0).max(10_000),
     pihApiInternalUrl: uncredentialedHttpUrl,
     publicOrigin: uncredentialedHttpUrl.transform((value, context) => {
       const url = new URL(value);
@@ -102,6 +106,16 @@ export const loadServerConfig = (
     authMode: environment.AUTH_MODE ?? "oidc",
     internalAuthKey: environment.PIH_INTERNAL_AUTH_KEY,
     tailscaleAllowedUsers: parseAllowedUsers(environment.TAILSCALE_ALLOWED_USERS),
+    maxUploadBodyBytes: Number(
+      environment.MAX_UPLOAD_BODY_BYTES ?? "10485760",
+    ),
+    maxConcurrentAgentOperations: Number(
+      environment.MAX_CONCURRENT_AGENT_OPERATIONS ?? "2",
+    ),
+    upstreamTimeoutMs: Number(environment.UPSTREAM_TIMEOUT_MS ?? "5000"),
+    agentRequestsPerMinute: Number(
+      environment.AGENT_REQUESTS_PER_MINUTE ?? "0",
+    ),
     pihApiInternalUrl:
       environment.PIH_API_INTERNAL_URL ?? defaultApiInternalUrl,
     publicOrigin: environment.PUBLIC_ORIGIN ?? defaultPublicOrigin,

@@ -13,6 +13,7 @@ type Options = Readonly<{
   baseUrl: string;
   fetcher?: typeof fetch;
   clock?: () => Date;
+  timeoutMs?: number;
 }>;
 
 const requestHeaders = (context?: RequestContext): Headers => {
@@ -28,11 +29,18 @@ export class HttpPersonalDataGateway implements PersonalDataGateway {
   readonly #baseUrl: string;
   readonly #fetcher: typeof fetch;
   readonly #clock: () => Date;
+  readonly #timeoutMs: number;
 
-  constructor({ baseUrl, fetcher = fetch, clock = () => new Date() }: Options) {
+  constructor({
+    baseUrl,
+    fetcher = fetch,
+    clock = () => new Date(),
+    timeoutMs = 2_000,
+  }: Options) {
     this.#baseUrl = baseUrl;
     this.#fetcher = fetcher;
     this.#clock = clock;
+    this.#timeoutMs = timeoutMs;
   }
 
   async health(context?: RequestContext): Promise<SourceHealth> {
@@ -42,7 +50,7 @@ export class HttpPersonalDataGateway implements PersonalDataGateway {
         new Request(new URL("/health/live", this.#baseUrl), {
           cache: "no-store",
           headers: requestHeaders(context),
-          signal: AbortSignal.timeout(2_000),
+          signal: AbortSignal.timeout(this.#timeoutMs),
         }),
       );
       if (response.ok) status = "available";
@@ -58,7 +66,7 @@ export class HttpPersonalDataGateway implements PersonalDataGateway {
         new Request(new URL("/v1/snapshot", this.#baseUrl), {
           cache: "no-store",
           headers: requestHeaders(context),
-          signal: AbortSignal.timeout(2_000),
+          signal: AbortSignal.timeout(this.#timeoutMs),
         }),
       );
       if (!response.ok) {

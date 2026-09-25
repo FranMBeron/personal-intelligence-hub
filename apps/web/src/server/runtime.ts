@@ -10,6 +10,8 @@ import {
   type RequestIdentityAdapter,
 } from "./context";
 import { TailscaleRequestIdentity } from "./tailscale-request-identity";
+import { IdentityConcurrencyLimiter } from "./identity-concurrency";
+import { IdentityRateLimiter } from "./identity-rate-limit";
 
 const createIdentity = (): RequestIdentityAdapter => {
   if (serverConfig.authMode === "oidc") return oidcRequestIdentity;
@@ -26,6 +28,13 @@ const createIdentity = (): RequestIdentityAdapter => {
 };
 
 const identity = createIdentity();
+const agentConcurrency = new IdentityConcurrencyLimiter(
+  serverConfig.maxConcurrentAgentOperations,
+);
+const agentRateLimit =
+  serverConfig.agentRequestsPerMinute === 0
+    ? null
+    : new IdentityRateLimiter({ maximum: serverConfig.agentRequestsPerMinute });
 
 export type ServerRuntime = Readonly<{
   personalData: PersonalDataGateway;
@@ -35,21 +44,32 @@ export type ServerRuntime = Readonly<{
   requestPolicy: Readonly<{
     publicOrigin: string;
     identity: RequestIdentityAdapter;
+    maxUploadBodyBytes: number;
+    agentConcurrency: IdentityConcurrencyLimiter;
+    agentRateLimit: IdentityRateLimiter | null;
   }>;
 }>;
 
 export const serverRuntime: ServerRuntime = Object.freeze({
   personalData: new HttpPersonalDataGateway({
     baseUrl: serverConfig.pihApiInternalUrl,
+    timeoutMs: serverConfig.upstreamTimeoutMs,
   }),
   identity,
-  requestPolicy: { publicOrigin: serverConfig.publicOrigin, identity },
+  requestPolicy: {
+    publicOrigin: serverConfig.publicOrigin,
+    identity,
+    maxUploadBodyBytes: serverConfig.maxUploadBodyBytes,
+    agentConcurrency,
+    agentRateLimit,
+  },
   hermes:
     serverConfig.hermesInternalUrl !== undefined &&
     serverConfig.hermesServiceToken !== undefined
       ? new HttpHermesGateway({
           baseUrl: serverConfig.hermesInternalUrl,
           serviceToken: serverConfig.hermesServiceToken,
+          timeoutMs: serverConfig.upstreamTimeoutMs,
         })
       : null,
   ...(serverConfig.hermesDashboardUrl === undefined

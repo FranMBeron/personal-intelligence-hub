@@ -25,6 +25,7 @@ describe("Tailscale request identity", () => {
 
     expect(resolution.ok).toBe(true);
     if (!resolution.ok) throw new Error("expected an authorized identity");
+    expect(resolution.concurrencyKey).toBe("tailscale:owner@example.test");
     expect(resolution.authorization).not.toContain("forged-browser-token");
     const token = resolution.authorization.replace(/^Bearer /u, "");
     const { payload, protectedHeader } = await jwtVerify(
