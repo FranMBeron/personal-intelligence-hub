@@ -10,20 +10,34 @@ import { describe, expect, it } from "vitest";
 const exec = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 
-function isGenericDesktopTooling(content: string): boolean {
-  const settings = content.split(/\r?\n/u).map((line) => line.trim())
-    .filter((line) => line && !/^[#;]/u.test(line));
-  return settings.length === 1 && settings[0] === "hoist-pattern[]=*";
+function isApprovedDesktopTooling(content: string): boolean {
+  return content === "# Declare pnpm's default explicitly for Electron Forge's package-manager check.\nhoist-pattern[]=*\n";
 }
+
+const approvedDesktopSourceConfigs = new Set([
+  "apps/desktop/forge.config.ts",
+  "apps/desktop/vite.main.config.ts",
+  "apps/desktop/vite.preload.config.ts",
+  "apps/desktop/vite.renderer.config.ts",
+  "apps/desktop/tsconfig.json",
+  "apps/desktop/package.json",
+]);
 
 function forbiddenDesktopPath(path: string, tracked: boolean): boolean {
   if (path.startsWith("apps/desktop/out/")) return tracked;
   if (/(?:^|\/)[^/]+\.(?:dmg|app)(?:\/|$)/iu.test(path)) return true;
   if (/\.icns$/iu.test(path)) return path !== "apps/desktop/assets/icon.icns";
   if (!path.startsWith("apps/desktop/")) return false;
+  if (approvedDesktopSourceConfigs.has(path)) return false;
+  // Vite's consumed runtime bundles/assets can have configuration words in
+  // generated filenames; arbitrary JSON or source config inside .vite cannot.
+  if (/^apps\/desktop\/\.vite\/(?:build\/(?:main|preload)\.cjs|renderer\/index\.html|renderer\/assets\/[\w.-]+\.(?:js|css|png|svg|webp|woff2?))$/u.test(path)) return false;
   return /(?:^|\/)(?:settings\.json|\.npmrc|\.config(?:\/|$)|\.env(?:\.|$))/iu.test(path) ||
     /(?:^|\/)(?:config|configuration|credentials|secrets|private|hosts?)(?:\/|[.-])/iu.test(path) ||
-    /(?:^|[./-])(?:local|machine|user)(?:[.-])[^/]*\.(?:json|ya?ml|toml|ini|conf|[cm]?ts|[cm]?js)$/iu.test(path);
+    /(?:^|[./-])(?:local|machine|user)(?:[.-])[^/]*\.(?:json|ya?ml|toml|ini|conf|[cm]?ts|[cm]?js)$/iu.test(path) ||
+    /(?:^|[./_-])(?:config|configuration)(?:[./_-]|$)/iu.test(path) ||
+    /(?:^|\/)(?:server|runtime|deployment)(?:[._-][^/]+)?\.(?:json|ya?ml|toml|ini|conf)$/iu.test(path) ||
+    /(?:^|\/)(?:tsconfig|package)(?:[._-][^/]+)?\.json$/iu.test(path);
 }
 
 function forbiddenPath(path: string, tracked = false): boolean {
@@ -51,13 +65,96 @@ async function repositoryPaths(cwd: string): Promise<{ paths: string[]; tracked:
   };
 }
 
+async function fileBoundaryViolations(cwd: string): Promise<string[]> {
+  const { paths, tracked } = await repositoryPaths(cwd);
+  const violations: string[] = [];
+  for (const path of paths) {
+    if (!forbiddenPath(path, tracked.has(path))) continue;
+    // Permit only the approved committed tooling file, byte for byte.
+    if (path === "apps/desktop/.npmrc" && tracked.has(path) &&
+      isApprovedDesktopTooling(await readFile(join(cwd, path), "utf8"))) continue;
+    violations.push(path);
+  }
+  return violations;
+}
+
 describe("desktop file boundary policy", () => {
-  it("allows the generic pnpm layout declaration but rejects host or registry settings", () => {
-    expect(isGenericDesktopTooling("# Generic packaging support\nhoist-pattern[]=*\n")).toBe(true);
-    expect(isGenericDesktopTooling("hoist-pattern[]=*\nregistry=https://registry.example.test\n")).toBe(false);
-    expect(isGenericDesktopTooling("hoist-pattern[]=*\nstore-dir=/tmp/private-store\n")).toBe(false);
-    expect(isGenericDesktopTooling("registry=https://registry.example.test\n")).toBe(false);
+  it("allows only exact sanitized pnpm tooling content", () => {
+    expect(isApprovedDesktopTooling("# Declare pnpm's default explicitly for Electron Forge's package-manager check.\nhoist-pattern[]=*\n")).toBe(true);
+    expect(isApprovedDesktopTooling("# Private origin https://private.example.test\nhoist-pattern[]=*\n")).toBe(false);
+    expect(isApprovedDesktopTooling("hoist-pattern[]=*\n")).toBe(false);
+    expect(isApprovedDesktopTooling("hoist-pattern[]=*\nregistry=https://registry.example.test\n")).toBe(false);
+    expect(isApprovedDesktopTooling("hoist-pattern[]=*\nstore-dir=/tmp/private-store\n")).toBe(false);
   });
+
+  it.each(["tracked", "visible", "ignored"])("rejects a private tooling comment in a %s file", async (state) => {
+    const root = await mkdtemp(join(tmpdir(), "desktop-tooling-"));
+    try {
+      await exec("git", ["init", "--quiet", root]);
+      await mkdir(join(root, "apps/desktop"), { recursive: true });
+      if (state === "ignored") await writeFile(join(root, ".gitignore"), "apps/desktop/.npmrc\n");
+      await writeFile(join(root, "apps/desktop/.npmrc"),
+        "# Private origin https://private.example.test\nhoist-pattern[]=*\n");
+      if (state === "tracked") await exec("git", ["add", "apps/desktop/.npmrc"], { cwd: root });
+      expect(await fileBoundaryViolations(root)).toContain("apps/desktop/.npmrc");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["tracked", "visible", "ignored"])("allows exact tooling only when tracked: %s", async (state) => {
+    const root = await mkdtemp(join(tmpdir(), "desktop-tooling-"));
+    try {
+      await exec("git", ["init", "--quiet", root]);
+      await mkdir(join(root, "apps/desktop"), { recursive: true });
+      if (state === "ignored") await writeFile(join(root, ".gitignore"), "apps/desktop/.npmrc\n");
+      await writeFile(join(root, "apps/desktop/.npmrc"),
+        "# Declare pnpm's default explicitly for Electron Forge's package-manager check.\nhoist-pattern[]=*\n");
+      if (state === "tracked") await exec("git", ["add", "apps/desktop/.npmrc"], { cwd: root });
+      expect(await fileBoundaryViolations(root)).toEqual(
+        state === "tracked" ? [] : ["apps/desktop/.npmrc"],
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["visible", "ignored"])("rejects host config filenames even with a generic origin: %s", async (state) => {
+    const root = await mkdtemp(join(tmpdir(), "desktop-config-"));
+    try {
+      await exec("git", ["init", "--quiet", root]);
+      await mkdir(join(root, "apps/desktop"), { recursive: true });
+      if (state === "ignored") await writeFile(join(root, ".gitignore"), "apps/desktop/*\n");
+      for (const name of ["server.config.json", "runtime.config.json", "deployment.config.json", "custom.config.json",
+        "server-config.json", "runtime_settings.yaml", "deployment-settings.toml"]) {
+        await writeFile(join(root, "apps/desktop", name), '{"serverUrl":"https://workspace.example.test"}');
+      }
+      expect(await fileBoundaryViolations(root)).toEqual(expect.arrayContaining([
+        "apps/desktop/server.config.json", "apps/desktop/runtime.config.json",
+        "apps/desktop/deployment.config.json", "apps/desktop/custom.config.json",
+        "apps/desktop/server-config.json", "apps/desktop/runtime_settings.yaml", "apps/desktop/deployment-settings.toml",
+      ]));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("permits only explicit generic source configuration and generated runtime paths", () => {
+    for (const path of ["apps/desktop/forge.config.ts", "apps/desktop/vite.main.config.ts",
+      "apps/desktop/vite.preload.config.ts", "apps/desktop/vite.renderer.config.ts",
+      "apps/desktop/tsconfig.json", "apps/desktop/package.json",
+      "apps/desktop/.vite/build/main.cjs", "apps/desktop/.vite/build/preload.cjs",
+      "apps/desktop/.vite/renderer/index.html", "apps/desktop/.vite/renderer/assets/runtime.config-hash.js",
+      "apps/desktop/out/server.config.json", "apps/desktop/out/release.dmg"]) {
+      expect(forbiddenPath(path), path).toBe(false);
+    }
+    for (const path of ["apps/desktop/src/forge.config.ts", "apps/desktop/custom.config.ts",
+      "apps/desktop/server.json", "apps/desktop/runtime.yaml", "apps/desktop/deployment.toml",
+      "apps/desktop/tsconfig.custom.json", "apps/desktop/src/tsconfig.json", "apps/desktop/src/package.json"]) {
+      expect(forbiddenPath(path), path).toBe(true);
+    }
+  });
+
   it("discovers ignored local desktop settings and artifacts but preserves tracked status", async () => {
     const root = await mkdtemp(join(tmpdir(), "desktop-boundary-"));
     try {
@@ -111,17 +208,7 @@ describe("desktop file boundary policy", () => {
 
 describe("public repository boundary", () => {
   it("tracks no local-only or secret file class", async () => {
-    const { paths, tracked } = await repositoryPaths(repositoryRoot);
-    const violations: string[] = [];
-    for (const path of paths) {
-      if (!forbiddenPath(path, tracked.has(path))) continue;
-      // This committed build prerequisite is generic; all other npmrc options
-      // (including registries, credentials and host paths) stay disallowed.
-      if (path === "apps/desktop/.npmrc" &&
-        isGenericDesktopTooling(await readFile(join(repositoryRoot, path), "utf8"))) continue;
-      violations.push(path);
-    }
-    expect(violations).toEqual([]);
+    expect(await fileBoundaryViolations(repositoryRoot)).toEqual([]);
   });
 
   it("contains no private host or previous-install identity", async () => {
