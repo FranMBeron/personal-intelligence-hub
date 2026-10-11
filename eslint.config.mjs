@@ -4,6 +4,8 @@ export default tseslint.config(
   {
     ignores: [
       "**/.next/**",
+      "apps/desktop/.vite/**",
+      "apps/desktop/out/**",
       "**/coverage/**",
       "**/dist/**",
       "**/node_modules/**",
