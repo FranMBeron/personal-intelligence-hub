@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { glob, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -21,22 +21,85 @@ const collectUses = (value: unknown): string[] => {
   ];
 };
 
-type Workflow = { jobs: Record<string, { "runs-on": string; steps: Record<string, unknown>[]; env?: Record<string, string> }> };
+type Workflow = { jobs: Record<string, { "runs-on": string; steps: Record<string, unknown>[]; env?: Record<string, string>; if?: string | boolean; "continue-on-error"?: string | boolean }> };
+type PackageScripts = { name: string; path: string; scripts: Record<string, string> };
+
+function matchesPattern(value: string, pattern: string): boolean {
+  const escaped = pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join(".*");
+  return new RegExp(`^${escaped}$`, "u").test(value);
+}
+
+function executedCommands(run: string): string[] {
+  return run.split(/\n|&&|\|\||[;|]/u).map((line) => line.trim()).filter(Boolean);
+}
+
+function invokedScriptCommands(
+  run: string,
+  scripts: Record<string, string>,
+  packages: PackageScripts[],
+): string[] {
+  const result: string[] = [];
+  const visited = new Set<string>();
+  const root: PackageScripts = { name: "root", path: ".", scripts };
+  const visit = (source: string, current: PackageScripts): void => {
+    for (const command of executedCommands(source)) {
+      result.push(command);
+      const tokens = command.match(/"[^"]*"|'[^']*'|[^\s]+/gu)?.map((token) => token.replace(/^["']|["']$/gu, "")) ?? [];
+      let index = tokens.indexOf("pnpm");
+      if (index < 0) continue;
+      index += 1;
+      let recursive = false;
+      let directory: string | undefined;
+      const filters: string[] = [];
+      while (tokens[index]?.startsWith("-")) {
+        const flag = tokens[index++]!;
+        if (["-r", "--recursive"].includes(flag)) recursive = true;
+        else if (["-C", "--dir"].includes(flag)) directory = tokens[index++];
+        else if (flag.startsWith("--dir=")) directory = flag.slice(6);
+        else if (flag === "--filter") filters.push(tokens[index++] ?? "");
+        else if (flag.startsWith("--filter=")) filters.push(flag.slice(9));
+      }
+      if (tokens[index] === "run") index += 1;
+      const script = tokens[index];
+      if (!script || ["exec", "install", "audit", "licenses"].includes(script)) continue;
+      const selected = directory !== undefined ? packages.filter((pkg) => pkg.path === directory.replace(/^\.\//u, "")) :
+        recursive || filters.length > 0 ? packages.filter((pkg) => {
+          const matches = (filter: string) => matchesPattern(pkg.name, filter) || matchesPattern(pkg.path, filter.replace(/^\.\//u, ""));
+          const includes = filters.filter((filter) => !filter.startsWith("!"));
+          return (includes.length === 0 || includes.some(matches)) &&
+            !filters.some((filter) => filter.startsWith("!") && matches(filter.slice(1)));
+        }) : [current];
+      for (const pkg of selected) {
+        const body = pkg.scripts[script];
+        const key = `${pkg.path}:${script}`;
+        if (body === undefined || visited.has(key)) continue;
+        visited.add(key);
+        visit(body, pkg);
+      }
+    }
+  };
+  visit(run, root);
+  return result;
+}
 
 function desktopPolicyViolations(
   workflow: Workflow,
   scripts: Record<string, string>,
   workspacePackages: string[],
+  packages: PackageScripts[] = [],
 ): string[] {
   const violations: string[] = [];
   const jobs = Object.values(workflow.jobs);
   if (/\b(?:APPLE_ID|APPLE_PASSWORD|APPLE_APP_SPECIFIC_PASSWORD|APPLE_TEAM_ID|CSC_LINK|CSC_KEY_PASSWORD)\b|(?:osxSign|osxNotarize)/iu.test(JSON.stringify(workflow))) {
     violations.push("CI must not reference Apple signing or notarization credentials");
   }
-  const commands = (steps: Record<string, unknown>[]) => steps
-    .flatMap((step) => typeof step.run === "string" ? step.run.split(/\n|&&|;/u).map((line) => line.trim()) : []);
+  const mandatory = (value: { if?: unknown; "continue-on-error"?: unknown }) =>
+    (value.if === undefined || value.if === true) &&
+    (value["continue-on-error"] === undefined || value["continue-on-error"] === false);
+  const commands = (steps: Record<string, unknown>[]) => steps.filter(mandatory)
+    .flatMap((step) => typeof step.run === "string" ? executedCommands(step.run) : []);
   const required = ["pnpm install --frozen-lockfile", "pnpm lint", "pnpm typecheck", "pnpm test", "pnpm build"];
-  if (!jobs.some((job) => job["runs-on"].startsWith("ubuntu-") &&
+  if (!jobs.some((job) => job["runs-on"].startsWith("ubuntu-") && mandatory(job) &&
     required.every((command) => commands(job.steps).includes(command)))) {
     violations.push("Ubuntu verification must install frozen dependencies and run every source gate");
   }
@@ -48,12 +111,13 @@ function desktopPolicyViolations(
   if (!/\beslint\s+\.(?:\s|$)/u.test(scripts.lint ?? "")) {
     violations.push("lint must cover all repository sources including desktop");
   }
-  if (!workspacePackages.some((pattern) => ["apps/*", "apps/desktop"].includes(pattern))) {
+  if (!workspacePackages.some((pattern) => !pattern.startsWith("!") && matchesPattern("apps/desktop", pattern)) ||
+    workspacePackages.some((pattern) => pattern.startsWith("!") && matchesPattern("apps/desktop", pattern.slice(1)))) {
     violations.push("desktop must be part of the pnpm workspace");
   }
   for (const job of jobs) {
     for (const step of job.steps) {
-      const run = typeof step.run === "string" ? step.run : "";
+      const run = invokedScriptCommands(typeof step.run === "string" ? step.run : "", scripts, packages).join("\n");
       const uses = typeof step.uses === "string" ? step.uses : "";
       if (/\b(?:desktop:make|make:mac)\b|electron-forge\s+make\b/u.test(run)) {
         violations.push("CI must not make a macOS installer");
@@ -80,11 +144,60 @@ const workspaceScripts = {
 };
 
 describe("desktop CI source-only policy", () => {
+  it.each(["if", "continue-on-error"] as const)("rejects a verification job with %s", (key) => {
+    const workflow = compliantWorkflow();
+    workflow.jobs.verify![key] = key === "if" ? "${{ github.event_name == 'push' }}" : true;
+    expect(desktopPolicyViolations(workflow, workspaceScripts, ["apps/*"]))
+      .toContain("Ubuntu verification must install frozen dependencies and run every source gate");
+  });
+
+  it.each(["if", "continue-on-error"])("rejects a required source gate with %s", (key) => {
+    const workflow = compliantWorkflow();
+    workflow.jobs.verify!.steps.find((step) => step.run === "pnpm test")![key] = key === "if" ? false : true;
+    expect(desktopPolicyViolations(workflow, workspaceScripts, ["apps/*"]))
+      .toContain("Ubuntu verification must install frozen dependencies and run every source gate");
+  });
+
+  it.each(["pnpm desktop:make", "pnpm run desktop:make", "pnpm exec electron-forge publish"])("rejects an invoked root script that hides %s", (hidden) => {
+    const scripts = { ...workspaceScripts, build: "pnpm -r --if-present build && pnpm run bundle", bundle: "pnpm run deliver", deliver: hidden };
+    expect(desktopPolicyViolations(compliantWorkflow(), scripts, ["apps/*"]))
+      .toContain(hidden.includes("publish") ? "CI must not publish desktop artifacts" : "CI must not make a macOS installer");
+  });
+
+  it.each(["electron-forge make --platform=darwin", "electron-forge publish"])("rejects an invoked package script that hides %s", (hidden) => {
+    const packages = [{ name: "@personal-intelligence-hub/desktop", path: "apps/desktop", scripts: { build: "pnpm run release", release: hidden } }];
+    expect(desktopPolicyViolations(compliantWorkflow(), workspaceScripts, ["apps/*"], packages))
+      .toContain(hidden.includes("publish") ? "CI must not publish desktop artifacts" : "CI must not make a macOS installer");
+  });
+
+  it.each(["pnpm --filter @personal-intelligence-hub/desktop run release", "pnpm -C apps/desktop release"])("follows targeted package script invocation: %s", (run) => {
+    const workflow = compliantWorkflow();
+    workflow.jobs.verify!.steps.push({ run });
+    const packages = [{ name: "@personal-intelligence-hub/desktop", path: "apps/desktop", scripts: { release: "electron-forge publish" } }];
+    expect(desktopPolicyViolations(workflow, workspaceScripts, ["apps/*"], packages))
+      .toContain("CI must not publish desktop artifacts");
+  });
+
+  it("rejects a workspace exclusion that removes desktop after apps/*", () => {
+    expect(desktopPolicyViolations(compliantWorkflow(), workspaceScripts, ["apps/*", "!apps/desktop"]))
+      .toContain("desktop must be part of the pnpm workspace");
+  });
+
+  it("terminates cyclic script traversal without scanning uninvoked publishing scripts", () => {
+    const scripts = { ...workspaceScripts, build: "pnpm -r --if-present build && pnpm cycle", cycle: "pnpm cycle", release: "electron-forge publish" };
+    expect(desktopPolicyViolations(compliantWorkflow(), scripts, ["apps/*"])).toEqual([]);
+  });
+
   it("verifies the actual Ubuntu workflow and workspace script coverage", async () => {
     const workflow = parse(await readFile(`${repositoryRoot}/.github/workflows/ci.yml`, "utf8")) as Workflow;
     const manifest = JSON.parse(await readFile(`${repositoryRoot}/package.json`, "utf8")) as { scripts: Record<string, string> };
     const workspace = parse(await readFile(`${repositoryRoot}/pnpm-workspace.yaml`, "utf8")) as { packages: string[] };
-    expect(desktopPolicyViolations(workflow, manifest.scripts, workspace.packages)).toEqual([]);
+    const packages: PackageScripts[] = [];
+    for await (const path of glob(workspace.packages.filter((pattern) => !pattern.startsWith("!")).map((pattern) => `${pattern}/package.json`), { cwd: repositoryRoot })) {
+      const pkg = JSON.parse(await readFile(`${repositoryRoot}/${path}`, "utf8")) as { name: string; scripts?: Record<string, string> };
+      packages.push({ name: pkg.name, path: path.replace(/\/package\.json$/u, ""), scripts: pkg.scripts ?? {} });
+    }
+    expect(desktopPolicyViolations(workflow, manifest.scripts, workspace.packages, packages)).toEqual([]);
   });
 
   it.each(["pnpm install --frozen-lockfile", "pnpm lint", "pnpm typecheck", "pnpm test", "pnpm build"])("rejects a missing source gate: %s", (missing) => {
