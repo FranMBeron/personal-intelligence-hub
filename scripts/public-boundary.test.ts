@@ -47,7 +47,15 @@ function forbiddenPath(path: string, tracked = false): boolean {
     /\.(?:pem|key|p12|sqlite|db|tar|zip)$/u.test(path);
 }
 
-async function repositoryPaths(cwd: string): Promise<{ paths: string[]; tracked: Set<string>; publicPaths: string[] }> {
+function isIgnoredDesktopIdentityPath(path: string): boolean {
+  // Read ignored text/config candidates only inside the desktop boundary.
+  // Distributable/archive contents are not configuration candidates.
+  return path.startsWith("apps/desktop/") &&
+    forbiddenDesktopPath(path, false) &&
+    !/\.(?:app|dmg|asar|icns)(?:\/|$)/iu.test(path);
+}
+
+async function repositoryPaths(cwd: string): Promise<{ paths: string[]; tracked: Set<string>; publicPaths: string[]; identityPaths: string[] }> {
   const list = async (args: string[]): Promise<string[]> => {
     const { stdout } = await exec("git", ["ls-files", "-z", ...args], { cwd, encoding: "buffer" });
     return stdout.toString("utf8").split("\0").filter(Boolean);
@@ -62,6 +70,7 @@ async function repositoryPaths(cwd: string): Promise<{ paths: string[]; tracked:
     // Existing local data stays private; inspect ignored desktop artifacts/settings too.
     paths: [...tracked, ...visible, ...ignored.filter((path) => forbiddenDesktopPath(path, false) || path.startsWith("apps/desktop/out/"))],
     tracked: new Set(tracked), publicPaths: [...tracked, ...visible],
+    identityPaths: [...tracked, ...visible, ...ignored.filter(isIgnoredDesktopIdentityPath)],
   };
 }
 
@@ -78,7 +87,90 @@ async function fileBoundaryViolations(cwd: string): Promise<string[]> {
   return violations;
 }
 
+async function privateIdentityViolations(cwd: string): Promise<string[]> {
+  const { identityPaths: paths } = await repositoryPaths(cwd);
+  const violations: string[] = [];
+
+  for (const path of paths) {
+    if (path === "scripts/public-boundary.test.ts") continue;
+    const content = await readFile(`${cwd}/${path}`, "utf8");
+    if (/remote-station|\/srv\/mi-estacion|\/home\/franmb|FranMBeron/iu.test(content)) {
+      violations.push(path);
+    }
+  }
+
+  return violations;
+}
+
 describe("desktop file boundary policy", () => {
+  it.each(["visible", "ignored"])("scans private identity in untracked desktop tooling: %s", async (state) => {
+    const root = await mkdtemp(join(tmpdir(), "desktop-identity-"));
+    try {
+      await exec("git", ["init", "--quiet", root]);
+      await mkdir(join(root, "apps/desktop"), { recursive: true });
+      if (state === "ignored") await writeFile(join(root, ".gitignore"), "apps/desktop/.npmrc\n");
+      await writeFile(join(root, "apps/desktop/.npmrc"),
+        "# Private identity: remote-station\nhoist-pattern[]=*\n");
+      const inventory = await repositoryPaths(root);
+      expect(await fileBoundaryViolations(root)).toContain("apps/desktop/.npmrc");
+      expect(inventory.identityPaths).toContain("apps/desktop/.npmrc");
+      expect(await privateIdentityViolations(root)).toContain("apps/desktop/.npmrc");
+      expect(inventory.tracked.has("apps/desktop/.npmrc")).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("includes ignored forbidden host configs in the identity scan", async () => {
+    const root = await mkdtemp(join(tmpdir(), "desktop-identity-"));
+    try {
+      await exec("git", ["init", "--quiet", root]);
+      await mkdir(join(root, "apps/desktop"), { recursive: true });
+      await writeFile(join(root, ".gitignore"), "apps/desktop/*.config.json\n");
+      for (const name of ["server.config.json", "runtime.config.json", "deployment.config.json"]) {
+        await writeFile(join(root, "apps/desktop", name), '{"serverUrl":"https://remote-station.invalid"}');
+      }
+      const expected = [
+        "apps/desktop/server.config.json", "apps/desktop/runtime.config.json", "apps/desktop/deployment.config.json",
+      ];
+      const inventory = await repositoryPaths(root);
+      expect(await fileBoundaryViolations(root)).toEqual(expect.arrayContaining(expected));
+      expect(inventory.publicPaths).not.toEqual(expect.arrayContaining(expected));
+      expect(inventory.identityPaths).toEqual(expect.arrayContaining(expected));
+      expect(await privateIdentityViolations(root)).toEqual(expect.arrayContaining(expected));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes ignored output, archives, generated bundles and unrelated private trees from identity scanning", async () => {
+    const root = await mkdtemp(join(tmpdir(), "desktop-identity-"));
+    try {
+      await exec("git", ["init", "--quiet", root]);
+      await writeFile(join(root, ".gitignore"), "apps/desktop/out/\napps/desktop/.vite/\napps/desktop/config/\nprivate-data/\n");
+      const excluded = [
+        "apps/desktop/out/server.config.json",
+        "apps/desktop/out/release.app/Contents/Info.plist",
+        "apps/desktop/out/resources/app.asar",
+        "apps/desktop/.vite/build/main.cjs",
+        "apps/desktop/.vite/renderer/assets/runtime.config-hash.js",
+        "apps/desktop/config/runtime.asar",
+        "private-data/server.config.json",
+      ];
+      for (const path of excluded) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), "remote-station");
+      }
+      const inventory = await repositoryPaths(root);
+      for (const path of excluded) expect(inventory.identityPaths).not.toContain(path);
+      expect(await privateIdentityViolations(root)).toEqual([]);
+      expect(await fileBoundaryViolations(root)).not.toContain("apps/desktop/out/server.config.json");
+      expect(await fileBoundaryViolations(root)).not.toContain("apps/desktop/.vite/renderer/assets/runtime.config-hash.js");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("allows only exact sanitized pnpm tooling content", () => {
     expect(isApprovedDesktopTooling("# Declare pnpm's default explicitly for Electron Forge's package-manager check.\nhoist-pattern[]=*\n")).toBe(true);
     expect(isApprovedDesktopTooling("# Private origin https://private.example.test\nhoist-pattern[]=*\n")).toBe(false);
@@ -212,17 +304,6 @@ describe("public repository boundary", () => {
   });
 
   it("contains no private host or previous-install identity", async () => {
-    const { publicPaths: paths } = await repositoryPaths(repositoryRoot);
-    const violations: string[] = [];
-
-    for (const path of paths) {
-      if (path === "scripts/public-boundary.test.ts") continue;
-      const content = await readFile(`${repositoryRoot}/${path}`, "utf8");
-      if (/remote-station|\/srv\/mi-estacion|\/home\/franmb|FranMBeron/iu.test(content)) {
-        violations.push(path);
-      }
-    }
-
-    expect(violations).toEqual([]);
+    expect(await privateIdentityViolations(repositoryRoot)).toEqual([]);
   });
 });
