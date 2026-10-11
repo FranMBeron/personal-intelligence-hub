@@ -3,16 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'"
-    />
-    <title>Personal Intelligence Hub</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'" />
+    <title>Personal Intelligence Hub — Desktop</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./renderer.ts"></script>
   </head>
   <body>
-    <main>
-      <h1>Personal Intelligence Hub</h1>
-      <p>Desktop setup is under development.</p>
-    </main>
+    <div class="app-shell">
+      <header class="app-bar">
+        <div class="app-brand"><span class="app-brand__mark" aria-hidden="true"></span><span>Personal Intelligence Hub</span></div>
+        <span class="desktop-label">Desktop</span>
+      </header>
+      <main id="desktop-root" class="control-panel" aria-label="Server connection"></main>
+      <footer>Your workspace lives on your private server.</footer>
+    </div>
   </body>
 </html>

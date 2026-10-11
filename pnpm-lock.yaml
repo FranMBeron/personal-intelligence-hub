@@ -189,6 +189,9 @@ importers:
       electron:
         specifier: 44.7.0
         version: 44.7.0
+      jsdom:
+        specifier: 30.0.1
+        version: 30.0.1
       vite:
         specifier: 8.3.4
         version: 8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(yaml@2.9.1)
