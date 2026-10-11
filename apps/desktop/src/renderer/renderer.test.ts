@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConnectionState, DesktopBridge, DesktopState } from "../shared/contracts.js";
 import { mountControlSurface } from "./renderer.js";
@@ -31,6 +31,11 @@ beforeEach(() => {
   };
 });
 
+afterEach(() => {
+  document.body.replaceChildren();
+  vi.useRealTimers();
+});
+
 function submit(value: string) {
   const input = root.querySelector<HTMLInputElement>("#server-url");
   if (!input) throw new Error("Server form missing");
@@ -54,6 +59,108 @@ describe("local control surface", () => {
     expect(root.querySelectorAll("article, table, iframe")).toHaveLength(0);
     expect(root.textContent).not.toMatch(/sample|priorit|agents|notes|metrics|records/i);
     expect(bridge.saveServer).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [connected, "settings"],
+    [unavailable, "unavailable"],
+  ] as const)("refreshes an initially checking connection until it reaches %s, then stops", async (terminal, terminalView) => {
+    vi.useFakeTimers();
+    state = { ...state, settings: { ...state.settings, serverOrigin: "https://hub.example.test" }, connection: { kind: "checking", origin: "https://hub.example.test" } };
+    await mountControlSurface(root, bridge);
+    expect(root.dataset.view).toBe("checking");
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.runOnlyPendingTimersAsync();
+    expect(root.dataset.view).toBe("checking");
+    expect(vi.getTimerCount()).toBe(1);
+    state = { ...state, connection: terminal };
+    await vi.runOnlyPendingTimersAsync();
+    expect(root.dataset.view).toBe(terminalView);
+    expect(root.getAttribute("aria-busy")).toBe("false");
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(bridge.readState).toHaveBeenCalledTimes(3);
+    if (terminalView === "unavailable") {
+      expect(button("Retry").disabled).toBe(false);
+      expect(button("Server settings").disabled).toBe(false);
+    }
+  });
+
+  it("cancels the previous polling timer when the control root is remounted", async () => {
+    vi.useFakeTimers();
+    state = { ...state, connection: { kind: "checking", origin: "https://hub.example.test" } };
+    await mountControlSurface(root, bridge);
+    await mountControlSurface(root, bridge);
+    expect(vi.getTimerCount()).toBe(1);
+    state = { ...state, connection: connected };
+    await vi.runOnlyPendingTimersAsync();
+    expect(bridge.readState).toHaveBeenCalledTimes(3);
+    expect(root.dataset.view).toBe("settings");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("discards an in-flight poll result after remount without creating a duplicate poll", async () => {
+    vi.useFakeTimers();
+    state = { ...state, connection: { kind: "checking", origin: "https://hub.example.test" } };
+    await mountControlSurface(root, bridge);
+    let finish!: (value: DesktopState) => void;
+    bridge.readState = vi.fn(() => new Promise<DesktopState>((resolve) => { finish = resolve; }));
+    await vi.runOnlyPendingTimersAsync();
+    expect(bridge.readState).toHaveBeenCalledOnce();
+    const nextBridge = { ...bridge, readState: vi.fn(async () => state) };
+    await mountControlSurface(root, nextBridge);
+    finish({ ...state, connection: unavailable });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(root.dataset.view).toBe("checking");
+    expect(vi.getTimerCount()).toBe(1);
+    state = { ...state, connection: connected };
+    await vi.runOnlyPendingTimersAsync();
+    expect(nextBridge.readState).toHaveBeenCalledTimes(2);
+    expect(root.dataset.view).toBe("settings");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops polling when its control root is removed", async () => {
+    vi.useFakeTimers();
+    state = { ...state, connection: { kind: "checking", origin: "https://hub.example.test" } };
+    await mountControlSurface(root, bridge);
+    root.remove();
+    await vi.runOnlyPendingTimersAsync();
+    expect(bridge.readState).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("contains poll failures and stops refreshing until an explicit retry", async () => {
+    vi.useFakeTimers();
+    state = { ...state, connection: { kind: "checking", origin: "https://hub.example.test" } };
+    await mountControlSurface(root, bridge);
+    bridge.readState = vi.fn(async () => { throw new Error("private poll detail"); });
+    await vi.runOnlyPendingTimersAsync();
+    expect(root.querySelector("[role=alert]")?.textContent).toContain("Unable to read desktop settings");
+    expect(root.textContent).not.toContain("private poll detail");
+    expect(root.getAttribute("aria-busy")).toBe("false");
+    expect(vi.getTimerCount()).toBe(0);
+    bridge.readState = vi.fn(async () => ({ ...state, connection: unavailable }));
+    button("Retry").click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(root.dataset.view).toBe("unavailable");
+    expect(button("Server settings").disabled).toBe(false);
+  });
+
+  it.each(["success", "failure"])("preserves keyboard focus on the login control after %s", async (outcome) => {
+    if (outcome === "failure") bridge.setLaunchAtLogin = vi.fn(async () => { throw new Error("native failure"); });
+    await mountControlSurface(root, bridge);
+    const checkbox = root.querySelector<HTMLInputElement>("#launch-at-login")!;
+    checkbox.focus();
+    expect(document.activeElement).toBe(checkbox);
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event("change"));
+    await settled();
+    const replacement = root.querySelector<HTMLInputElement>("#launch-at-login");
+    expect(replacement).not.toBe(checkbox);
+    expect(document.activeElement).toBe(replacement);
   });
 
   it("keeps settings unchanged and shows a concise error when URL validation rejects", async () => {
