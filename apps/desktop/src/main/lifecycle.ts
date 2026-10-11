@@ -50,7 +50,7 @@ export function buildTrayMenu(state: DesktopState, actions: TrayActions): MenuIt
 
 interface LifecycleApp {
   requestSingleInstanceLock(): boolean;
-  setAppUserModelId(id: string): void;
+  setAppUserModelId?(id: string): void;
   quit(): void;
   whenReady(): Promise<unknown>;
   on(event: string, listener: () => void): unknown;
@@ -65,8 +65,11 @@ export function wireApplicationLifecycle(
   app: LifecycleApp,
   controller: LifecycleController,
   onError: () => void = () => undefined,
+  platform: string = process.platform,
 ): void {
-  app.setAppUserModelId("org.personal-intelligence-hub.desktop");
+  if (platform === "win32" && typeof app.setAppUserModelId === "function") {
+    app.setAppUserModelId("org.personal-intelligence-hub.desktop");
+  }
   if (!app.requestSingleInstanceLock()) {
     app.quit();
     return;

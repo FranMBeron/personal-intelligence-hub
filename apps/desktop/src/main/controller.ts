@@ -108,9 +108,19 @@ export class DesktopController implements DesktopBridge {
       this.allowedControlUrls.has(window.webContents.getURL());
   }
 
-  prepareQuit(): void { this.quitting = true; }
+  prepareQuit(): void {
+    if (this.quitting) return;
+    this.quitting = true;
+    this.surfaceRevision += 1;
+    // destroy bypasses remote beforeunload, so a page cannot veto explicit Quit.
+    this.destroyRemote();
+    const window = this.controlWindow;
+    this.controlWindow = undefined;
+    if (window && !window.isDestroyed()) window.destroy();
+  }
 
   quit(): void {
+    if (this.quitting) return;
     this.prepareQuit();
     this.dependencies.quit();
   }
@@ -149,6 +159,7 @@ export class DesktopController implements DesktopBridge {
     window.on("close", (event: Event) => {
       if (this.quitting) return;
       event.preventDefault();
+      this.surfaceRevision += 1;
       window.hide();
     });
   }
@@ -170,7 +181,16 @@ export class DesktopController implements DesktopBridge {
       window.once("closed", () => { if (this.controlWindow === window) this.controlWindow = undefined; });
     }
     const window = this.controlWindow;
-    await window.loadURL(settings ? this.settingsUrl : this.dependencies.controlUrl);
+    try {
+      await window.loadURL(settings ? this.settingsUrl : this.dependencies.controlUrl);
+    } catch (error) {
+      if (this.quitting) return;
+      const aborted = typeof error === "object" && error !== null &&
+        (("code" in error && error.code === "ERR_ABORTED") || ("errno" in error && error.errno === -3));
+      // A newer presentation can abort this load; current failures still propagate.
+      if (aborted && (revision !== this.surfaceRevision || window.isDestroyed())) return;
+      throw error;
+    }
     if (!this.quitting && revision === this.surfaceRevision && !window.isDestroyed()) { window.show(); window.focus(); }
   }
 

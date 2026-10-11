@@ -41,6 +41,34 @@ describe("tray state", () => {
   });
 });
 describe("application lifecycle", () => {
+  it("starts on macOS when the Windows app identity method is absent", async () => {
+    let started = false;
+    const app = Object.assign(new EventEmitter(), {
+      requestSingleInstanceLock: () => true,
+      quit: () => undefined,
+      whenReady: async () => undefined,
+    });
+    expect(() => wireApplicationLifecycle(app, {
+      start: async () => { started = true; }, open: async () => undefined, prepareQuit: () => undefined,
+    }, () => undefined, "darwin")).not.toThrow();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(started).toBe(true);
+  });
+  it("does not invoke the Windows app identity capability on macOS", async () => {
+    let started = false;
+    const app = Object.assign(new EventEmitter(), {
+      requestSingleInstanceLock: () => true,
+      setAppUserModelId: () => { throw new Error("Windows-only capability"); },
+      quit: () => undefined,
+      whenReady: async () => undefined,
+    });
+    expect(() => wireApplicationLifecycle(app, {
+      start: async () => { started = true; }, open: async () => undefined, prepareQuit: () => undefined,
+    }, () => undefined, "darwin")).not.toThrow();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(started).toBe(true);
+  });
+
   it("quits a duplicate instance before starting the controller", async () => {
     const app = Object.assign(new EventEmitter(), { requestSingleInstanceLock: () => false, setAppUserModelId: () => undefined, quit: () => { stopped = true; }, whenReady: async () => undefined });
     let stopped = false; let started = false;
@@ -50,7 +78,7 @@ describe("application lifecycle", () => {
   it("starts once ready, routes activate/second instance to open, and permits OS Quit", async () => {
     const calls: string[] = [];
     const app = Object.assign(new EventEmitter(), { requestSingleInstanceLock: () => true, setAppUserModelId: (id: string) => { calls.push(id); }, quit: () => undefined, whenReady: async () => undefined });
-    wireApplicationLifecycle(app, { start: async () => { calls.push("start"); }, open: async () => { calls.push("open"); }, prepareQuit: () => { calls.push("quit"); } });
+    wireApplicationLifecycle(app, { start: async () => { calls.push("start"); }, open: async () => { calls.push("open"); }, prepareQuit: () => { calls.push("quit"); } }, () => undefined, "win32");
     await new Promise((resolve) => setImmediate(resolve)); app.emit("activate"); app.emit("second-instance"); app.emit("before-quit"); app.emit("window-all-closed");
     expect(calls).toEqual(["org.personal-intelligence-hub.desktop", "start", "open", "open", "quit"]);
   });

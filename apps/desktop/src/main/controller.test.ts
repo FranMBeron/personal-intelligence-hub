@@ -11,6 +11,7 @@ import type { ConnectionState } from "../shared/contracts.js";
 class WindowFixture extends EventEmitter {
   visible = false;
   destroyed = false;
+  destroyCalls = 0;
   url = "";
   loadDelay: Promise<void> | undefined;
   newWindowHandler: (() => { action: string }) | undefined;
@@ -23,7 +24,7 @@ class WindowFixture extends EventEmitter {
   hide() { this.visible = false; }
   focus() { this.visible = true; }
   isDestroyed() { return this.destroyed; }
-  destroy() { this.destroyed = true; this.visible = false; this.emit("closed"); }
+  destroy() { this.destroyCalls += 1; this.destroyed = true; this.visible = false; this.emit("closed"); }
   async loadURL(url: string) { this.url = url; this.webContents.mainFrame.url = url; await this.loadDelay; }
   asWindow() { return this as unknown as BrowserWindow; }
 }
@@ -144,6 +145,47 @@ describe("desktop controller", () => {
     retired.webContents.emit("did-fail-load", {}, -105, "fixture", "https://hub.example.test", true);
     expect((await f.controller.readState()).connection).toEqual({ kind: "connected", origin: "https://new.example.test" });
     expect(f.remote[1]?.visible).toBe(true); expect(f.local).toHaveLength(0);
+  });
+  it("destroys both owned windows exactly once before explicit Quit", async () => {
+    const f = await fixture("https://hub.example.test");
+    await f.controller.start(); await f.controller.openSettings();
+    f.controller.quit(); f.controller.prepareQuit(); f.controller.quit();
+    expect(f.didQuit()).toBe(true);
+    expect(f.remote[0]?.destroyed).toBe(true); expect(f.local[0]?.destroyed).toBe(true);
+    expect(f.remote[0]?.destroyCalls).toBe(1); expect(f.local[0]?.destroyCalls).toBe(1);
+    await f.controller.open(); expect(f.remote).toHaveLength(1); expect(f.local).toHaveLength(1);
+  });
+  it("contains an aborted older local load when a newer settings view takes over", async () => {
+    const f = await fixture(); await f.controller.start(); const w = f.local[0]!;
+    let abort!: (reason: unknown) => void;
+    w.loadDelay = new Promise<void>((_resolve, reject) => { abort = reject; });
+    const opening = f.controller.open();
+    const result = opening.then(() => "resolved", () => "rejected");
+    await new Promise((resolve) => setImmediate(resolve));
+    w.loadDelay = undefined; await f.controller.openSettings();
+    abort(Object.assign(new Error("superseded"), { code: "ERR_ABORTED", errno: -3 }));
+    expect(await result).toBe("resolved");
+    expect(w.url).toBe("file:///app/renderer/index.html?view=settings"); expect(w.visible).toBe(true);
+  });
+  it("surfaces a current local load failure rather than suppressing it", async () => {
+    const f = await fixture(); await f.controller.start(); const w = f.local[0]!;
+    let reject!: (reason: unknown) => void;
+    w.loadDelay = new Promise<void>((_resolve, fail) => { reject = fail; });
+    const opening = f.controller.open();
+    const assertion = expect(opening).rejects.toMatchObject({ code: "ERR_FILE_NOT_FOUND" });
+    await new Promise((resolve) => setImmediate(resolve));
+    reject(Object.assign(new Error("missing UI"), { code: "ERR_FILE_NOT_FOUND", errno: -6 }));
+    await assertion;
+  });
+  it("does not reshow a local window closed by its user during a delayed load", async () => {
+    const f = await fixture(); await f.controller.start(); const w = f.local[0]!;
+    let release!: () => void;
+    w.loadDelay = new Promise<void>((resolve) => { release = resolve; });
+    const opening = f.controller.open();
+    await new Promise((resolve) => setImmediate(resolve));
+    w.emit("close", { preventDefault: () => undefined });
+    expect(w.visible).toBe(false);
+    release(); await opening; expect(w.visible).toBe(false); expect(w.destroyed).toBe(false);
   });
   it("trusts only the owned control main frame at exact permitted local URLs", async () => {
     const f = await fixture(); await f.controller.start(); const w = f.local[0]!;
