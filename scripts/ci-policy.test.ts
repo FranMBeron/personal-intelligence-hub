@@ -1,4 +1,5 @@
 import { glob, readFile } from "node:fs/promises";
+import { matchesGlob } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -24,7 +25,9 @@ const collectUses = (value: unknown): string[] => {
 type Workflow = { jobs: Record<string, { "runs-on": string; steps: Record<string, unknown>[]; env?: Record<string, string>; if?: string | boolean; "continue-on-error"?: string | boolean }> };
 type PackageScripts = { name: string; path: string; scripts: Record<string, string> };
 
-function matchesPattern(value: string, pattern: string): boolean {
+function matchesPackageName(value: string, pattern: string): boolean {
+  // pnpm's name selector * includes the slash in a scoped package name;
+  // workspace directory globs use path semantics separately below.
   const escaped = pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join(".*");
   return new RegExp(`^${escaped}$`, "u").test(value);
 }
@@ -64,7 +67,7 @@ function invokedScriptCommands(
       if (!script || ["exec", "install", "audit", "licenses"].includes(script)) continue;
       const selected = directory !== undefined ? packages.filter((pkg) => pkg.path === directory.replace(/^\.\//u, "")) :
         recursive || filters.length > 0 ? packages.filter((pkg) => {
-          const matches = (filter: string) => matchesPattern(pkg.name, filter) || matchesPattern(pkg.path, filter.replace(/^\.\//u, ""));
+          const matches = (filter: string) => matchesPackageName(pkg.name, filter) || matchesGlob(pkg.path, filter.replace(/^\.\//u, ""));
           const includes = filters.filter((filter) => !filter.startsWith("!"));
           return (includes.length === 0 || includes.some(matches)) &&
             !filters.some((filter) => filter.startsWith("!") && matches(filter.slice(1)));
@@ -96,9 +99,11 @@ function desktopPolicyViolations(
   const mandatory = (value: { if?: unknown; "continue-on-error"?: unknown }) =>
     (value.if === undefined || value.if === true) &&
     (value["continue-on-error"] === undefined || value["continue-on-error"] === false);
-  const commands = (steps: Record<string, unknown>[]) => steps.filter(mandatory)
-    .flatMap((step) => typeof step.run === "string" ? executedCommands(step.run) : []);
   const required = ["pnpm install --frozen-lockfile", "pnpm lint", "pnpm typecheck", "pnpm test", "pnpm build"];
+  // A required gate must be a direct blocking command. Shell composition can
+  // suppress failure or short-circuit execution; reject it conservatively.
+  const commands = (steps: Record<string, unknown>[]) => steps.filter(mandatory)
+    .flatMap((step) => typeof step.run === "string" && required.includes(step.run.trim()) ? [step.run.trim()] : []);
   if (!jobs.some((job) => job["runs-on"].startsWith("ubuntu-") && mandatory(job) &&
     required.every((command) => commands(job.steps).includes(command)))) {
     violations.push("Ubuntu verification must install frozen dependencies and run every source gate");
@@ -111,8 +116,8 @@ function desktopPolicyViolations(
   if (!/\beslint\s+\.(?:\s|$)/u.test(scripts.lint ?? "")) {
     violations.push("lint must cover all repository sources including desktop");
   }
-  if (!workspacePackages.some((pattern) => !pattern.startsWith("!") && matchesPattern("apps/desktop", pattern)) ||
-    workspacePackages.some((pattern) => pattern.startsWith("!") && matchesPattern("apps/desktop", pattern.slice(1)))) {
+  if (!workspacePackages.some((pattern) => !pattern.startsWith("!") && matchesGlob("apps/desktop", pattern)) ||
+    workspacePackages.some((pattern) => pattern.startsWith("!") && matchesGlob("apps/desktop", pattern.slice(1)))) {
     violations.push("desktop must be part of the pnpm workspace");
   }
   for (const job of jobs) {
@@ -144,6 +149,18 @@ const workspaceScripts = {
 };
 
 describe("desktop CI source-only policy", () => {
+  it.each(["pnpm test || true", "true || pnpm test", "pnpm test | true", "exit 0\npnpm test", "if false; then\npnpm test\nfi"])("rejects a gate hidden by shell control flow: %s", (run) => {
+    const workflow = compliantWorkflow();
+    workflow.jobs.verify!.steps.find((step) => step.run === "pnpm test")!.run = run;
+    expect(desktopPolicyViolations(workflow, workspaceScripts, ["apps/*"]))
+      .toContain("Ubuntu verification must install frozen dependencies and run every source gate");
+  });
+
+  it.each(["!apps/des?top", "!apps/[d]esktop"])("honors a pnpm glob desktop exclusion: %s", (exclusion) => {
+    expect(desktopPolicyViolations(compliantWorkflow(), workspaceScripts, ["apps/*", exclusion]))
+      .toContain("desktop must be part of the pnpm workspace");
+  });
+
   it.each(["if", "continue-on-error"] as const)("rejects a verification job with %s", (key) => {
     const workflow = compliantWorkflow();
     workflow.jobs.verify![key] = key === "if" ? "${{ github.event_name == 'push' }}" : true;
@@ -170,7 +187,7 @@ describe("desktop CI source-only policy", () => {
       .toContain(hidden.includes("publish") ? "CI must not publish desktop artifacts" : "CI must not make a macOS installer");
   });
 
-  it.each(["pnpm --filter @personal-intelligence-hub/desktop run release", "pnpm -C apps/desktop release"])("follows targeted package script invocation: %s", (run) => {
+  it.each(["pnpm --filter @personal-intelligence-hub/desktop run release", "pnpm -C apps/desktop release", 'pnpm --filter "*" run release'])("follows targeted package script invocation: %s", (run) => {
     const workflow = compliantWorkflow();
     workflow.jobs.verify!.steps.push({ run });
     const packages = [{ name: "@personal-intelligence-hub/desktop", path: "apps/desktop", scripts: { release: "electron-forge publish" } }];
