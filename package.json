@@ -30,7 +30,9 @@
     "openapi:check": "node --conditions=development --import tsx scripts/generate-openapi.ts --check",
     "verify": "pnpm lint && pnpm typecheck && pnpm test",
     "db:generate": "pnpm --filter @personal-intelligence-hub/database db:generate",
-    "db:migrate": "pnpm --filter @personal-intelligence-hub/database db:migrate"
+    "db:migrate": "pnpm --filter @personal-intelligence-hub/database db:migrate",
+    "desktop:dev": "pnpm --filter @personal-intelligence-hub/desktop dev",
+    "desktop:make": "pnpm --filter @personal-intelligence-hub/desktop make:mac"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
