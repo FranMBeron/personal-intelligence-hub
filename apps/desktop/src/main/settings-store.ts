@@ -1,4 +1,4 @@
-import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { DesktopSettings } from "../shared/contracts.js";
@@ -58,7 +58,13 @@ export class SettingsStore {
     const validated = this.validate(settings);
     const write = this.pendingWrite.then(async () => {
       try {
-        await writeFile(this.temporaryPath, JSON.stringify(validated), { mode: 0o600 });
+        const temporaryFile = await open(this.temporaryPath, "w", 0o600);
+        try {
+          await temporaryFile.chmod(0o600);
+          await writeFile(temporaryFile, JSON.stringify(validated), { mode: 0o600 });
+        } finally {
+          await temporaryFile.close();
+        }
         await rename(this.temporaryPath, this.settingsPath);
         await chmod(this.settingsPath, 0o600);
       } catch {

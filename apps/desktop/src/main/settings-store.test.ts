@@ -1,9 +1,15 @@
+import * as filesystem from "node:fs/promises";
 import { mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsStore } from "./settings-store.js";
+
+// Wrap only the module namespace so the test can observe real writes at their boundary.
+vi.mock("node:fs/promises", async (importOriginal) => ({
+  ...await importOriginal<typeof filesystem>(),
+}));
 
 const defaults = { serverOrigin: null, launchAtLogin: false };
 let directory: string;
@@ -41,6 +47,30 @@ describe("SettingsStore", () => {
       expect(await readdir(directory)).toEqual(["settings.json"]);
       expect((await stat(settingsPath)).mode & 0o777).toBe(0o600);
     } finally { await previous.close(); }
+  });
+
+  it("restricts a reused temporary file before writing settings bytes", async () => {
+    const temporaryPath = join(directory, "settings.json.tmp");
+    await writeFile(temporaryPath, "", { mode: 0o644 });
+    await filesystem.chmod(temporaryPath, 0o644);
+    const existing = await open(temporaryPath, "r");
+    const originalWriteFile = filesystem.writeFile;
+    let modeDuringWrite: number | undefined;
+    const writer = vi.spyOn(filesystem, "writeFile").mockImplementation(async (...arguments_) => {
+      modeDuringWrite = (await existing.stat()).mode & 0o777;
+      return originalWriteFile(...arguments_);
+    });
+    try {
+      const previousInode = (await existing.stat()).ino;
+      await store.write(defaults);
+      expect(modeDuringWrite).toBe(0o600);
+      expect((await stat(settingsPath)).ino).toBe(previousInode);
+      expect((await stat(settingsPath)).mode & 0o777).toBe(0o600);
+      expect(await readdir(directory)).toEqual(["settings.json"]);
+    } finally {
+      writer.mockRestore();
+      await existing.close();
+    }
   });
 
   it("persists only allowed keys even when extra properties arrive at runtime", async () => {
