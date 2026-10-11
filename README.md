@@ -106,6 +106,13 @@ the trust boundary documented in
 Private deployment and restore documents are runbooks only and do not authorize
 changes to any host.
 
+## macOS desktop client
+
+The optional Electron client opens your own private server from an Apple
+Silicon Mac, with a menu bar and configurable launch at login. Build and
+install it locally using the [macOS desktop guide](docs/desktop.md), which
+covers development, security, private configuration and unsigned-app limits.
+
 ## License
 
 The source code is licensed under the Apache License 2.0. That license does not

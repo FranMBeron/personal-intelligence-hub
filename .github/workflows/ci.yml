@@ -55,6 +55,7 @@ jobs:
           if-no-files-found: error
 
       - name: Lint source
+        # Root gates cover desktop source too; make:mac is a local macOS-only step.
         run: pnpm lint
 
       - name: Typecheck source
@@ -78,7 +79,7 @@ jobs:
       - name: Verify generated OpenAPI
         run: pnpm test:public && pnpm openapi:check
 
-      - name: Validate container policy
+      - name: Validate CI source-only and container policy
         run: pnpm test:ci-policy && pnpm test:docker-policy && pnpm test:operations
 
       - name: Validate public repository boundary
