@@ -26,3 +26,7 @@ vaults/
 hermes-profiles/
 backups/
 fixture-output/
+
+# Desktop runtime builds and unsigned distributables
+apps/desktop/.vite/
+apps/desktop/out/
