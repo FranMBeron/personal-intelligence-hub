@@ -31,6 +31,7 @@ export type ConnectorAuthenticationOptions = Readonly<{
     credentialBucketCapacity?: number;
   }>;
   requestIdFactory?: (request: FastifyRequest) => string;
+  now?: () => number;
 }>;
 
 declare module "fastify" {
@@ -49,6 +50,8 @@ const DEFAULT_PROCESS_WIDE_MAX = 10_000;
 const DEFAULT_CREDENTIAL_MAX = 300;
 const DEFAULT_TIME_WINDOW_MS = 60_000;
 const MAX_CREDENTIAL_BUCKETS = 10_000;
+const MAX_DELEGATED_TOKEN_LIFETIME_SECONDS = 30;
+const DELEGATED_CLOCK_TOLERANCE_SECONDS = 5;
 
 const authenticationRequired = (): ConnectorProblem =>
   new ConnectorProblem("authentication_required", 401);
@@ -244,6 +247,7 @@ const credentialByIssuer = (
 const verifyDelegatedPrincipal = async (
   token: string,
   credential: ServiceCredentialPolicy,
+  now: number,
 ): Promise<Omit<DelegatedPrincipal, "serviceId">> => {
   const key = new Uint8Array(credential.delegatedKey);
   try {
@@ -251,9 +255,18 @@ const verifyDelegatedPrincipal = async (
       algorithms: ["HS256"],
       issuer: credential.delegatedIssuer,
       audience: CONNECTORS_AUDIENCE,
+      currentDate: new Date(now),
+      clockTolerance: DELEGATED_CLOCK_TOLERANCE_SECONDS,
     });
+    const nowSeconds = now / 1_000;
     if (
+      typeof payload.iat !== "number" ||
+      !Number.isFinite(payload.iat) ||
       typeof payload.exp !== "number" ||
+      !Number.isFinite(payload.exp) ||
+      payload.exp <= payload.iat ||
+      payload.exp - payload.iat > MAX_DELEGATED_TOKEN_LIFETIME_SECONDS ||
+      payload.iat > nowSeconds + DELEGATED_CLOCK_TOLERANCE_SECONDS ||
       typeof payload.sub !== "string" ||
       payload.sub.length === 0
     ) {
@@ -418,6 +431,7 @@ export const installConnectorAuthentication = (
       const principalWithoutService = await verifyDelegatedPrincipal(
         delegatedToken,
         issuerCredential,
+        options.now?.() ?? Date.now(),
       );
       if (tokenServiceId !== issuerCredential.serviceId) {
         throw authenticationRequired();

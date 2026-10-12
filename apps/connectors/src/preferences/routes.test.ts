@@ -44,7 +44,7 @@ const headers = async ({ actorId: tokenActorId = actorId, actorType = "human", s
     .setAudience(CONNECTORS_AUDIENCE)
     .setSubject("test-subject")
     .setIssuedAt()
-    .setExpirationTime("5m")
+    .setExpirationTime("30s")
     .sign(delegatedKey),
 });
 const createApp = async () => {

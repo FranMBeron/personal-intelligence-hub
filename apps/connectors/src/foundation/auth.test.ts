@@ -5,7 +5,7 @@ import type {
 } from "@personal-intelligence-hub/contracts";
 import { Writable } from "node:stream";
 import fastify from "fastify";
-import { SignJWT } from "jose";
+import { SignJWT, type JWTPayload } from "jose";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -101,6 +101,9 @@ type TokenOptions = Readonly<{
   requestId?: unknown;
   serviceIdClaim?: string;
   expiresIn?: string | null;
+  iat?: unknown;
+  exp?: unknown;
+  omitIat?: boolean;
 }>;
 
 const credentialFor = (
@@ -128,14 +131,22 @@ const delegatedToken = async (
     ...(options.serviceIdClaim === undefined
       ? {}
       : { service_id: options.serviceIdClaim }),
-  })
+    ...(options.iat === undefined ? {} : { iat: options.iat }),
+    ...(options.exp === undefined ? {} : { exp: options.exp }),
+  } as unknown as JWTPayload)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuer(credential.delegatedIssuer)
     .setAudience(options.audience ?? CONNECTORS_AUDIENCE)
-    .setSubject(options.subject ?? subject)
-    .setIssuedAt();
-  if (options.expiresIn !== null) {
-    token = token.setExpirationTime(options.expiresIn ?? "5m");
+    .setSubject(options.subject ?? subject);
+  if (options.iat === undefined && options.omitIat !== true) {
+    token = token.setIssuedAt();
+  }
+  if (options.expiresIn !== undefined) {
+    if (options.expiresIn !== null) {
+      token = token.setExpirationTime(options.expiresIn);
+    }
+  } else if (options.exp === undefined) {
+    token = token.setExpirationTime(Math.floor(Date.now() / 1000) + 30);
   }
   return token.sign(credential.delegatedKey);
 };
@@ -257,6 +268,59 @@ describe("connector authentication", () => {
       });
       expect(response.statusCode).toBe(401);
       expect(response.json()).toMatchObject({ code: "authentication_required" });
+    }
+  });
+
+  it("rejects a correctly signed delegated token whose lifetime exceeds 30 seconds", async () => {
+    const config = makeConfig();
+    const iat = Math.floor(Date.now() / 1_000);
+    const app = makeApp(config);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/test",
+      headers: await validHeaders(config, "pih-web", {
+        iat,
+        exp: iat + 31,
+      }),
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({ code: "authentication_required" });
+  });
+
+  it("requires short-lived numeric iat and exp claims for human and service principals", async () => {
+    const config = makeConfig();
+    const nowSeconds = 1_800_000_000;
+    const app = makeApp(config, {
+      now: () => nowSeconds * 1_000,
+    } as ConnectorAuthenticationOptions);
+    const cases: readonly [ConnectorServiceId, TokenOptions, number][] = [
+      ["pih-web", { iat: nowSeconds - 29, exp: nowSeconds + 1 }, 200],
+      ["pih-deployer", { iat: nowSeconds - 29, exp: nowSeconds + 1 }, 200],
+      ["pih-web", { iat: nowSeconds - 31, exp: nowSeconds }, 401],
+      ["pih-web", { iat: nowSeconds - 30, exp: nowSeconds + 1 }, 401],
+      ["pih-web", { iat: nowSeconds + 6, exp: nowSeconds + 30 }, 401],
+      ["pih-web", { iat: nowSeconds + 5, exp: nowSeconds + 30 }, 200],
+      ["pih-web", { iat: nowSeconds - 30, exp: nowSeconds - 6 }, 401],
+      ["pih-web", { iat: "1800000000", exp: nowSeconds + 30 }, 401],
+      ["pih-web", { iat: null, exp: nowSeconds + 30 }, 401],
+      ["pih-web", { omitIat: true, exp: nowSeconds + 30 }, 401],
+      ["pih-web", { iat: nowSeconds - 30, exp: nowSeconds - 30 }, 401],
+      ["pih-web", { iat: nowSeconds - 30, exp: "1800000030" }, 401],
+      ["pih-web", { iat: nowSeconds - 30, exp: null, expiresIn: null }, 401],
+    ];
+
+    for (const [serviceId, tokenOptions, expectedStatus] of cases) {
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/test",
+        headers: await validHeaders(config, serviceId, {
+          ...tokenOptions,
+          issuerServiceId: serviceId,
+          actorType: serviceId === "pih-deployer" ? "service" : "human",
+        }),
+      });
+      expect(response.statusCode, JSON.stringify({ tokenOptions, body: response.json() })).toBe(expectedStatus);
     }
   });
 

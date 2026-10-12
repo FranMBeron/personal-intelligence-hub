@@ -39,7 +39,7 @@ const headers = async (credential: ServiceCredentialPolicy, actorType: "human" |
   "x-pih-service-token": credential.serviceToken,
   authorization: "Bearer " + await new SignJWT({ actor_id: "a03f7492-09f0-4e8f-95d0-12b7c616aaea", actor_type: actorType, scope: [scope], request_id: "test-request" })
     .setProtectedHeader({ alg: "HS256" }).setIssuer(credential.delegatedIssuer)
-    .setAudience(CONNECTORS_AUDIENCE).setSubject("test").setIssuedAt().setExpirationTime("5m")
+    .setAudience(CONNECTORS_AUDIENCE).setSubject("test").setIssuedAt().setExpirationTime("30s")
     .sign(credential.delegatedKey),
 });
 
