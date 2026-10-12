@@ -52,6 +52,12 @@ const primaryAad = (actorId: string) => `calendar_connections:${actorId}:primary
 const refFor = (actorId: string, providerCalendarId: string, key: Uint8Array): string =>
   "cal_" + createHmac("sha256", key).update(actorId + "\0" + providerCalendarId, "utf8").digest("base64url");
 const canWrite = (role: GoogleCalendarRecord["accessRole"] | CalendarRecord["providerAccessRole"]): boolean => role === "writer" || role === "owner";
+const sameAuthorizationGeneration = (left: CalendarConnectionRecord, right: CalendarConnectionRecord): boolean =>
+  left.actorId === right.actorId &&
+  left.createdAt === right.createdAt &&
+  left.selectionVersion === right.selectionVersion &&
+  (left.primaryCalendarBindingCiphertext ?? null) === (right.primaryCalendarBindingCiphertext ?? null) &&
+  JSON.stringify(left.grantedScopes) === JSON.stringify(right.grantedScopes);
 const sameConnectionSnapshot = (left: CalendarConnectionRecord, right: CalendarConnectionRecord): boolean =>
   left.actorId === right.actorId &&
   left.state === right.state &&
@@ -207,9 +213,14 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
     const parsedBody = UpdateCalendarSelectionBodySchema.safeParse(body);
     if (!parsedBody.success) return fail("calendar_selection_invalid");
     return this.#exclusive(principal.actorId, async () => {
+      const authorizationBeforeToken = await this.#database.read((db) => this.#repository.getConnection(db, principal.actorId));
+      if (authorizationBeforeToken === null) return fail("calendar_not_configured");
       const token = await this.#token(principal.actorId);
       const connectionSnapshot = await this.#database.read((db) => this.#repository.getConnection(db, principal.actorId));
       if (connectionSnapshot === null) return fail("calendar_not_configured");
+      if (!sameAuthorizationGeneration(authorizationBeforeToken, connectionSnapshot)) {
+        return fail("calendar_connection_changed");
+      }
       let providerCalendars: readonly GoogleCalendarRecord[];
       try {
         providerCalendars = await this.#google.listCalendars(token);

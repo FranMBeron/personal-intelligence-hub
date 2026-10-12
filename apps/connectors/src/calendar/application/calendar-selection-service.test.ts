@@ -154,6 +154,34 @@ describe("Calendar selection service", () => {
     expect(JSON.stringify(rows)).not.toContain("Primary calendar");
   });
 
+  it("rejects a replaced authorization returned during token acquisition before provider discovery", async () => {
+    const db = await openDb();
+    await seedConnection(db);
+    const bootstrap = makeService(db).service;
+    await bootstrap.bootstrapPrimary({ actorId, accessToken: "fictional-access-token", requestId: "request-fictional" });
+    const primaryRef = (await bootstrap.get(principal())).items[0]!.calendarRef;
+    const google = mockGoogle();
+    const tokens: GoogleAccessTokenProvider = {
+      getAccessToken: vi.fn(async () => {
+        const current = await db.read((handle) => repository.getConnection(handle, actorId));
+        await db.transaction((handle) => repository.replaceConnectionAuthorization(handle, {
+          ...current!,
+          refreshTokenCiphertext: sealCalendarValue("fictional-new-oauth-refresh-token", "calendar_connections:" + actorId + ":refresh", keyring),
+          updatedAt: "2026-10-12T12:01:00.000Z",
+        }));
+        return "fictional-old-access-token";
+      }),
+      invalidate: vi.fn(),
+    };
+    const service = new CalendarSelectionServiceImpl({ database: db, repository, tokens, google, keyring, clock });
+    await expect(service.update(principal(), {
+      expectedVersion: 1,
+      calendars: [{ calendarRef: primaryRef, readEnabled: true, writeEnabled: true }],
+    })).rejects.toThrow("calendar_connection_changed");
+    expect(google.listCalendars).not.toHaveBeenCalled();
+    expect(await db.read((handle) => repository.listCalendars(handle, actorId))).toEqual([]);
+  });
+
   it("rejects selection results fetched under credentials replaced while provider discovery was in flight", async () => {
     const db = await openDb();
     await seedConnection(db);
