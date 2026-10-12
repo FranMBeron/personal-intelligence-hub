@@ -17,3 +17,6 @@ RUN pnpm --filter @personal-intelligence-hub/contracts build \
  && pnpm --filter @personal-intelligence-hub/connectors build \
  && pnpm --filter @personal-intelligence-hub/connectors deploy --prod /opt/connectors \
  && cp -R apps/connectors/dist /opt/connectors/dist
+
+FROM scratch AS export
+COPY --from=build /opt/connectors /opt/connectors

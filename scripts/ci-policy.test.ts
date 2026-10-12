@@ -238,9 +238,9 @@ describe("desktop CI source-only policy", () => {
     expect(connector).toBeDefined();
     expect(connector).toMatchObject({
       dockerfile: "connectors-build.Dockerfile",
-      image: "pih-connectors-build",
+      image: "pih-connectors-export",
       build_args: "--build-arg NODE_IMAGE=node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
-      target: "--target build",
+      target: "",
     });
     expect(job.steps.some((step) => typeof step.uses === "string" && step.uses.startsWith("anchore/sbom-action@"))).toBe(true);
     expect(job.steps.some((step) => typeof step.uses === "string" && step.uses.startsWith("anchore/scan-action@"))).toBe(true);

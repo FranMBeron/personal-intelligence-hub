@@ -113,9 +113,9 @@ jobs:
             target: ""
           - application: connectors
             dockerfile: connectors-build.Dockerfile
-            image: pih-connectors-build
+            image: pih-connectors-export
             build_args: "--build-arg NODE_IMAGE=node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402"
-            target: "--target build"
+            target: ""
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

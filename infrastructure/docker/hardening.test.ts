@@ -190,15 +190,15 @@ describe("private connectors host bundle", () => {
     expect(sysusers).toContain('u pih-connectors - "PIH private connectors" /var/lib/pih-connectors /usr/sbin/nologin');
   });
 
-  it("exports a build-only bundle and packages the compiled entrypoint and SQL migrations", async () => {
+  it("exports only the compiled runtime bundle from a scratch final image", async () => {
     const dockerfile = await read("infrastructure/docker/connectors-build.Dockerfile");
     expect(dockerfile).toContain("ARG NODE_IMAGE");
     expect(dockerfile).toContain("FROM ${NODE_IMAGE} AS build");
     expect(dockerfile).toContain("pnpm install --frozen-lockfile");
     expect(dockerfile).toContain("pnpm --filter @personal-intelligence-hub/connectors deploy --prod /opt/connectors");
     expect(dockerfile).toContain("cp -R apps/connectors/dist /opt/connectors/dist");
-    expect(dockerfile).not.toMatch(/^(CMD|ENTRYPOINT|EXPOSE)\s/m);
-
-
+    const finalStage = dockerfile.split("FROM scratch AS export")[1];
+    expect(finalStage).toBeDefined();
+    expect(finalStage?.trim().split("\n")).toEqual(["COPY --from=build /opt/connectors /opt/connectors"]);
   });
 });

@@ -1070,7 +1070,7 @@ Run: `pnpm test:compose && pnpm test:docker-policy && pnpm test:operations && pn
 
 Expected: FAIL because the runtime bundle, unit, socket mount, and safe examples are absent.
 
-- [ ] **Step 3: Add the build image, host service, and socket mount**
+- [ ] **Step 3: Add the build/export image, host service, and socket mount**
 
 Use this build shape; the deploy script supplies the repository's already pinned Node image digest as `NODE_IMAGE`:
 
@@ -1089,11 +1089,13 @@ COPY packages/contracts packages/contracts
 RUN pnpm --filter @personal-intelligence-hub/contracts build \
  && pnpm --filter @personal-intelligence-hub/connectors build \
  && pnpm --filter @personal-intelligence-hub/connectors deploy --prod /opt/connectors \
- && cp -R apps/connectors/dist /opt/connectors/dist \
- && cp -R apps/connectors/src/migrations /opt/connectors/migrations
+ && cp -R apps/connectors/dist /opt/connectors/dist
+
+FROM scratch AS export
+COPY --from=build /opt/connectors /opt/connectors
 ```
 
-The image is build/export-only and has no production `CMD`. Its `/opt/connectors` contains production dependencies, compiled output, package metadata, and every migration SQL file. A policy test compares source and bundle migration names/checksums.
+The build stage contains the pinned Node image, workspace, and toolchain. The default final image is `pih-connectors-export:$release_sha`; it is a scratch image with only `/opt/connectors`, no base operating system, no builder/workspace, and no `CMD`. CI and deployment generate the SBOM and run Grype against this final export image, never the builder stage. Deployment creates it with an explicit inert command only to extract `/opt/connectors`. A policy test compares the source and exported migration names/checksums, and the restart integration imports the copied runtime on host Node.
 
 Provision the identities with this sysusers policy:
 
@@ -1185,16 +1187,16 @@ git commit -m "feat: package private connectors host service"
 
 **Interfaces:**
 - Consumes: `infrastructure/docker/connectors-build.Dockerfile`, the immutable release SHA, and root-only `pih-deployer` credentials.
-- Produces: connectors build image, extracted immutable runtime, SBOM, high-severity scan, `systemd` activation order, release metadata, and rollback participation.
+- Produces: a scratch-only connectors export image, extracted immutable runtime, SBOM and high-severity scan of that shipped artifact, `systemd` activation order, release metadata, and rollback participation.
 
 - [ ] **Step 1: Add failing release-policy tests**
 
 ```ts
 it("builds, scans, extracts, and rolls back connectors with the release", async () => {
   const script = await readFile("infrastructure/operations/deploy-release.sh", "utf8");
-  expect(script).toContain('pih-connectors-build:$release_sha');
+  expect(script).toContain('pih-connectors-export:$release_sha');
   expect(script).toContain('sbom-connectors.cyclonedx.json');
-  expect(script).toContain('grype "pih-connectors-build:$release_sha" --fail-on high');
+  expect(script).toContain('grype "pih-connectors-export:$release_sha" --fail-on high');
   expect(script).toContain('systemctl restart personal-intelligence-hub-connectors.service');
   expect(script).toContain('check-connectors-readiness.mjs');
 });
@@ -1225,8 +1227,8 @@ Expected: FAIL because connectors is missing from release and CI matrices.
 
 In `deploy-release.sh`:
 
-1. build `infrastructure/docker/connectors-build.Dockerfile` as `pih-connectors-build:$release_sha` with the pinned Node digest;
-2. generate `sbom-connectors.cyclonedx.json` and fail Grype on high severity;
+1. build `infrastructure/docker/connectors-build.Dockerfile` with the pinned Node digest; its default final target is the scratch-only `pih-connectors-export:$release_sha`, while Node and the toolchain remain only in the unshipped build stage;
+2. generate `sbom-connectors.cyclonedx.json` and fail Grype on high severity against the final export image;
 3. create the write-once release directory, extract `/opt/connectors`, compare packaged migration checksums to source, and set root-owned non-writable runtime files;
 4. capture the previous connectors symlink target and service state in release metadata, plus migration-history format 1 and sorted packaged migration names;
 5. permit provider migrations only when (A) the active connector runtime is history-compatible with a matching migration prefix, or (B) there is no active connector runtime; never when an unmarked connector runtime is active. Rollback to an unmarked legacy target is allowed only when its restored service state is inactive;

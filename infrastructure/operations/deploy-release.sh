@@ -66,7 +66,7 @@ if [ -e "$release_environment" ] || [ -e "$release_manifest" ] || [ -e "$connect
   echo "Release metadata or connectors runtime already exists; deploy a new Git SHA." >&2
   exit 1
 fi
-for image_name in api web postgres connectors-build; do
+for image_name in api web postgres connectors-export; do
   if docker image inspect "pih-$image_name:$release_sha" > /dev/null 2>&1; then
     echo "Release image already exists; deploy a new Git SHA." >&2
     exit 1
@@ -181,7 +181,7 @@ docker build --file "$release_directory/infrastructure/docker/postgres.Dockerfil
 node_image=node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
 docker build --build-arg "NODE_IMAGE=$node_image" \
   --file "$release_directory/infrastructure/docker/connectors-build.Dockerfile" \
-  --tag "pih-connectors-build:$release_sha" "$release_directory"
+  --tag "pih-connectors-export:$release_sha" "$release_directory"
 
 syft "pih-api:$release_sha" \
   --output "cyclonedx-json=$release_directory/sbom-api.cyclonedx.json"
@@ -189,15 +189,15 @@ syft "pih-web:$release_sha" \
   --output "cyclonedx-json=$release_directory/sbom-web.cyclonedx.json"
 syft "pih-postgres:$release_sha" \
   --output "cyclonedx-json=$release_directory/sbom-postgres.cyclonedx.json"
-syft "pih-connectors-build:$release_sha" \
+syft "pih-connectors-export:$release_sha" \
   --output "cyclonedx-json=$release_directory/sbom-connectors.cyclonedx.json"
 grype "pih-api:$release_sha" --fail-on high
 grype "pih-web:$release_sha" --fail-on high
 grype "pih-postgres:$release_sha" --fail-on high
-grype "pih-connectors-build:$release_sha" --fail-on high
+grype "pih-connectors-export:$release_sha" --fail-on high
 
 mkdir -m 0755 "$connectors_release_directory"
-connectors_container=$(docker create --name "pih-connectors-export-$release_sha-$$" "pih-connectors-build:$release_sha")
+connectors_container=$(docker create --name "pih-connectors-export-$release_sha-$$" "pih-connectors-export:$release_sha" /__export_only__)
 docker cp "$connectors_container:/opt/connectors/." "$connectors_release_directory/"
 docker rm "$connectors_container" > /dev/null
 connectors_container=
@@ -244,7 +244,7 @@ postgres_image=$(docker image inspect --format '{{.Id}}' "pih-postgres:$release_
 printf '\nPIH_POSTGRES_IMAGE=%s\n' "$postgres_image" >> "$release_environment"
 
 image_inspect_temporary="$release_directory/image-inspect.tmp.$$"
-docker image inspect "pih-api:$release_sha" "pih-web:$release_sha" "pih-postgres:$release_sha" "pih-connectors-build:$release_sha" \
+docker image inspect "pih-api:$release_sha" "pih-web:$release_sha" "pih-postgres:$release_sha" "pih-connectors-export:$release_sha" \
   > "$image_inspect_temporary"
 jq '[.[] | {id: .Id, repoTags: .RepoTags, repoDigests: .RepoDigests}]' \
   "$image_inspect_temporary" \
@@ -253,7 +253,7 @@ rm -f "$image_inspect_temporary"
 jq -n \
   --arg gitSha "$release_sha" \
   --arg deployedAt "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg connectorsImage "pih-connectors-build:$release_sha" \
+  --arg connectorsImage "pih-connectors-export:$release_sha" \
   --arg connectorsRuntime "$connectors_release_directory" \
   --arg previousReleaseSha "$previous_release_sha" \
   --arg previousConnectorsRuntime "$previous_connectors_runtime" \
@@ -262,7 +262,7 @@ jq -n \
   --argjson connectorMigrations "$connector_migrations_json" \
   --slurpfile images "$release_directory/image-manifests.json" \
   '{gitSha: $gitSha, deployedAt: $deployedAt, images: $images[0],
-    connectors: {buildImage: $connectorsImage, runtimeDirectory: $connectorsRuntime,
+    connectors: {exportImage: $connectorsImage, runtimeDirectory: $connectorsRuntime,
       previousReleaseSha: (if $previousReleaseSha == "" then null else $previousReleaseSha end),
       previousConnectorsRuntime: (if $previousConnectorsRuntime == "" then null else $previousConnectorsRuntime end),
       previousConnectorsEnabled: $previousConnectorsEnabled,

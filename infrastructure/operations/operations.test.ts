@@ -138,10 +138,12 @@ describe("connectors atomic release", () => {
   it("builds, scans, extracts, verifies, and activates connectors before web rollout", async () => {
     const deploy = await readFile(`${operationsRoot}/deploy-release.sh`, "utf8");
     const rollback = await readFile(`${operationsRoot}/rollback-release.sh`, "utf8");
-    expect(deploy).toContain('pih-connectors-build:$release_sha');
+    expect(deploy).toContain('pih-connectors-export:$release_sha');
     expect(deploy).toContain('sbom-connectors.cyclonedx.json');
-    expect(deploy).toContain('grype "pih-connectors-build:$release_sha" --fail-on high');
+    expect(deploy).toContain('grype "pih-connectors-export:$release_sha" --fail-on high');
+    expect(deploy).toContain('docker create --name "pih-connectors-export-$release_sha-$$" "pih-connectors-export:$release_sha" /__export_only__');
     expect(deploy).toContain('docker cp "$connectors_container:/opt/connectors/."');
+    expect(deploy).toContain("connectors: {exportImage: $connectorsImage");
     expect(deploy).toContain('sha256sum');
     expect(deploy).toContain('systemctl restart "$connectors_service"');
     expect(deploy).toContain('check-connectors-readiness.mjs');

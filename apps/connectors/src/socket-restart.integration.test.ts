@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -34,34 +34,55 @@ const run = (args: string[], cwd: string) =>
 
 const verifyDockerExportMigrations = async (image: string): Promise<void> => {
   await exec("docker", [
-    "build", "--target", "build", "--build-arg", `NODE_IMAGE=${composeImage}`,
+    "build", "--build-arg", `NODE_IMAGE=${composeImage}`,
     "--tag", image, "--file", join(repositoryRoot, "infrastructure/docker/connectors-build.Dockerfile"),
     repositoryRoot,
   ], { cwd: repositoryRoot, timeout: 180_000, maxBuffer: 8 * 1024 * 1024 });
-  const script = [
-    "const fs=require('node:fs');",
-    "const crypto=require('node:crypto');",
-    "const source='/workspace/apps/connectors/src/migrations';",
-    "const exported='/opt/connectors/dist/src/migrations';",
-    "const names=p=>fs.readdirSync(p).filter(n=>n.endsWith('.sql')).sort();",
-    "const read=(p,n)=>fs.readFileSync(p+'/'+n);",
-    "const hash=b=>crypto.createHash('sha256').update(b).digest('hex');",
-    "if(!fs.statSync('/opt/connectors/dist/src/main.js').isFile())process.exit(11);",
-    "const a=names(source),b=names(exported);",
-    "if(JSON.stringify(a)!==JSON.stringify(b))process.exit(12);",
-    "for(const n of a)if(hash(read(source,n))!==hash(read(exported,n)))process.exit(13);",
-    "process.stdout.write(JSON.stringify({entrypoint:'/opt/connectors/dist/src/main.js',sourceMigrations:a,migrations:b}));",
-  ].join("");
-  const result = await exec("docker", [
-    "run", "--rm", "--entrypoint", "node", image, "-e", script,
-  ], { cwd: repositoryRoot, timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
-  const bundle = JSON.parse(result.stdout) as {
-    entrypoint: string;
-    sourceMigrations: string[];
-    migrations: string[];
-  };
-  expect(bundle.entrypoint).toBe("/opt/connectors/dist/src/main.js");
-  expect(bundle.migrations).toEqual(bundle.sourceMigrations);
+  const extracted = await mkdtemp(join(tmpdir(), "pih-connectors-export-bundle-"));
+  let container: string | undefined;
+  try {
+    const created = await exec("docker", ["create", image, "/__export_only__"], {
+      cwd: repositoryRoot, timeout: 30_000, maxBuffer: 2 * 1024 * 1024,
+    });
+    container = created.stdout.trim();
+    const rootfsArchive = join(extracted, "image-rootfs.tar");
+    await exec("docker", ["export", "--output", rootfsArchive, container], {
+      cwd: repositoryRoot, timeout: 30_000, maxBuffer: 2 * 1024 * 1024,
+    });
+    const rootfs = await exec("tar", ["-tf", rootfsArchive], {
+      cwd: repositoryRoot, timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
+    });
+    const paths = rootfs.stdout.trim().split("\n");
+    const dockerRuntimePaths = new Set([
+      ".dockerenv", "dev/", "dev/console", "dev/pts/", "dev/shm/", "etc/",
+      "etc/hostname", "etc/hosts", "etc/mtab", "etc/resolv.conf", "opt/", "proc/", "sys/",
+    ]);
+    expect(paths.length).toBeGreaterThan(0);
+    expect(paths.every((path) => path.startsWith("opt/connectors/") || dockerRuntimePaths.has(path))).toBe(true);
+    await exec("docker", ["cp", `${container}:/opt/connectors/.`, extracted], {
+      cwd: repositoryRoot, timeout: 30_000, maxBuffer: 2 * 1024 * 1024,
+    });
+    const entrypoint = join(extracted, "dist/src/main.js");
+    const sourceDirectory = join(repositoryRoot, "apps/connectors/src/migrations");
+    const bundleDirectory = join(extracted, "dist/src/migrations");
+    const names = async (directory: string) =>
+      (await readdir(directory)).filter((name) => name.endsWith(".sql")).sort();
+    const sourceMigrations = await names(sourceDirectory);
+    const bundledMigrations = await names(bundleDirectory);
+    expect(bundledMigrations).toEqual(sourceMigrations);
+    for (const migration of sourceMigrations) {
+      const [source, bundled] = await Promise.all([
+        readFile(join(sourceDirectory, migration)),
+        readFile(join(bundleDirectory, migration)),
+      ]);
+      expect(bundled.equals(source)).toBe(true);
+    }
+    const runtime = await import(pathToFileURL(entrypoint).href) as { startConnectors?: unknown };
+    expect(runtime.startConnectors).toBeTypeOf("function");
+  } finally {
+    if (container) await exec("docker", ["rm", container], { cwd: repositoryRoot });
+    await rm(extracted, { recursive: true, force: true });
+  }
 };
 
 const waitForPath = async (path: string): Promise<void> => {
@@ -169,7 +190,7 @@ describe("directory-mounted connector socket restart", () => {
     let first: Awaited<ReturnType<typeof startConnectors>> | undefined;
     let second: Awaited<ReturnType<typeof startConnectors>> | undefined;
     let inspector: { project: string; file: string } | undefined;
-    const image = `pih-connectors-build-test:${process.pid}-${randomUUID().slice(0, 8)}`;
+    const image = `pih-connectors-export-test:${process.pid}-${randomUUID().slice(0, 8)}`;
     const config: ConnectorsConfig = {
       transport: { kind: "unix", path: webSocket, socketGid: clientGid },
       databasePath: join(root, "connectors.sqlite"),

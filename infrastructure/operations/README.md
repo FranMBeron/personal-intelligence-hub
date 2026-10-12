@@ -48,7 +48,10 @@ The deploy builds SHA-tagged API, web and PostgreSQL images, generates a Cyclone
 SBOM for each, and fails on high
 vulnerabilities, runs migrations through production Compose, waits for health,
 and only then switches `current` atomically. A failed application rollout
-tries to restore the previous image set. It never restores the database.
+tries to restore the previous image set. It never restores the database. The
+connectors build stage exports its production runtime into a scratch-only image;
+that final artifact is SBOM-generated and scanned before the bundle is extracted
+onto the host. The image contains no builder, workspace, or operating-system base.
 The PostgreSQL derivative preserves the vendor entrypoint and data layout while
 installing exact reviewed Alpine library patches. Its generated release setting
 uses the inspected image ID; do not set `PIH_POSTGRES_IMAGE` in the base environment.

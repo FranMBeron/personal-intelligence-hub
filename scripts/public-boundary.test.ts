@@ -450,3 +450,12 @@ describe("connectors environment example boundary", () => {
     expect(example).not.toContain("/home/franmb");
   });
 });
+
+describe("connectors export image boundary", () => {
+  it("keeps build tools and operating-system layers out of the shipped image", async () => {
+    const dockerfile = await readFile(join(repositoryRoot, "infrastructure/docker/connectors-build.Dockerfile"), "utf8");
+    expect(dockerfile).toContain("FROM ${NODE_IMAGE} AS build");
+    const finalStage = dockerfile.split("FROM scratch AS export")[1];
+    expect(finalStage?.trim().split("\n")).toEqual(["COPY --from=build /opt/connectors /opt/connectors"]);
+  });
+});
