@@ -11,6 +11,8 @@ import type {
 } from "@personal-intelligence-hub/contracts";
 import { describe, expect, it } from "vitest";
 
+import { agentFixture, conversationFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
+
 import {
   oidcRequestIdentity,
   type RequestContext,
@@ -32,10 +34,10 @@ const occurredAt = "2026-09-18T12:00:00.000Z";
 const capabilities: HermesCapabilities = {
   text: true,
   streaming: true,
-  voice: { enabled: true, acceptedMimeTypes: ["audio/webm"], maxBytes: 4 },
+  voice: { enabled: false },
   attachments: {
     enabled: true,
-    acceptedMimeTypes: ["text/plain"],
+    acceptedMimeTypes: ["image/jpeg", "image/png", "image/webp"],
     maxFiles: 1,
     maxBytes: 4,
   },
@@ -61,7 +63,7 @@ class FakeHermesGateway implements HermesGateway {
   }
 
   async agents(): Promise<readonly AgentSummary[]> {
-    return [{ id: "research-agent", displayName: "Research Agent", status: "available" }];
+    return [agentFixture({ id: "research-agent", displayName: "Research Agent" })];
   }
 
   async upload(
@@ -72,10 +74,11 @@ class FakeHermesGateway implements HermesGateway {
     this.uploads.push({ file, kind });
     return {
       reference: "opaque-upload-reference",
-      kind,
+      kind: "attachment",
       name: file.name,
-      mimeType: file.type,
+      mimeType: "image/png",
       size: file.size,
+      expiresAt: occurredAt,
     };
   }
 
@@ -83,9 +86,61 @@ class FakeHermesGateway implements HermesGateway {
     _context: RequestContext,
     body: CreateConversationBody,
   ): Promise<Conversation> {
+    return conversationFixture({ id: "conversation-01", agentId: body.agentId });
+  }
+
+  async listConversations() {
+    return { items: [conversationFixture()], pageInfo: { nextCursor: null, hasNextPage: false } };
+  }
+
+  async getConversation(_context: RequestContext, _conversationId: string): Promise<Conversation> {
+    return conversationFixture({ id: _conversationId });
+  }
+
+  async updateConversation(
+    _context: RequestContext,
+    conversationId: string,
+    body: { title?: string; archived?: boolean; expectedVersion: number },
+  ): Promise<Conversation> {
+    return conversationFixture({
+      id: conversationId,
+      ...(body.title === undefined ? {} : { title: body.title }),
+      ...(body.archived === undefined ? {} : { archived: body.archived }),
+      version: body.expectedVersion + 1,
+    });
+  }
+
+  async resolveMainConversation(_context: RequestContext, agentId: string): Promise<Conversation> {
+    return conversationFixture({ agentId, isMain: true });
+  }
+
+  async getConversationSelection(_context: RequestContext, agentId: string) {
+    return { agentId, conversationId: "conversation-01", version: 1, updatedAt: occurredAt };
+  }
+
+  async selectConversation(_context: RequestContext, agentId: string, body: { conversationId: string; expectedVersion: number }) {
+    return { agentId, conversationId: body.conversationId, version: body.expectedVersion + 1, updatedAt: occurredAt };
+  }
+
+  async history(_context: RequestContext, _conversationId: string) {
     return {
-      id: "conversation-01",
-      agentId: body.agentId ?? null,
+      items: [],
+      pageInfo: { nextCursor: null, hasNextPage: false },
+      streamCursor: "0",
+    };
+  }
+
+  async listDelegations() {
+    return { items: [], pageInfo: { nextCursor: null, hasNextPage: false } };
+  }
+
+  async getDelegation(_context: RequestContext, delegationId: string) {
+    return {
+      id: delegationId,
+      sourceAgentId: "fictional-agent",
+      targetAgentId: "fictional-specialist",
+      sourceConversationId: null,
+      state: "completed" as const,
       createdAt: occurredAt,
       updatedAt: occurredAt,
     };
@@ -220,8 +275,9 @@ describe("Hermes BFF handlers", () => {
         headers: authenticatedHeaders({
           "x-forwarded-host": "attacker.example",
           "x-forwarded-proto": "http",
+          "content-type": "application/json",
         }),
-        body: "{}",
+        body: JSON.stringify({ agentId: "research-agent" }),
       }),
     );
 
@@ -244,7 +300,7 @@ describe("Hermes BFF handlers", () => {
     expect(capabilityResponse.status).toBe(200);
     await expect(capabilityResponse.json()).resolves.toEqual(capabilities);
     await expect(agentResponse.json()).resolves.toEqual([
-      { id: "research-agent", displayName: "Research Agent", status: "available" },
+      agentFixture({ id: "research-agent", displayName: "Research Agent" }),
     ]);
   });
 
@@ -384,14 +440,14 @@ describe("Hermes BFF handlers", () => {
   });
 
   it.each([
-    { file: new File(["12345"], "large.txt", { type: "text/plain" }), status: 413 },
+    { file: new File(["12345"], "large.png", { type: "image/png" }), status: 413 },
     {
-      file: new File(["1234"], "image.png", { type: "image/png" }),
+      file: new File(["1234"], "note.txt", { type: "text/plain" }),
       status: 415,
     },
   ])("rejects disallowed uploads with $status", async ({ file, status }) => {
     const form = new FormData();
-    form.set("kind", "attachment");
+    form.set("conversationId", "conversation-01");
     form.set("media", file);
     const response = await createUploadHandler(
       new FakeHermesGateway(),
@@ -430,8 +486,8 @@ describe("Hermes BFF handlers", () => {
   it("returns only an opaque receipt for an approved upload", async () => {
     const gateway = new FakeHermesGateway();
     const form = new FormData();
-    form.set("kind", "attachment");
-    form.set("media", new File(["1234"], "note.txt", { type: "text/plain" }));
+    form.set("conversationId", "conversation-01");
+    form.set("media", new File(["1234"], "image.png", { type: "image/png" }));
     const response = await createUploadHandler(gateway, requestPolicy)(
       new Request("https://pih.example/api/ui/v1/hermes/uploads", {
         method: "POST",
@@ -473,7 +529,7 @@ describe("Hermes BFF handlers", () => {
     );
 
     expect(gateway.lastEventId).toBe("event-09");
-    expect(response.headers.get("cache-control")).toBe("no-cache, no-transform");
+    expect(response.headers.get("cache-control")).toBe("no-store, no-cache, no-transform");
     expect(response.headers.get("content-type")).toBe(
       "text/event-stream; charset=utf-8",
     );
