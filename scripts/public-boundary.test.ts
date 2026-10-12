@@ -446,8 +446,8 @@ describe("connectors environment example boundary", () => {
     const example = await readFile(join(repositoryRoot, path), "utf8");
     expect(example).toContain("CONNECTORS_SOCKET_PATH=/run/pih-connectors/web/connectors.sock");
     expect(example).toContain("DEFAULT_TIME_ZONE=Etc/UTC");
-    expect(example).not.toContain("remote-station");
-    expect(example).not.toContain("/home/franmb");
+    expect(example).not.toMatch(/\/(?:home|Users)\/[^/\s]+/u);
+    expect(example).not.toMatch(/\.ts\.net\b/u);
   });
 });
 
