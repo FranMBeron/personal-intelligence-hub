@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        with:
+          version: 9.15.9
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Scan checkout and complete Git history
+        run: pnpm verify:secrets:history
+
+      - name: Audit all dependencies
+        run: pnpm audit --audit-level moderate
+
+      - name: Generate third-party license inventory
+        run: pnpm licenses list --prod --json > third-party-licenses.json
+
+      - name: Upload license inventory
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: third-party-licenses
+          path: third-party-licenses.json
+          if-no-files-found: error
+
+      - name: Lint source
+        # Root gates cover desktop source too; make:mac is a local macOS-only step.
+        run: pnpm lint
+
+      - name: Typecheck source
+        run: pnpm typecheck
+
+      - name: Run unit tests
+        run: pnpm test
+
+      - name: Build every workspace package
+        run: pnpm build
+
+      - name: Run PostgreSQL integration suites
+        run: pnpm test:integration
+
+      - name: Install Chromium for E2E
+        run: pnpm -C apps/web exec playwright install --with-deps chromium
+
+      - name: Run desktop and mobile E2E
+        run: pnpm -C apps/web test:e2e
+
+      - name: Verify generated OpenAPI
+        run: pnpm test:public && pnpm openapi:check
+
+      - name: Validate CI source-only and container policy
+        run: pnpm test:ci-policy && pnpm test:docker-policy && pnpm test:operations
+
+      - name: Validate public repository boundary
+        run: pnpm test:public-boundary
+
+      - name: Validate Compose and restart recovery
+        run: pnpm test:compose
+
+  container-security:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        application:
+          - api
+          - web
+          - postgres
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Build immutable application image
+        run: >-
+          docker build
+          --file infrastructure/docker/${{ matrix.application }}.Dockerfile
+          --tag pih-${{ matrix.application }}:${{ github.sha }}
+          .
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: pih-${{ matrix.application }}:${{ github.sha }}
+          artifact-name: pih-${{ matrix.application }}-${{ github.sha }}.cyclonedx.json
+          format: cyclonedx-json
+          upload-release-assets: false
+
+      - name: Fail on high-severity image vulnerabilities
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: pih-${{ matrix.application }}:${{ github.sha }}
+          fail-build: true
+          output-format: table
+          severity-cutoff: high

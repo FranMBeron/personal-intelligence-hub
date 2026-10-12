@@ -1,0 +1,157 @@
+services:
+  postgres:
+    image: ${PIH_POSTGRES_IMAGE:?set PIH_POSTGRES_IMAGE to an immutable image reference}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER outside Git}
+    secrets:
+      - postgres_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username $${POSTGRES_USER} --dbname $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    init: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    cpus: "2.0"
+    mem_limit: 1g
+    shm_size: 128m
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    volumes:
+      - pih-postgres-data:/var/lib/postgresql/data
+    networks:
+      - data
+
+  migrate:
+    image: ${PIH_API_IMAGE:?set PIH_API_IMAGE to an immutable image reference}
+    command: ["node", "node_modules/@personal-intelligence-hub/database/dist/src/migrate.js"]
+    env_file:
+      - ${PIH_API_ENV_FILE:?set PIH_API_ENV_FILE outside Git}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    cpus: "0.5"
+    mem_limit: 256m
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    restart: "no"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - data
+
+  api:
+    image: ${PIH_API_IMAGE:?set PIH_API_IMAGE to an immutable image reference}
+    env_file:
+      - ${PIH_API_ENV_FILE:?set PIH_API_ENV_FILE outside Git}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3001/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    cpus: "1.0"
+    mem_limit: 512m
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - data
+      - edge
+
+  web:
+    image: ${PIH_WEB_IMAGE:?set PIH_WEB_IMAGE to an immutable image reference}
+    env_file:
+      - ${PIH_WEB_ENV_FILE:?set PIH_WEB_ENV_FILE outside Git}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - 127.0.0.1:${PIH_WEB_PORT:-3000}:3000
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    cpus: "1.0"
+    mem_limit: 512m
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - edge
+
+secrets:
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE:?set POSTGRES_PASSWORD_FILE outside Git}
+
+volumes:
+  pih-postgres-data:
+
+networks:
+  data:
+    internal: true
+  edge:

@@ -1,0 +1,7 @@
+{
+  "name": "@personal-intelligence-hub/tooling",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": ["tsconfig"]
+}

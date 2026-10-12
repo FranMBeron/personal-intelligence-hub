@@ -1,1 +1,32 @@
 .local-docs
+.worktrees/
+
+# Environment and credentials
+.env
+.env.*
+!.env.example
+!**/.env.example
+credentials/
+*.pem
+*.key
+
+# Dependencies and generated output
+node_modules/
+.pnpm-store/
+dist/
+build/
+coverage/
+.next/
+*.tsbuildinfo
+
+# Local data that must never be published
+.data/
+postgres-data/
+vaults/
+hermes-profiles/
+backups/
+fixture-output/
+
+# Desktop runtime builds and unsigned distributables
+apps/desktop/.vite/
+apps/desktop/out/

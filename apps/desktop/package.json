@@ -1,0 +1,24 @@
+{
+  "name": "@personal-intelligence-hub/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": ".vite/build/main.cjs",
+  "scripts": {
+    "build": "electron-forge package",
+    "dev": "electron-forge start",
+    "make:mac": "electron-forge make --platform=darwin --arch=arm64",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:layout": "pnpm --filter @personal-intelligence-hub/web exec playwright test --config playwright.desktop-layout.config.ts"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "8.0.1",
+    "@electron-forge/maker-dmg": "8.0.1",
+    "@electron-forge/plugin-vite": "8.0.1",
+    "@electron-forge/shared-types": "8.0.1",
+    "electron": "44.7.0",
+    "jsdom": "30.0.1",
+    "vite": "8.3.4"
+  }
+}

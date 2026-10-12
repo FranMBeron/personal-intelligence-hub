@@ -1,0 +1,961 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Personal Intelligence Hub Second Brain API
+  version: 0.1.0
+  description: >-
+    Frozen reusable security, header, problem, pagination, resource, audit,
+    outbox and snapshot contracts. Operations are added by the tested Fastify
+    adapter; this base intentionally declares no paths.
+paths: {}
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: OIDC JWT validated for issuer, audience, algorithm and JWKS.
+  parameters:
+    XOriginChannel:
+      name: X-Origin-Channel
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/MutationSource'
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 255
+        pattern: '^[\x21-\x7E]+$'
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/ETag'
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/Cursor'
+    LastEventId:
+      name: Last-Event-ID
+      in: header
+      required: false
+      schema:
+        $ref: '#/components/schemas/DecimalSequence'
+  headers:
+    XRequestId:
+      description: Final caller-supplied or generated correlation UUID.
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    ETag:
+      description: Strong versioned resource validator.
+      schema:
+        $ref: '#/components/schemas/ETag'
+    Location:
+      description: Relative URI of a newly created resource.
+      schema:
+        type: string
+    IdempotencyReplayed:
+      description: Present with value true only for a stored matching replay.
+      schema:
+        type: string
+        const: 'true'
+    Link:
+      description: Recovery link, including the snapshot link for expired SSE cursors.
+      schema:
+        type: string
+  responses:
+    Problem:
+      description: Uniform non-success response.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ApiProblem'
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+    Timestamp:
+      type: string
+      format: date-time
+    DecimalSequence:
+      type: string
+      pattern: '^(?:0|[1-9]\d*)$'
+    Version:
+      type: integer
+      minimum: 1
+    Position:
+      type: integer
+      minimum: 1
+    ActorType:
+      type: string
+      enum: [human, agent, service]
+    Scope:
+      type: string
+      enum:
+        - second-brain:read
+        - second-brain:write
+        - second-brain:compensate
+    MutationSource:
+      type: string
+      enum: [pih, telegram, hermes-web, automation, test]
+    AggregateType:
+      type: string
+      enum: [board, column, card, tag, relation, task]
+    Principal:
+      type: object
+      additionalProperties: false
+      required: [subject, actorId, actorType, scopes, allowedSources]
+      properties:
+        subject:
+          type: string
+          minLength: 1
+        actorId:
+          $ref: '#/components/schemas/Uuid'
+        actorType:
+          $ref: '#/components/schemas/ActorType'
+        scopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Scope'
+        allowedSources:
+          type: array
+          items:
+            $ref: '#/components/schemas/MutationSource'
+    ETag:
+      type: string
+      pattern: '^"(?:board|column|card|tag|relation|task):[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}:[1-9]\d*"$'
+    Cursor:
+      type: string
+      minLength: 1
+      maxLength: 4096
+    CursorBinding:
+      type: object
+      additionalProperties: false
+      required: [route, filterHash]
+      properties:
+        route:
+          type: string
+          pattern: '^/v1/'
+        filterHash:
+          type: string
+          minLength: 1
+    CursorPayload:
+      type: object
+      additionalProperties: false
+      required: [version, route, filterHash, sort]
+      properties:
+        version:
+          type: integer
+          const: 1
+        route:
+          type: string
+          pattern: '^/v1/'
+        filterHash:
+          type: string
+          minLength: 1
+        sort:
+          type: object
+          additionalProperties: false
+          required: [value, id]
+          properties:
+            value:
+              $ref: '#/components/schemas/Timestamp'
+            id:
+              $ref: '#/components/schemas/Uuid'
+    PageInfo:
+      type: object
+      additionalProperties: false
+      required: [nextCursor, hasNextPage]
+      properties:
+        nextCursor:
+          oneOf:
+            - $ref: '#/components/schemas/Cursor'
+            - type: 'null'
+        hasNextPage:
+          type: boolean
+    ApiProblemCode:
+      type: string
+      enum:
+        - authentication_required
+        - invalid_token
+        - forbidden
+        - payload_too_large
+        - too_many_requests
+        - validation_failed
+        - not_found
+        - precondition_required
+        - version_conflict
+        - idempotency_key_required
+        - idempotency_key_reused
+        - invalid_cursor
+        - cursor_expired
+        - conflict
+        - internal_error
+        - dependency_unavailable
+    ApiProblemValidationError:
+      type: object
+      additionalProperties: false
+      required: [path, message, code]
+      properties:
+        path:
+          type: string
+          minLength: 1
+        message:
+          type: string
+          minLength: 1
+        code:
+          type: string
+          minLength: 1
+    ApiProblem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, detail, instance, code, requestId]
+      properties:
+        type:
+          type: string
+          minLength: 1
+        title:
+          type: string
+          minLength: 1
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          minLength: 1
+        instance:
+          type: string
+          minLength: 1
+        code:
+          $ref: '#/components/schemas/ApiProblemCode'
+        requestId:
+          $ref: '#/components/schemas/Uuid'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApiProblemValidationError'
+    BoardColumnInput:
+      type: object
+      additionalProperties: false
+      required: [name, position]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          pattern: '[\s\S]*\S[\s\S]*'
+        position:
+          $ref: '#/components/schemas/Position'
+    CreateBoardBody:
+      type: object
+      additionalProperties: false
+      required: [name, columns]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          pattern: '[\s\S]*\S[\s\S]*'
+        description:
+          type: [string, 'null']
+          maxLength: 2000
+        columns:
+          type: array
+          minItems: 1
+          maxItems: 50
+          description: Positions are consecutive in array order and start at 1.
+          items:
+            $ref: '#/components/schemas/BoardColumnInput'
+    Board:
+      type: object
+      additionalProperties: false
+      required: [id, name, description, version, archivedAt, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          pattern: '[\s\S]*\S[\s\S]*'
+        description:
+          type: [string, 'null']
+          maxLength: 2000
+        version:
+          $ref: '#/components/schemas/Version'
+        archivedAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+    BoardColumn:
+      type: object
+      additionalProperties: false
+      required: [id, boardId, name, position, version, archivedAt, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        boardId:
+          $ref: '#/components/schemas/Uuid'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          pattern: '[\s\S]*\S[\s\S]*'
+        position:
+          $ref: '#/components/schemas/Position'
+        version:
+          $ref: '#/components/schemas/Version'
+        archivedAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+    BoardSnapshot:
+      type: object
+      additionalProperties: false
+      required: [id, name, description, version, archivedAt, createdAt, updatedAt, columns]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          pattern: '[\s\S]*\S[\s\S]*'
+        description:
+          type: [string, 'null']
+          maxLength: 2000
+        version:
+          $ref: '#/components/schemas/Version'
+        archivedAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+        columns:
+          type: array
+          description: Ordered by consecutive position starting at 1.
+          items:
+            $ref: '#/components/schemas/BoardColumn'
+    Tag:
+      type: object
+      additionalProperties: false
+      required: [id, name, color, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '[\s\S]*\S[\s\S]*'
+        color:
+          type: [string, 'null']
+          pattern: '^#[0-9a-fA-F]{6}$'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+    CreateCardBody:
+      type: object
+      additionalProperties: false
+      required: [boardId, columnId, originalContent]
+      properties:
+        boardId:
+          $ref: '#/components/schemas/Uuid'
+        columnId:
+          $ref: '#/components/schemas/Uuid'
+        originalContent:
+          type: string
+          minLength: 1
+          maxLength: 100000
+          pattern: '[\s\S]*\S[\s\S]*'
+          description: Preserved exactly as supplied, including surrounding whitespace.
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+          pattern: '[\s\S]*\S[\s\S]*'
+        summary:
+          type: [string, 'null']
+          maxLength: 5000
+        position:
+          $ref: '#/components/schemas/Position'
+    PatchCardBody:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+          pattern: '[\s\S]*\S[\s\S]*'
+        summary:
+          type: [string, 'null']
+          maxLength: 5000
+        columnId:
+          $ref: '#/components/schemas/Uuid'
+        position:
+          $ref: '#/components/schemas/Position'
+        archived:
+          type: boolean
+    Card:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - boardId
+        - columnId
+        - originalContent
+        - title
+        - summary
+        - position
+        - tags
+        - version
+        - archivedAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        boardId:
+          $ref: '#/components/schemas/Uuid'
+        columnId:
+          $ref: '#/components/schemas/Uuid'
+        originalContent:
+          type: string
+          minLength: 1
+          maxLength: 100000
+          pattern: '[\s\S]*\S[\s\S]*'
+          description: Immutable and preserved exactly as supplied.
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+          pattern: '[\s\S]*\S[\s\S]*'
+        summary:
+          type: [string, 'null']
+          maxLength: 5000
+        position:
+          $ref: '#/components/schemas/Position'
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+        version:
+          $ref: '#/components/schemas/Version'
+        archivedAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+    CardTagMembership:
+      type: object
+      additionalProperties: false
+      required: [cardId, tagId, cardVersion, tags]
+      properties:
+        cardId:
+          $ref: '#/components/schemas/Uuid'
+        tagId:
+          $ref: '#/components/schemas/Uuid'
+        cardVersion:
+          $ref: '#/components/schemas/Version'
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+    RelationType:
+      type: string
+      enum: [related, supports, blocks, duplicates, references]
+    CreateRelationBody:
+      type: object
+      additionalProperties: false
+      required: [fromCardId, toCardId, type]
+      properties:
+        fromCardId:
+          $ref: '#/components/schemas/Uuid'
+        toCardId:
+          $ref: '#/components/schemas/Uuid'
+        type:
+          $ref: '#/components/schemas/RelationType'
+    Relation:
+      type: object
+      additionalProperties: false
+      required: [id, fromCardId, toCardId, type, version, archivedAt, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        fromCardId:
+          $ref: '#/components/schemas/Uuid'
+        toCardId:
+          $ref: '#/components/schemas/Uuid'
+        type:
+          $ref: '#/components/schemas/RelationType'
+        version:
+          $ref: '#/components/schemas/Version'
+        archivedAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+    TaskStatus:
+      type: string
+      enum: [todo, in_progress, done, cancelled]
+    TaskPriority:
+      type: string
+      enum: [low, normal, high, critical]
+    CreateTaskBody:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+          pattern: '[\s\S]*\S[\s\S]*'
+        description:
+          type: [string, 'null']
+          maxLength: 5000
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+        dueAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        startsAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        cardId:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+    PatchTaskBody:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+          pattern: '[\s\S]*\S[\s\S]*'
+        description:
+          type: [string, 'null']
+          maxLength: 5000
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+        dueAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        startsAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        cardId:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+        archived:
+          type: boolean
+    Task:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - description
+        - status
+        - priority
+        - dueAt
+        - startsAt
+        - completedAt
+        - cardId
+        - version
+        - archivedAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+          pattern: '[\s\S]*\S[\s\S]*'
+        description:
+          type: [string, 'null']
+          maxLength: 5000
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        priority:
+          $ref: '#/components/schemas/TaskPriority'
+        dueAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        startsAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        completedAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        cardId:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+        version:
+          $ref: '#/components/schemas/Version'
+        archivedAt:
+          oneOf:
+            - $ref: '#/components/schemas/Timestamp'
+            - type: 'null'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+    CompensateAuditEventBody:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - principalSubject
+        - actorId
+        - actorType
+        - source
+        - requestId
+        - routeTemplate
+        - method
+        - entityType
+        - entityId
+        - entityVersion
+        - eventType
+        - before
+        - after
+        - occurredAt
+        - compensatesEventId
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        principalSubject:
+          type: string
+          minLength: 1
+        actorId:
+          $ref: '#/components/schemas/Uuid'
+        actorType:
+          $ref: '#/components/schemas/ActorType'
+        source:
+          $ref: '#/components/schemas/MutationSource'
+        requestId:
+          $ref: '#/components/schemas/Uuid'
+        routeTemplate:
+          type: string
+          pattern: '^/v1/'
+        method:
+          type: string
+          enum: [POST, PUT, PATCH, DELETE]
+        entityType:
+          $ref: '#/components/schemas/AggregateType'
+        entityId:
+          $ref: '#/components/schemas/Uuid'
+        entityVersion:
+          $ref: '#/components/schemas/Version'
+        eventType:
+          type: string
+          minLength: 1
+        before:
+          type: [object, 'null']
+          additionalProperties: true
+        after:
+          type: [object, 'null']
+          additionalProperties: true
+        occurredAt:
+          $ref: '#/components/schemas/Timestamp'
+        compensatesEventId:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+    BoardCreatedPayload:
+      type: object
+      additionalProperties: false
+      required: [kind, boardId]
+      properties:
+        kind:
+          const: board.created
+        boardId:
+          $ref: '#/components/schemas/Uuid'
+    CardCreatedPayload:
+      type: object
+      additionalProperties: false
+      required: [kind, cardId, boardId]
+      properties:
+        kind:
+          const: card.created
+        cardId:
+          $ref: '#/components/schemas/Uuid'
+        boardId:
+          $ref: '#/components/schemas/Uuid'
+    CardUpdatedPayload:
+      type: object
+      additionalProperties: false
+      required: [kind, cardId, boardId, changedFields]
+      properties:
+        kind:
+          const: card.updated
+        cardId:
+          $ref: '#/components/schemas/Uuid'
+        boardId:
+          $ref: '#/components/schemas/Uuid'
+        changedFields:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+    CardTagPayload:
+      type: object
+      additionalProperties: false
+      required: [kind, cardId, boardId, tagId]
+      properties:
+        kind:
+          type: string
+          enum: [card.tagged, card.untagged]
+        cardId:
+          $ref: '#/components/schemas/Uuid'
+        boardId:
+          $ref: '#/components/schemas/Uuid'
+        tagId:
+          $ref: '#/components/schemas/Uuid'
+    RelationPayload:
+      type: object
+      additionalProperties: false
+      required: [kind, relationId, fromCardId, toCardId]
+      properties:
+        kind:
+          type: string
+          enum: [relation.created, relation.archived]
+        relationId:
+          $ref: '#/components/schemas/Uuid'
+        fromCardId:
+          $ref: '#/components/schemas/Uuid'
+        toCardId:
+          $ref: '#/components/schemas/Uuid'
+    TaskCreatedPayload:
+      type: object
+      additionalProperties: false
+      required: [kind, taskId]
+      properties:
+        kind:
+          const: task.created
+        taskId:
+          $ref: '#/components/schemas/Uuid'
+    TaskUpdatedPayload:
+      type: object
+      additionalProperties: false
+      required: [kind, taskId, changedFields]
+      properties:
+        kind:
+          const: task.updated
+        taskId:
+          $ref: '#/components/schemas/Uuid'
+        changedFields:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+    CompensationCreatedPayload:
+      type: object
+      additionalProperties: false
+      required: [kind, entityType, entityId, compensatesEventId]
+      properties:
+        kind:
+          const: compensation.created
+        entityType:
+          $ref: '#/components/schemas/AggregateType'
+        entityId:
+          $ref: '#/components/schemas/Uuid'
+        compensatesEventId:
+          $ref: '#/components/schemas/Uuid'
+    PublicEventPayload:
+      oneOf:
+        - $ref: '#/components/schemas/BoardCreatedPayload'
+        - $ref: '#/components/schemas/CardCreatedPayload'
+        - $ref: '#/components/schemas/CardUpdatedPayload'
+        - $ref: '#/components/schemas/CardTagPayload'
+        - $ref: '#/components/schemas/RelationPayload'
+        - $ref: '#/components/schemas/TaskCreatedPayload'
+        - $ref: '#/components/schemas/TaskUpdatedPayload'
+        - $ref: '#/components/schemas/CompensationCreatedPayload'
+      discriminator:
+        propertyName: kind
+    OutboxEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - eventId
+        - sequence
+        - aggregateType
+        - aggregateId
+        - aggregateVersion
+        - eventType
+        - occurredAt
+        - payload
+      properties:
+        eventId:
+          $ref: '#/components/schemas/Uuid'
+        sequence:
+          $ref: '#/components/schemas/DecimalSequence'
+        aggregateType:
+          $ref: '#/components/schemas/AggregateType'
+        aggregateId:
+          $ref: '#/components/schemas/Uuid'
+        aggregateVersion:
+          $ref: '#/components/schemas/Version'
+        eventType:
+          type: string
+          enum:
+            - board.created
+            - card.created
+            - card.updated
+            - card.tagged
+            - card.untagged
+            - relation.created
+            - relation.archived
+            - task.created
+            - task.updated
+            - compensation.created
+        occurredAt:
+          $ref: '#/components/schemas/Timestamp'
+        payload:
+          $ref: '#/components/schemas/PublicEventPayload'
+      description: >-
+        eventType equals payload.kind; aggregateType and aggregateId identify
+        the same aggregate named by the discriminated payload.
+    Snapshot:
+      type: object
+      additionalProperties: false
+      required: [generatedAt, lastSequence, boards, cards, relations, tasks]
+      properties:
+        generatedAt:
+          $ref: '#/components/schemas/Timestamp'
+        lastSequence:
+          $ref: '#/components/schemas/DecimalSequence'
+        boards:
+          type: array
+          items:
+            $ref: '#/components/schemas/BoardSnapshot'
+        cards:
+          type: array
+          items:
+            $ref: '#/components/schemas/Card'
+        relations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Relation'
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+    BoardPage:
+      type: object
+      additionalProperties: false
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Board'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+    CardPage:
+      type: object
+      additionalProperties: false
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Card'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+    TaskPage:
+      type: object
+      additionalProperties: false
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+    AuditEventPage:
+      type: object
+      additionalProperties: false
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEvent'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'

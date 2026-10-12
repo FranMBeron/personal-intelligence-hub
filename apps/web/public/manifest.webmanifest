@@ -1,0 +1,20 @@
+{
+  "name": "Centro de Inteligencia Personal",
+  "short_name": "PIH",
+  "description": "Espacio privado para prioridades, agentes y conocimiento personal.",
+  "lang": "es",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f4ef",
+  "theme_color": "#15231e",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
