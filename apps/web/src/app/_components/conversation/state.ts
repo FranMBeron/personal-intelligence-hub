@@ -17,6 +17,7 @@ export type ConversationState = Readonly<{
   messages: readonly ConversationMessage[];
   seenEventIds: readonly string[];
   eventCursor: string | null;
+  cursorSource: "snapshot" | "event" | null;
   pageInfo: MessageHistory["pageInfo"];
 }>;
 
@@ -28,6 +29,7 @@ export type ConversationAction =
       conversationId: string;
       generation: number;
       history: MessageHistory;
+      rebaseCursor?: boolean;
     }>
   | Readonly<{
       type: "history.prepended";
@@ -52,6 +54,7 @@ export const initialConversationState: ConversationState = {
   messages: [],
   seenEventIds: [],
   eventCursor: null,
+  cursorSource: null,
   pageInfo: { nextCursor: null, hasNextPage: false },
 };
 
@@ -107,15 +110,13 @@ const receiveEvent = (
   state: ConversationState,
   event: HermesEvent,
 ): ConversationState => {
-  if (
-    state.seenEventIds.includes(event.id) ||
-    (state.eventCursor !== null && !cursorAfter(event.id, state.eventCursor))
-  ) return state;
+  if (state.seenEventIds.includes(event.id)) return state;
   const seenEventIds = [...state.seenEventIds, event.id];
   const base = {
     ...state,
     seenEventIds,
-    eventCursor: latestCursor(state.eventCursor, event.id),
+    eventCursor: event.id,
+    cursorSource: "event" as const,
   };
 
   if (event.type === "message.accepted" || event.type === "message.completed") {
@@ -180,16 +181,6 @@ const matchesGeneration = (
   generation: number,
 ): boolean => state.conversationId === conversationId && state.generation === generation;
 
-const cursorAfter = (candidate: string, current: string): boolean =>
-  candidate === current
-    ? false
-    : /^\d+$/u.test(candidate) && /^\d+$/u.test(current)
-      ? BigInt(candidate) > BigInt(current)
-      : candidate.localeCompare(current, undefined, { numeric: true }) > 0;
-
-const latestCursor = (current: string | null, candidate: string): string =>
-  current === null || cursorAfter(candidate, current) ? candidate : current;
-
 export const conversationReducer = (
   state: ConversationState,
   action: ConversationAction,
@@ -203,14 +194,18 @@ export const conversationReducer = (
         conversationId: action.conversationId,
         generation: action.generation,
       };
-    case "history.loaded":
+    case "history.loaded": {
       if (!matchesGeneration(state, action.conversationId, action.generation)) return state;
+      const cursorFromSnapshot =
+        action.rebaseCursor === true || state.cursorSource !== "event";
       return {
         ...state,
         messages: mergeMessages(state.messages, action.history.items),
-        eventCursor: latestCursor(state.eventCursor, action.history.streamCursor),
+        eventCursor: cursorFromSnapshot ? action.history.streamCursor : state.eventCursor,
+        cursorSource: cursorFromSnapshot ? "snapshot" : "event",
         pageInfo: action.history.pageInfo,
       };
+    }
     case "history.prepended":
       if (!matchesGeneration(state, action.conversationId, action.generation)) return state;
       return {

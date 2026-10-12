@@ -382,7 +382,7 @@ describe("conversation hydration and generations", () => {
     });
   });
 
-  it("ignores unseen events older than the applied cursor", () => {
+  it("advances opaque event cursors in stream arrival order", () => {
     const selected = conversationReducer(initialConversationState, {
       type: "thread.selected",
       conversationId: "conversation-b",
@@ -392,16 +392,73 @@ describe("conversation hydration and generations", () => {
       type: "history.loaded",
       conversationId: "conversation-b",
       generation: 3,
-      history: history([], "21"),
+      history: history([], "0"),
     });
-    const older = conversationReducer(snapshot, {
+    const first = conversationReducer(snapshot, {
       type: "event.received",
       conversationId: "conversation-b",
       generation: 3,
-      event: { id: "20", type: "heartbeat", occurredAt },
+      event: { id: "z-event", type: "heartbeat", occurredAt },
     });
-    expect(older).toBe(snapshot);
-    expect(older.eventCursor).toBe("21");
+    const second = conversationReducer(first, {
+      type: "event.received",
+      conversationId: "conversation-b",
+      generation: 3,
+      event: { id: "a-event", type: "heartbeat", occurredAt },
+    });
+    expect(second.eventCursor).toBe("a-event");
+    expect(second.seenEventIds).toEqual(["z-event", "a-event"]);
+  });
+
+  it("keeps the live opaque cursor when a same-generation snapshot arrives late", () => {
+    const selected = conversationReducer(initialConversationState, {
+      type: "thread.selected",
+      conversationId: "conversation-b",
+      generation: 4,
+    });
+    const snapshot = conversationReducer(selected, {
+      type: "history.loaded",
+      conversationId: "conversation-b",
+      generation: 4,
+      history: history([], "0"),
+    });
+    const live = conversationReducer(snapshot, {
+      type: "event.received",
+      conversationId: "conversation-b",
+      generation: 4,
+      event: { id: "a-event", type: "heartbeat", occurredAt },
+    });
+    const lateSnapshot = conversationReducer(live, {
+      type: "history.loaded",
+      conversationId: "conversation-b",
+      generation: 4,
+      history: history([], "z-snapshot"),
+    });
+    expect(lateSnapshot.eventCursor).toBe("a-event");
+    expect(lateSnapshot.seenEventIds).toEqual(["a-event"]);
+  });
+
+  it("allows an explicit snapshot rebase after cursor expiration", () => {
+    const selected = conversationReducer(initialConversationState, {
+      type: "thread.selected",
+      conversationId: "conversation-b",
+      generation: 5,
+    });
+    const live = conversationReducer(selected, {
+      type: "event.received",
+      conversationId: "conversation-b",
+      generation: 5,
+      event: { id: "a-event", type: "heartbeat", occurredAt },
+    });
+    const rebased = conversationReducer(live, {
+      type: "history.loaded",
+      conversationId: "conversation-b",
+      generation: 5,
+      rebaseCursor: true,
+      history: history([], "31"),
+    });
+    expect(rebased.eventCursor).toBe("31");
+    expect(rebased.seenEventIds).toEqual(["a-event"]);
   });
 
   it("keeps the same idempotency key when a failed message is retried", () => {
