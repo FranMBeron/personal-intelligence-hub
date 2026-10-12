@@ -83,6 +83,31 @@ describe("production network boundary", () => {
 });
 
 describe("PostgreSQL runtime image", () => {
+  it("rebuilds the reviewed gosu commit with a pinned patched Go toolchain", async () => {
+    const dockerfile = await read("infrastructure/docker/postgres.Dockerfile");
+    const builder = dockerfile.split("FROM postgres:")[0];
+
+    expect(builder).toContain(
+      "FROM golang:1.26.9-alpine3.24@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS gosu-build",
+    );
+    expect(builder).toContain(
+      "CGO_ENABLED=0 GOTOOLCHAIN=local go install github.com/tianon/gosu@6456aaa0f3c854d199d0f037f068eb97515b7513",
+    );
+  });
+
+  it("replaces only gosu in the PostgreSQL runtime with the rebuilt binary", async () => {
+    const dockerfile = await read("infrastructure/docker/postgres.Dockerfile");
+    const runtime = dockerfile.split("FROM postgres:")[1];
+
+    expect(runtime).toContain(
+      "COPY --from=gosu-build /go/bin/gosu /usr/local/bin/gosu",
+    );
+    expect(dockerfile.match(/^COPY --from=gosu-build .+$/gm)).toEqual([
+      "COPY --from=gosu-build /go/bin/gosu /usr/local/bin/gosu",
+    ]);
+    expect(runtime).not.toMatch(/(?:go install|FROM golang:)/);
+  });
+
   it("patches the pinned vendor image without replacing its startup or data semantics", async () => {
     const dockerfile = await read("infrastructure/docker/postgres.Dockerfile");
     expect(dockerfile).toMatch(/FROM postgres:16\.15-alpine3\.24@sha256:[a-f0-9]{64}/);
