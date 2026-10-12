@@ -139,6 +139,7 @@ describe("connectors atomic release", () => {
     expect(deploy).toContain('sha256sum');
     expect(deploy).toContain('systemctl restart "$connectors_service"');
     expect(deploy).toContain('check-connectors-readiness.mjs');
+    expect(deploy).toContain('previousReleaseSha');
     expect(deploy).toContain('previousConnectorsRuntime');
     expect(deploy).toContain('previousConnectorsEnabled');
     expect(deploy).toContain('previousConnectorsActive');
@@ -401,6 +402,49 @@ if [ "$1" = "-c" ]; then printf '0:600\\n'; else exec /usr/bin/stat "$@"; fi
     });
   });
 
+  it("rejects a legacy release older than the active connectors release predecessor", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pih-legacy-rollback-mismatch-"));
+    temporaryDirectories.push(root);
+    const targetSha = "a".repeat(40);
+    const predecessorSha = "b".repeat(40);
+    const activeSha = "c".repeat(40);
+    const targetRelease = join(root, "releases", targetSha);
+    const activeRelease = join(root, "releases", activeSha);
+    const bin = join(root, "bin");
+    await mkdir(join(targetRelease, "infrastructure/docker"), { recursive: true });
+    await mkdir(join(activeRelease, "infrastructure/docker"), { recursive: true });
+    await mkdir(join(root, "config/releases"), { recursive: true });
+    await mkdir(bin);
+    await writeFile(join(targetRelease, "infrastructure/docker/compose.production.yaml"), "services: {}\n");
+    await writeFile(join(targetRelease, "release-manifest.json"), JSON.stringify({ gitSha: targetSha, images: [] }));
+    await writeFile(join(activeRelease, "release-manifest.json"), JSON.stringify({
+      gitSha: activeSha,
+      connectors: {
+        runtimeDirectory: join(root, "host-connectors/releases", activeSha),
+        previousReleaseSha: predecessorSha,
+        previousConnectorsRuntime: join(root, "host-connectors/releases", predecessorSha),
+        previousConnectorsEnabled: "enabled",
+        previousConnectorsActive: "active",
+        enabled: "enabled",
+        active: "active",
+      },
+    }));
+    await writeFile(join(root, "config/releases", `${targetSha}.compose.env`), "PIH_WEB_PORT=3000\n");
+    await symlink(activeRelease, join(root, "current"));
+    for (const command of ["curl", "node", "systemctl", "stat", "flock"]) {
+      await writeFile(join(bin, command), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    }
+    const jq = (await exec("sh", ["-c", "command -v jq"])).stdout.trim();
+    await symlink(jq, join(bin, "jq"));
+
+    await expect(exec("sh", [`${operationsRoot}/rollback-release.sh`, targetSha], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PIH_ROOT: root, PIH_CONNECTORS_ROOT: join(root, "host-connectors") },
+    })).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("not the immediate predecessor"),
+    });
+  });
+
   it("rolls back a pre-connectors release using the active release predecessor service state", async () => {
     const root = await mkdtemp(join(tmpdir(), "pih-legacy-rollback-"));
     temporaryDirectories.push(root);
@@ -438,6 +482,7 @@ if [ "$1" = "-c" ]; then printf '0:600\\n'; else exec /usr/bin/stat "$@"; fi
       images: [],
       connectors: {
         runtimeDirectory: activeRuntime,
+        previousReleaseSha: targetSha,
         previousConnectorsRuntime: null,
         previousConnectorsEnabled: "disabled",
         previousConnectorsActive: "inactive",

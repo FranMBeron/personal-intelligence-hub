@@ -20,11 +20,12 @@ const loadCheck = async (): Promise<CheckReadiness> => {
 
 const key = Buffer.alloc(32, 23);
 const serviceToken = "fictional-deployer-token-32-bytes-minimum";
+const issuer = "https://issuer.example.test/pih-deployer";
 const actorId = "service:pih-deployer";
 const environment = (socketPath: string): Record<string, string> => ({
   CONNECTORS_SOCKET_PATH: socketPath,
   CONNECTORS_DEPLOYER_SERVICE_TOKEN: serviceToken,
-  CONNECTORS_DEPLOYER_ISSUER: "pih-deployer",
+  CONNECTORS_DEPLOYER_ISSUER: issuer,
   CONNECTORS_DEPLOYER_SIGNING_KEY: key.toString("base64url"),
   CONNECTORS_DEPLOYER_ACTOR_ID: actorId,
 });
@@ -47,7 +48,7 @@ const listen = async (
 const readyBody = { status: "ready", database: true, migrations: true, modules: true };
 
 describe("authenticated connectors readiness helper", () => {
-  it("sends only the deployer service token and a 30-second health-only HS256 identity", async () => {
+  it("uses the configured issuer in a 30-second health-only HS256 identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "pih-ready-helper-"));
     const socketPath = join(root, "connectors.sock");
     let captured: { method: string; url: string; headers: Record<string, string | string[] | undefined> } | undefined;
@@ -81,7 +82,7 @@ describe("authenticated connectors readiness helper", () => {
       expect(header).toEqual({ alg: "HS256", typ: "JWT" });
       expect(signature).toBe(expectedSignature);
       expect(claims).toMatchObject({
-        iss: "pih-deployer",
+        iss: issuer,
         sub: actorId,
         aud: "personal-intelligence-hub-connectors",
         actor_id: actorId,
@@ -137,14 +138,14 @@ describe("authenticated connectors readiness helper", () => {
     }
   });
 
-  it("enforces the five-second request timeout and fixed deployer issuer", async () => {
+  it("enforces the five-second request timeout and rejects a blank configured issuer", async () => {
     const root = await mkdtemp(join(tmpdir(), "pih-ready-timeout-"));
     const socketPath = join(root, "connectors.sock");
     const server = await listen(socketPath, () => undefined);
     try {
       const check = await loadCheck();
       await expect(check(environment(socketPath), { timeoutMs: 20 })).rejects.toThrow("Connector readiness check failed");
-      await expect(check({ ...environment(socketPath), CONNECTORS_DEPLOYER_ISSUER: "other-service" })).rejects.toThrow("Connector readiness check failed");
+      await expect(check({ ...environment(socketPath), CONNECTORS_DEPLOYER_ISSUER: " " })).rejects.toThrow("Connector readiness check failed");
     } finally {
       await server.close();
       await rm(root, { recursive: true, force: true });

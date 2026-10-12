@@ -4,7 +4,6 @@ import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CONNECTORS_AUDIENCE = "personal-intelligence-hub-connectors";
-const DEPLOYER_ISSUER = "pih-deployer";
 const READINESS_PATH = "/health/ready";
 const REQUEST_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 16_384;
@@ -35,7 +34,7 @@ const createAuthorization = (environment) => {
   const issuer = required(environment, "CONNECTORS_DEPLOYER_ISSUER");
   const actorId = required(environment, "CONNECTORS_DEPLOYER_ACTOR_ID");
   const encodedKey = required(environment, "CONNECTORS_DEPLOYER_SIGNING_KEY");
-  if (issuer !== DEPLOYER_ISSUER || actorId.trim() !== actorId) {
+  if (issuer.trim() !== issuer || actorId.trim() !== actorId) {
     throw new Error("Connector readiness check failed");
   }
   const key = signingKey(encodedKey);
@@ -43,7 +42,7 @@ const createAuthorization = (environment) => {
     const issuedAt = Math.floor(Date.now() / 1_000);
     const header = base64url({ alg: "HS256", typ: "JWT" });
     const claims = base64url({
-      iss: DEPLOYER_ISSUER,
+      iss: issuer,
       sub: actorId,
       aud: CONNECTORS_AUDIENCE,
       actor_id: actorId,

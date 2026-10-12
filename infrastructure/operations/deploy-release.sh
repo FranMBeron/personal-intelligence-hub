@@ -41,6 +41,7 @@ fi
 previous_release=$(if [ -L "$pih_root/current" ]; then readlink -f "$pih_root/current" 2>/dev/null || true; fi)
 previous_environment=$(if [ -L "$pih_root/config/current-compose.env" ]; then readlink -f "$pih_root/config/current-compose.env" 2>/dev/null || true; fi)
 previous_connectors_runtime=$(if [ -L "$connectors_current" ]; then readlink -f "$connectors_current" 2>/dev/null || true; fi)
+previous_release_sha=$(if [ -n "$previous_release" ]; then basename "$previous_release"; fi)
 
 for command_name in docker jq curl syft grype node systemctl flock stat sha256sum find sort cmp chown chmod; do
   command -v "$command_name" > /dev/null 2>&1 || {
@@ -247,12 +248,14 @@ jq -n \
   --arg deployedAt "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
   --arg connectorsImage "pih-connectors-build:$release_sha" \
   --arg connectorsRuntime "$connectors_release_directory" \
+  --arg previousReleaseSha "$previous_release_sha" \
   --arg previousConnectorsRuntime "$previous_connectors_runtime" \
   --arg previousConnectorsEnabled "$previous_connectors_enabled" \
   --arg previousConnectorsActive "$previous_connectors_active" \
   --slurpfile images "$release_directory/image-manifests.json" \
   '{gitSha: $gitSha, deployedAt: $deployedAt, images: $images[0],
     connectors: {buildImage: $connectorsImage, runtimeDirectory: $connectorsRuntime,
+      previousReleaseSha: (if $previousReleaseSha == "" then null else $previousReleaseSha end),
       previousConnectorsRuntime: (if $previousConnectorsRuntime == "" then null else $previousConnectorsRuntime end),
       previousConnectorsEnabled: $previousConnectorsEnabled,
       previousConnectorsActive: $previousConnectorsActive,

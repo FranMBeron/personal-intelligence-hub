@@ -62,6 +62,11 @@ else
     exit 1
   fi
   active_manifest="$previous_release/release-manifest.json"
+  previous_release_sha=$(jq -r '.connectors.previousReleaseSha // empty' "$active_manifest")
+  if [ "$release_sha" != "$previous_release_sha" ]; then
+    echo "Rollback target is not the immediate predecessor recorded by the active connectors release." >&2
+    exit 1
+  fi
   connectors_runtime=$(jq -r '.connectors.previousConnectorsRuntime // empty' "$active_manifest")
   target_connectors_enabled=$(jq -er '.connectors.previousConnectorsEnabled' "$active_manifest")
   target_connectors_active=$(jq -er '.connectors.previousConnectorsActive' "$active_manifest")
