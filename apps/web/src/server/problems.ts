@@ -13,7 +13,7 @@ export class GatewayError extends Error {
 }
 
 export const dependencyUnavailable = (
-  source: "Hermes" | "Personal data API",
+  source: "Hermes" | "Personal data API" | "Connectors",
   requestId: string,
   cause?: unknown,
 ): GatewayError =>

@@ -108,6 +108,14 @@ describe("private connector configuration", () => {
     expect(() => loadServerConfig({ ...oidcEnvironment, CONNECTORS_DELEGATED_JWT_KEY: tooLongKey })).toThrow();
   });
 
+  it("rejects legacy Hermes TCP credentials when the private connectors transport is enabled", () => {
+    expect(() => loadServerConfig({
+      ...oidcEnvironment,
+      HERMES_INTERNAL_URL: "https://hermes.example.test",
+      HERMES_SERVICE_TOKEN: "fictional-legacy-hermes-token",
+    })).toThrow(/cannot be combined/u);
+  });
+
   it("does not enable connectors or select a default socket unless explicitly enabled", () => {
     expect(loadServerConfig({})).not.toHaveProperty("connectors");
   });

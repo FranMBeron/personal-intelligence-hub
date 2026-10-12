@@ -292,6 +292,9 @@ export const loadServerConfig = (
   });
   const connectors = loadConnectorsConfig(environment);
   if (connectors === undefined) return existing;
+  if (existing.hermesInternalUrl !== undefined || existing.hermesServiceToken !== undefined) {
+    throw new Error("Legacy HERMES_INTERNAL_URL/HERMES_SERVICE_TOKEN cannot be combined with CONNECTORS_ENABLED; migrate Hermes traffic to the private connectors socket.");
+  }
   if (connectors.humanAuthMode === "tailscale-localapi" && existing.internalAuthKey === undefined) {
     throw new Error("Tailscale connector identity requires PIH_INTERNAL_AUTH_KEY for the existing PIH API authorization.");
   }
