@@ -109,11 +109,17 @@ function desktopPolicyViolations(
     violations.push("Ubuntu verification must install frozen dependencies and run every source gate");
   }
   for (const gate of ["build", "typecheck", "test"]) {
-    if (!scripts[gate]?.includes(`pnpm -r --if-present ${gate}`)) {
+    const recursiveCommand = `pnpm -r --if-present ${gate}`;
+    const allowedCommands = gate === "typecheck" ? [recursiveCommand, "tsc -p tsconfig.scripts.json --noEmit"] : [recursiveCommand];
+    // Root scripts get the same conservative treatment as workflow steps.
+    // Typecheck may compose its two known blocking checks using AND only.
+    const scriptCommands = scripts[gate]?.trim().split("&&").map((command) => command.trim()) ?? [];
+    if (!scriptCommands.includes(recursiveCommand) ||
+      !scriptCommands.every((command) => allowedCommands.includes(command))) {
       violations.push(`${gate} must include desktop through recursive workspace execution`);
     }
   }
-  if (!/\beslint\s+\.(?:\s|$)/u.test(scripts.lint ?? "")) {
+  if (scripts.lint?.trim() !== "eslint . --max-warnings=0") {
     violations.push("lint must cover all repository sources including desktop");
   }
   if (!workspacePackages.some((pattern) => !pattern.startsWith("!") && matchesGlob("apps/desktop", pattern)) ||
@@ -149,6 +155,21 @@ const workspaceScripts = {
 };
 
 describe("desktop CI source-only policy", () => {
+  it.each(["true || pnpm -r --if-present test", "pnpm -r --if-present test || true", "exit 0; pnpm -r --if-present test"])("rejects a root test script that bypasses its recursive gate: %s", (test) => {
+    expect(desktopPolicyViolations(compliantWorkflow(), { ...workspaceScripts, test }, ["apps/*"]))
+      .toContain("test must include desktop through recursive workspace execution");
+  });
+
+  it.each(["build", "typecheck"])("rejects shell failure masking in root %s", (gate) => {
+    expect(desktopPolicyViolations(compliantWorkflow(), { ...workspaceScripts, [gate]: `pnpm -r --if-present ${gate} || true` }, ["apps/*"]))
+      .toContain(`${gate} must include desktop through recursive workspace execution`);
+  });
+
+  it.each(["true || eslint . --max-warnings=0", "eslint . --max-warnings=0 || true", "exit 0; eslint . --max-warnings=0"])("rejects a root lint script that bypasses source checking: %s", (lint) => {
+    expect(desktopPolicyViolations(compliantWorkflow(), { ...workspaceScripts, lint }, ["apps/*"]))
+      .toContain("lint must cover all repository sources including desktop");
+  });
+
   it.each(["pnpm test || true", "true || pnpm test", "pnpm test | true", "exit 0\npnpm test", "if false; then\npnpm test\nfi"])("rejects a gate hidden by shell control flow: %s", (run) => {
     const workflow = compliantWorkflow();
     workflow.jobs.verify!.steps.find((step) => step.run === "pnpm test")!.run = run;
@@ -201,8 +222,10 @@ describe("desktop CI source-only policy", () => {
   });
 
   it("terminates cyclic script traversal without scanning uninvoked publishing scripts", () => {
-    const scripts = { ...workspaceScripts, build: "pnpm -r --if-present build && pnpm cycle", cycle: "pnpm cycle", release: "electron-forge publish" };
-    expect(desktopPolicyViolations(compliantWorkflow(), scripts, ["apps/*"])).toEqual([]);
+    const scripts = { ...workspaceScripts, cycle: "pnpm cycle", release: "electron-forge publish" };
+    const workflow = compliantWorkflow();
+    workflow.jobs.verify!.steps.push({ run: "pnpm cycle" });
+    expect(desktopPolicyViolations(workflow, scripts, ["apps/*"])).toEqual([]);
   });
 
   it("verifies the actual Ubuntu workflow and workspace script coverage", async () => {
