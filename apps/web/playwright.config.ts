@@ -11,6 +11,7 @@ const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ??
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "**/desktop-layout/**",
   fullyParallel: false,
   workers: 1,
   retries: 0,

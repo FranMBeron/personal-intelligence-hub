@@ -9,7 +9,8 @@
     "dev": "electron-forge start",
     "make:mac": "electron-forge make --platform=darwin --arch=arm64",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:layout": "pnpm --filter @personal-intelligence-hub/web exec playwright test --config playwright.desktop-layout.config.ts"
   },
   "devDependencies": {
     "@electron-forge/cli": "8.0.1",

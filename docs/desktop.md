@@ -38,6 +38,13 @@ does not redirect to a login page; the app then uses the server's normal web
 authentication. An unavailable server opens a local recovery screen with
 retry and server settings actions.
 
+The local setup and preferences window opens at 720 by 700 pixels and supports
+resizing down to 480 by 640 pixels. Controls remain visible at the minimum
+size. To check renderer layout with the existing web test tools, run
+`pnpm --filter @personal-intelligence-hub/desktop test:layout`. This uses an
+installed Chrome when available; otherwise install Playwright's Chromium
+through the web workspace first.
+
 ## Build and install your local app
 
 Start from a clean checkout on the Apple Silicon Mac:

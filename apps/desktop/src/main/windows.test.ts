@@ -69,6 +69,10 @@ describe("createRemoteWindow", () => {
   });
 });
 describe("createControlWindow", () => {
+  it("opens at a readable size and enforces the renderer's supported minimum viewport", () => {
+    createControlWindow({ preloadPath: "/packaged/preload.cjs" });
+    expect(captured.options[0]).toMatchObject({ width: 720, height: 700, minWidth: 480, minHeight: 640 });
+  });
   it("uses only the supplied packaged preload with the same sandbox posture", () => {
     createControlWindow({ preloadPath: "/packaged/preload.cjs" });
     expect(captured.options[0]?.webPreferences).toMatchObject(posture);

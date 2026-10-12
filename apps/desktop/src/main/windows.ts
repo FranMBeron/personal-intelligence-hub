@@ -39,6 +39,10 @@ export function createRemoteWindow(options: RemoteWindowOptions): BrowserWindow 
 // The caller loads the packaged control renderer (or the Forge development URL).
 export function createControlWindow(options: { preloadPath: string }): BrowserWindow {
   return new BrowserWindow({
+    width: 720,
+    height: 700,
+    minWidth: 480,
+    minHeight: 640,
     webPreferences: { ...sandboxPreferences(), preload: options.preloadPath },
   });
 }

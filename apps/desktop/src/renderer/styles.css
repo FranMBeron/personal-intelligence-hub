@@ -60,5 +60,17 @@ form .button { margin-top: 12px; }
 .checkbox-label { display: flex; min-height: 44px; align-items: center; gap: 10px; font-weight: 650; cursor: pointer; }
 input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
 footer { padding: 0 24px 22px; color: #716b62; font-size: 11px; text-align: center; }
+@media (max-height: 700px) {
+  body { padding: 12px; align-items: start; }
+  .app-bar { padding: 14px 20px; }
+  .control-panel { margin: 12px; padding: 20px; }
+  h1 { margin-bottom: 12px; font-size: 28px; }
+  .description { margin-bottom: 16px; }
+  form { gap: 8px; }
+  form .button { margin-top: 4px; }
+  .login-setting { margin-top: 16px; padding-top: 12px; }
+  .actions { margin-top: 16px; }
+  footer { padding-bottom: 14px; }
+}
 @media (max-width: 420px) { .app-bar { padding: 16px; } .control-panel { margin: 12px; } .desktop-label { display: none; } }
 @media (prefers-reduced-motion: reduce) { .button { transition: none; } }
