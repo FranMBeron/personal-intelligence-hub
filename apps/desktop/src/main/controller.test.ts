@@ -102,6 +102,20 @@ describe("desktop controller", () => {
     expect(f.local[0]?.visible).toBe(true); expect(f.remote[0]?.destroyed).toBe(true);
     await f.controller.open(); expect(f.local[0]?.visible).toBe(true);
   });
+  it("recovers from an HTTP proxy error page instead of leaving a blank remote window", async () => {
+    const f = await fixture("https://hub.example.test"); await f.controller.start();
+    f.remote[0]?.webContents.emit("did-navigate", {}, "https://hub.example.test", 200, "OK");
+    expect(f.local).toHaveLength(0);
+    f.remote[0]?.webContents.emit("did-navigate", {}, "https://hub.example.test", 502, "Bad Gateway");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect((await f.controller.readState()).connection).toEqual({ kind: "unavailable", origin: "https://hub.example.test", reason: "http-error" });
+    expect(f.local[0]?.visible).toBe(true);
+    expect(f.remote[0]?.destroyed).toBe(true);
+    f.healthy(); await f.controller.retry();
+    expect(f.remote[1]?.visible).toBe(true);
+    f.remote[0]?.webContents.emit("did-navigate", {}, "https://hub.example.test", 503, "Unavailable");
+    expect(f.remote[1]?.destroyed).toBe(false);
+  });
   it("hides local windows on close and allows explicit Quit to terminate", async () => {
     const f = await fixture(); await f.controller.start();
     let prevented = false; f.local[0]?.emit("close", { preventDefault: () => { prevented = true; } });

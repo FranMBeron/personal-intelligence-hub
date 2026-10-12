@@ -206,6 +206,12 @@ export class DesktopController implements DesktopBridge {
       window.once("closed", () => {
         if (this.remoteWindow === window) { this.remoteWindow = undefined; this.remoteOrigin = undefined; }
       });
+      window.webContents.on("did-navigate", (_event, _url, statusCode) => {
+        if (statusCode < 400 || this.quitting || this.remoteWindow !== window) return;
+        this.connection = { kind: "unavailable", origin: origin.origin, reason: "http-error" };
+        this.destroyRemote();
+        void this.showControl().catch(() => undefined);
+      });
       window.webContents.on("did-fail-load", (_event, code, _description, _url, isMainFrame) => {
         if (!isMainFrame || code === -3 || this.quitting || this.remoteWindow !== window) return;
         this.connection = { kind: "unavailable", origin: origin.origin, reason: "load-failed" };
