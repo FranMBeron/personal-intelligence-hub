@@ -494,3 +494,21 @@ describe("proposal foreign event ownership", () => {
     }))).rejects.toThrow();
   });
 });
+
+describe("proposal replay after event cleanup", () => {
+  it("replays an existing idempotent proposal after its event reference expires", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.upsertEventReference(db, eventReference({ lastObservedAt: "2026-10-01T00:00:00.000Z" }));
+    });
+    const savedProposal = proposal({ id: "proposal-replay-cleanup", eventRef: "event-ref-01" });
+    await expect(database.transaction((db) => repository.insertProposal(db, savedProposal, "idempotency-replay-cleanup", "request-replay-cleanup")))
+      .resolves.toMatchObject({ kind: "inserted" });
+    await database.write((db) => repository.purgeStaleEventReferences(db, "2026-10-10T00:00:00.000Z"));
+
+    await expect(database.transaction((db) => repository.insertProposal(db, savedProposal, "idempotency-replay-cleanup", "request-replay-cleanup")))
+      .resolves.toMatchObject({ kind: "replayed", proposal: { id: "proposal-replay-cleanup", eventRef: "event-ref-01" } });
+  });
+});

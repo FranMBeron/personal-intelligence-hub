@@ -258,7 +258,6 @@ export const createCalendarRepository = (): CalendarRepository => ({
     requireChanges(result.changes);
   },
   insertProposal(database, proposal, idempotencyKey, requestHash) {
-    requireOwnedEventReference(database, proposal.actorId, proposal.eventRef);
     const previous = database.prepare("SELECT request_hash, proposal_id FROM calendar_idempotency WHERE actor_id = :actorId AND idempotency_key_hash = :idempotencyKey")
       .get<{ request_hash: string; proposal_id: string }>({ actorId: proposal.actorId, idempotencyKey });
     if (previous !== undefined) {
@@ -266,6 +265,7 @@ export const createCalendarRepository = (): CalendarRepository => ({
       const existing = selectProposal(database, proposal.actorId, previous.proposal_id);
       return existing === undefined ? { kind: "conflict" } : { kind: "replayed", proposal: mapProposal(existing)! };
     }
+    requireOwnedEventReference(database, proposal.actorId, proposal.eventRef);
     const inserted = database.prepare(
       "INSERT INTO calendar_change_proposals(actor_id, id, version, status, operation, event_ref, encrypted_payload, payload_purged_at, provider_etag_ciphertext, created_by_actor_type, created_at, expires_at, completed_at, safe_reason_code) " +
       "VALUES(:actorId, :id, :version, :status, :operation, :eventRef, :encryptedPayload, :payloadPurgedAt, :providerEtagCiphertext, :createdByActorType, :createdAt, :expiresAt, :completedAt, :safeReasonCode)",
