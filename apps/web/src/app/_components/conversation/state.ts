@@ -24,6 +24,7 @@ export type ConversationState = Readonly<{
 export type ConversationAction =
   | Readonly<{ type: "conversation.created"; conversationId: string }>
   | Readonly<{ type: "thread.selected"; conversationId: string; generation: number }>
+  | Readonly<{ type: "thread.cleared"; generation: number }>
   | Readonly<{
       type: "history.loaded";
       conversationId: string;
@@ -189,11 +190,9 @@ export const conversationReducer = (
     case "conversation.created":
       return { ...state, conversationId: action.conversationId };
     case "thread.selected":
-      return {
-        ...initialConversationState,
-        conversationId: action.conversationId,
-        generation: action.generation,
-      };
+      return { ...initialConversationState, conversationId: action.conversationId, generation: action.generation };
+    case "thread.cleared":
+      return { ...initialConversationState, generation: action.generation };
     case "history.loaded": {
       if (!matchesGeneration(state, action.conversationId, action.generation)) return state;
       const cursorFromSnapshot =

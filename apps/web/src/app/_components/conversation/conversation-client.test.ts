@@ -27,6 +27,7 @@ describe("ConversationClient", () => {
       }
       if (path.endsWith("/conversations/conversation-1")) return Response.json(validConversation);
       if (path.endsWith("/agents/agent-1/main-conversation")) return Response.json(validConversation);
+      if (path.endsWith("/agents/agent-1/conversation-selection")) return Response.json({ agentId: "agent-1", conversationId: "conversation-1", version: 1, updatedAt: validConversation.updatedAt });
       if (path.endsWith("/agents/agent-1/conversation-selection")) {
         return Response.json({ agentId: "agent-1", conversationId: "conversation-1", version: 1, updatedAt: validConversation.updatedAt });
       }
@@ -37,6 +38,7 @@ describe("ConversationClient", () => {
     await expect(client.getConversation("conversation-1", signal)).resolves.toEqual(validConversation);
     await expect(client.history("conversation-1", { limit: 5 }, signal)).resolves.toMatchObject({ streamCursor: "12" });
     await expect(client.mainConversation("agent-1", signal)).resolves.toEqual(validConversation);
+    await expect(client.getConversationSelection("agent-1", signal)).resolves.toMatchObject({ conversationId: "conversation-1" });
     await expect(client.selectConversation("agent-1", { conversationId: "conversation-1", expectedVersion: 1 }, signal))
       .resolves.toMatchObject({ version: 1 });
     expect(fetcher).toHaveBeenCalled();

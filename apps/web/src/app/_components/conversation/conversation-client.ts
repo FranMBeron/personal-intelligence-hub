@@ -95,6 +95,14 @@ export class ConversationClient {
     );
   }
 
+  getConversationSelection(agentId: string, signal?: AbortSignal): Promise<ConversationSelection> {
+    return this.#request(
+      `/api/ui/v1/agents/${encodeURIComponent(agentId)}/conversation-selection`,
+      ConversationSelectionSchema,
+      signal,
+    );
+  }
+
   selectConversation(
     agentId: string,
     body: PutConversationSelectionBody,

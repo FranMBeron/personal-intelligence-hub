@@ -1,245 +1,231 @@
 "use client";
 
 import {
-  ConversationSchema,
-  MessageSchema,
-  UploadedMediaSchema,
-  type HermesCapabilities,
-  type MessagePart,
+  type Conversation, type HermesCapabilities, type MessagePart,
 } from "@personal-intelligence-hub/contracts";
-import { useEffect, useId, useReducer, useState } from "react";
+import { useCallback, useEffect, useId, useReducer, useRef, useState } from "react";
 
 import { SourceState } from "../source-state";
 import { Composer } from "./composer";
 import { subscribeToConversationEvents } from "./event-stream";
-import {
-  conversationReducer,
-  initialConversationState,
-  type ConversationMessage,
-} from "./state";
-
-const problemDetail = async (response: Response): Promise<string> => {
-  try {
-    const value = (await response.json()) as { detail?: unknown };
-    return typeof value.detail === "string"
-      ? value.detail
-      : "No se pudo completar la operación.";
-  } catch {
-    return "No se pudo completar la operación.";
-  }
-};
-
-const postJson = (
-  path: string,
-  body: unknown,
-  headers?: HeadersInit,
-): Promise<Response> =>
-  fetch(
-    new Request(new URL(path, window.location.origin), {
-      method: "POST",
-      cache: "no-store",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json", ...headers },
-      body: JSON.stringify(body),
-    }),
-  );
+import { ConversationClient } from "./conversation-client";
+import { conversationReducer, initialConversationState, type ConversationMessage } from "./state";
 
 export function Conversation({
-  capabilities,
-  agentId,
+  conversationId = null, agentName = "Hermes", capabilities, onResolveMain, client: suppliedClient, canSend = true,
   unavailableState = "not_configured",
 }: Readonly<{
+  conversationId?: string | null;
+  agentName?: string;
   capabilities: HermesCapabilities | null;
+  onResolveMain?: () => Promise<Conversation>;
   agentId?: string;
+  canSend?: boolean;
+  client?: ConversationClient;
   unavailableState?: "not_configured" | "unavailable";
 }>) {
-  const [state, dispatch] = useReducer(conversationReducer, initialConversationState);
+  const client = useRef(suppliedClient ?? new ConversationClient()).current;
+  const [state, dispatch] = useReducer(conversationReducer, conversationId, (initialId) => ({
+    ...initialConversationState,
+    conversationId: initialId,
+  }));
   const titleId = useId();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<readonly File[]>([]);
   const [voice, setVoice] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
+  const [completionAnnouncement, setCompletionAnnouncement] = useState("");
+  const previousDelivery = useRef(new Map<string, string>());
+  const generation = useRef(0);
+  const activeId = useRef(conversationId);
+  const pendingResolvedMain = useRef<string | null>(null);
+  const previousId = useRef(conversationId);
+  const sendController = useRef<AbortController | null>(null);
+  const drafts = useRef(new Map<string, { text: string; attachments: readonly File[]; voice: File | null }>());
+  const draftKey = conversationId ?? "__main__";
+
+  activeId.current = conversationId;
+
+  const updateDraft = useCallback((next: { text: string; attachments: readonly File[]; voice: File | null }) => {
+    drafts.current.set(draftKey, next);
+  }, [draftKey]);
 
   useEffect(() => {
-    if (state.conversationId === null) return;
+    const previous = previousId.current;
+    if (previous === conversationId) return;
+    previousId.current = conversationId;
+    previousDelivery.current.clear();
+    setCompletionAnnouncement("");
+    const isResolvedMain = pendingResolvedMain.current === conversationId;
+    if (isResolvedMain) {
+      pendingResolvedMain.current = null;
+    } else {
+      sendController.current?.abort();
+      generation.current += 1;
+      if (conversationId === null) dispatch({ type: "thread.cleared", generation: generation.current });
+      else dispatch({ type: "thread.selected", conversationId, generation: generation.current });
+    }
+    const nextDraft = drafts.current.get(draftKey) ?? { text: "", attachments: [], voice: null };
+    setText(nextDraft.text);
+    setAttachments(nextDraft.attachments);
+    setVoice(nextDraft.voice);
+    setOperationError(null);
+  }, [conversationId, draftKey]);
+
+  useEffect(() => () => sendController.current?.abort(), []);
+
+  useEffect(() => {
+    let completed: ConversationMessage | undefined;
+    for (const message of state.messages) {
+      const previous = previousDelivery.current.get(message.id);
+      if (message.deliveryState === "completed" && previous !== undefined && previous !== "completed") completed = message;
+      previousDelivery.current.set(message.id, message.deliveryState);
+    }
+    if (completed !== undefined) {
+      const summary = completed.parts.filter((part) => part.kind === "text").map((part) => part.text).join(" ").slice(0, 240);
+      setCompletionAnnouncement(summary === "" ? "Llegó una respuesta completa." : `Respuesta completa: ${summary}`);
+    }
+  }, [state.messages]);
+
+  useEffect(() => {
+    if (conversationId === null || capabilities === null) return;
+    const currentGeneration = generation.current;
     const controller = new AbortController();
+    void client.history(conversationId, { limit: 50 }, controller.signal).then((history) => {
+      dispatch({ type: "history.loaded", conversationId, generation: currentGeneration, history });
+    }).catch(() => {
+      if (!controller.signal.aborted) setOperationError("No se pudo cargar el historial de esta conversación.");
+    });
     void subscribeToConversationEvents({
-      conversationId: state.conversationId,
+      conversationId,
       signal: controller.signal,
-      onEvent: (event) => dispatch({ type: "event.received", event }),
-      onUnavailable: () =>
-        setOperationError(
-          "La actualización en tiempo real está intentando reconectar.",
-        ),
+      onEvent: (event) => dispatch({ type: "event.received", event, conversationId, generation: currentGeneration }),
+      onUnavailable: () => setOperationError("La actualización en tiempo real está intentando reconectar."),
     });
     return () => controller.abort();
-  }, [state.conversationId]);
-
-  if (capabilities === null) {
-    return (
-      <section className="conversation conversation--unavailable surface">
-        <SourceState
-          compact
-          state={unavailableState}
-          title={unavailableState === "not_configured" ? "Hermes no configurado" : "Hermes no disponible"}
-          detail={unavailableState === "not_configured"
-            ? "Configura el adaptador del servidor para activar la conversación."
-            : "La integración está configurada, pero no respondió a esta consulta."}
-        />
-      </section>
-    );
-  }
-
-  const ensureConversation = async (): Promise<string> => {
-    if (state.conversationId !== null) return state.conversationId;
-    const response = await postJson("/api/ui/v1/conversations", {
-      ...(agentId === undefined ? {} : { agentId }),
-    });
-    if (!response.ok) throw new Error(await problemDetail(response));
-    const conversation = ConversationSchema.parse(await response.json());
-    dispatch({ type: "conversation.created", conversationId: conversation.id });
-    return conversation.id;
-  };
-
-  const upload = async (file: File, kind: "attachment" | "voice") => {
-    const form = new FormData();
-    form.set("kind", kind);
-    form.set("media", file);
-    const response = await fetch("/api/ui/v1/hermes/uploads", {
-      method: "POST",
-      cache: "no-store",
-      credentials: "same-origin",
-      body: form,
-    });
-    if (!response.ok) throw new Error(await problemDetail(response));
-    return UploadedMediaSchema.parse(await response.json());
-  };
+  }, [capabilities, client, conversationId]);
 
   const sendExisting = async (
-    conversationId: string,
-    localMessage: ConversationMessage,
+    targetId: string,
+    message: ConversationMessage,
     idempotencyKey: string,
+    signal: AbortSignal,
   ) => {
-    const response = await postJson(
-      `/api/ui/v1/conversations/${encodeURIComponent(conversationId)}/messages`,
-      { parts: localMessage.parts },
-      { "idempotency-key": idempotencyKey },
-    );
-    if (!response.ok) throw new Error(await problemDetail(response));
-    const accepted = MessageSchema.parse(await response.json());
-    dispatch({
-      type: "message.acknowledged",
-      localMessageId: localMessage.id,
-      message: accepted,
-    });
+    const accepted = await client.sendMessage(targetId, idempotencyKey, { parts: message.parts }, signal);
+    dispatch({ type: "message.acknowledged", localMessageId: message.id, message: accepted });
   };
 
   const submit = async () => {
+    if (submitting || !canSend || capabilities === null || (conversationId === null && onResolveMain === undefined)) return;
     setSubmitting(true);
     setOperationError(null);
+    const controller = new AbortController();
+    sendController.current?.abort();
+    sendController.current = controller;
+    let targetGeneration = generation.current;
     const idempotencyKey = crypto.randomUUID();
     const localMessageId = crypto.randomUUID();
-    let localMessage: ConversationMessage | undefined;
+    let optimistic: ConversationMessage | undefined;
+    let targetId = conversationId;
+    const isCurrent = () => !controller.signal.aborted && activeId.current === targetId && generation.current === targetGeneration;
     try {
-      const uploadedAttachments = await Promise.all(
-        attachments.map((file) => upload(file, "attachment")),
-      );
-      const uploadedVoice = voice === null ? null : await upload(voice, "voice");
+      if (targetId === null) {
+        if (onResolveMain === undefined) throw new Error("Selecciona un espacio de conversación antes de enviar.");
+        const main = await onResolveMain();
+        targetId = main.id;
+        const mainDraft = drafts.current.get("__main__");
+        if (mainDraft !== undefined) drafts.current.set(main.id, mainDraft);
+        if (previousId.current !== main.id) {
+          pendingResolvedMain.current = main.id;
+          activeId.current = main.id;
+          generation.current += 1;
+          targetGeneration = generation.current;
+          dispatch({ type: "thread.selected", conversationId: main.id, generation: targetGeneration });
+        } else {
+          targetGeneration = generation.current;
+        }
+      }
+      if (!isCurrent()) return;
+      const uploadedAttachments = await Promise.all(attachments.map((file) => client.upload(targetId!, file, controller.signal)));
+      if (!isCurrent()) return;
+      const uploadedVoice = voice === null ? null : await client.upload(targetId!, voice, controller.signal);
+      if (!isCurrent()) return;
       const parts: MessagePart[] = [];
       if (text.trim() !== "") parts.push({ kind: "text", text: text.trim() });
-      parts.push(
-        ...uploadedAttachments.map((media) => ({
-          kind: "attachment" as const,
-          reference: media.reference,
-          name: media.name,
-          mimeType: media.mimeType,
-          size: media.size,
-        })),
-      );
-      if (uploadedVoice !== null) {
-        parts.push({
-          kind: "voice",
-          reference: uploadedVoice.reference,
-          mimeType: uploadedVoice.mimeType,
-          size: uploadedVoice.size,
-        });
-      }
-      localMessage = {
-        id: localMessageId,
-        conversationId: state.conversationId ?? "pending",
-        role: "user",
-        parts,
-        deliveryState: "sending",
-        createdAt: new Date().toISOString(),
-        idempotencyKey,
+      parts.push(...uploadedAttachments.map((media) => ({
+        kind: "attachment" as const, reference: media.reference, name: media.name, mimeType: media.mimeType, size: media.size,
+      })));
+      if (uploadedVoice !== null) parts.push({ kind: "voice", reference: uploadedVoice.reference, mimeType: uploadedVoice.mimeType, size: uploadedVoice.size });
+      optimistic = {
+        id: localMessageId, conversationId: targetId, role: "user", parts,
+        deliveryState: "sending", createdAt: new Date().toISOString(), idempotencyKey,
       };
-      dispatch({ type: "message.submitted", message: localMessage, idempotencyKey });
-      setText("");
-      setAttachments([]);
-      setVoice(null);
-      const conversationId = await ensureConversation();
-      await sendExisting(conversationId, localMessage, idempotencyKey);
+      dispatch({ type: "message.submitted", message: optimistic, idempotencyKey });
+      if (!isCurrent()) return;
+      await sendExisting(targetId, optimistic, idempotencyKey, controller.signal);
+      if (!isCurrent()) return;
+      const emptyDraft = { text: "", attachments: [], voice: null };
+      drafts.current.set(targetId, emptyDraft);
+      if (conversationId === null) drafts.current.set("__main__", emptyDraft);
+      setText(""); setAttachments([]); setVoice(null);
     } catch (error) {
-      const detail =
-        error instanceof Error ? error.message : "No se pudo enviar el mensaje.";
+      if (controller.signal.aborted) return;
+      const detail = error instanceof Error ? error.message : "No se pudo enviar el mensaje.";
       setOperationError(detail);
-      if (localMessage !== undefined) {
-        dispatch({ type: "message.failed", messageId: localMessage.id, detail });
-      }
+      if (optimistic !== undefined) dispatch({ type: "message.failed", messageId: optimistic.id, detail });
     } finally {
+      if (sendController.current === controller) sendController.current = null;
       setSubmitting(false);
     }
   };
 
   const retry = async (message: ConversationMessage) => {
     if (message.idempotencyKey === undefined || state.conversationId === null) return;
+    const controller = new AbortController();
+    sendController.current?.abort();
+    sendController.current = controller;
     dispatch({ type: "message.retrying", messageId: message.id });
-    try {
-      await sendExisting(state.conversationId, message, message.idempotencyKey);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "No se pudo reenviar.";
-      dispatch({ type: "message.failed", messageId: message.id, detail });
+    try { await sendExisting(state.conversationId, message, message.idempotencyKey, controller.signal); }
+    catch (error) {
+      if (!controller.signal.aborted) {
+        const detail = error instanceof Error ? error.message : "No se pudo reenviar.";
+        dispatch({ type: "message.failed", messageId: message.id, detail });
+      }
     }
   };
 
+  const changeText = (value: string) => { setText(value); updateDraft({ text: value, attachments, voice }); };
+  const changeAttachments = (files: readonly File[]) => { setAttachments(files); updateDraft({ text, attachments: files, voice }); };
+  const changeVoice = (file: File | null) => { setVoice(file); updateDraft({ text, attachments, voice: file }); };
+
+  if (capabilities === null) {
+    return <section className="conversation conversation--unavailable surface">
+      <SourceState compact state={unavailableState} title={unavailableState === "not_configured" ? "Hermes no configurado" : "Hermes no disponible"}
+        detail={unavailableState === "not_configured" ? "Configura el adaptador del servidor para activar la conversación." : "La integración está configurada, pero no respondió a esta consulta."} />
+    </section>;
+  }
+
   return (
-    <section
-      className={`conversation surface ${state.messages.length === 0 ? "conversation--empty" : "conversation--active"}`}
-      aria-labelledby={titleId}
-    >
+    <section className={`conversation surface ${state.messages.length === 0 ? "conversation--empty" : "conversation--active"}`} aria-labelledby={titleId}>
       <header className="conversation__header">
-        <div><p className="eyebrow">Hermes</p><h2 id={titleId}>Conversa con tu sistema</h2></div>
+        <div><p className="eyebrow">Hermes</p><h2 id={titleId}>Conversa con {agentName}</h2></div>
         <span className="conversation__privacy">No se guarda en el navegador</span>
       </header>
-      <div className="conversation__log" role="log" aria-live="polite" aria-relevant="additions text">
-        {state.messages.length === 0 ? (
-          <p className="conversation__welcome">Hermes puede leer el contexto visible y ejecutar solo lo que le pidas.</p>
-        ) : state.messages.map((message) => (
+      <div className="conversation__log" role="log" aria-live="polite" aria-relevant="additions">
+        {state.messages.length === 0 ? <p className="conversation__welcome">Hermes puede leer el contexto visible y ejecutar solo lo que le pidas.</p> : state.messages.map((message) => (
           <article className="message" data-role={message.role} key={message.id}>
             <p className="message__author">{message.role === "user" ? "Tú" : "Hermes"}</p>
-            {message.parts.map((part, index) => (
-              <p key={`${part.kind}-${index}`}>{part.kind === "text" ? part.text : part.kind === "voice" ? "Nota de voz" : part.name}</p>
-            ))}
+            {message.parts.map((part, index) => <p key={`${part.kind}-${index}`}>{part.kind === "text" ? part.text : part.kind === "voice" ? "Nota de voz" : part.name}</p>)}
             <p className="message__state">{message.deliveryState}</p>
-            {message.deliveryState === "failed" ? (
-              <button className="button button--quiet" type="button" onClick={() => void retry(message)}>Reintentar</button>
-            ) : null}
+            {message.deliveryState === "failed" ? <button className="button button--quiet" type="button" onClick={() => void retry(message)}>Reintentar</button> : null}
           </article>
         ))}
       </div>
+      {completionAnnouncement === "" ? null : <p className="sr-only" role="status">{completionAnnouncement}</p>}
       {operationError === null ? null : <p className="conversation__error" role="status">{operationError}</p>}
-      <Composer
-        capabilities={capabilities}
-        text={text}
-        submitting={submitting}
-        attachments={attachments}
-        voice={voice}
-        onTextChange={setText}
-        onAttachmentsChange={setAttachments}
-        onVoiceChange={setVoice}
-        onSubmit={() => void submit()}
-      />
+      <Composer agentName={agentName} capabilities={capabilities} text={text} submitting={submitting} attachments={attachments} voice={voice}
+        onTextChange={changeText} onAttachmentsChange={changeAttachments} onVoiceChange={changeVoice} onSubmit={() => void submit()} submitDisabled={!canSend || (conversationId === null && onResolveMain === undefined)} />
     </section>
   );
 }

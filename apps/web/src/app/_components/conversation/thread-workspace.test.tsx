@@ -1,0 +1,236 @@
+// @vitest-environment jsdom
+
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { HermesCapabilities } from "@personal-intelligence-hub/contracts";
+import { conversationFixture, selectionFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
+import { ThreadWorkspace } from "./thread-workspace";
+
+const capabilities: HermesCapabilities = {
+  text: true, streaming: false, voice: { enabled: false },
+  attachments: { enabled: false, acceptedMimeTypes: [], maxFiles: 1, maxBytes: 1024 }, agentConversations: false,
+};
+const emptyList = { items: [], pageInfo: { nextCursor: null, hasNextPage: false } };
+const history = { items: [], pageInfo: { nextCursor: null, hasNextPage: false }, streamCursor: "0" };
+
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+describe("ThreadWorkspace", () => {
+  it("opens without writes; first explicit send resolves and persists the per-agent main thread", async () => {
+    const main = conversationFixture({ id: "main-thread", agentId: "research", isMain: true, title: "Principal" });
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/conversation-selection")) {
+        return Response.json(init?.method === "PUT"
+          ? selectionFixture({ agentId: "research", conversationId: "main-thread", version: 1 })
+          : selectionFixture({ agentId: "research", conversationId: null, version: 0 }));
+      }
+      if (path.endsWith("/conversations?agentId=research&archived=false&limit=50")) return Response.json(emptyList);
+      if (path.endsWith("/conversations?agentId=research&archived=true&limit=50")) return Response.json(emptyList);
+      if (path.endsWith("/agents/research/main-conversation")) return Response.json(main);
+      if (path.endsWith("/conversations/main-thread/messages?limit=50")) return Response.json(history);
+      if (path.endsWith("/conversations/main-thread/messages") && init?.method === "POST") return Response.json({
+        id: "message-1", conversationId: "main-thread", role: "user", parts: [{ kind: "text", text: "Hola" }],
+        deliveryState: "accepted", createdAt: "2026-10-12T12:00:00.000Z",
+      });
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    await screen.findByRole("button", { name: "Nueva conversación" });
+    expect(fetcher.mock.calls.some(([input, init]) => String(input).includes("main-conversation") || init?.method === "POST")).toBe(false);
+
+    fireEvent.change(screen.getByLabelText("Mensaje para Research"), { target: { value: "Hola" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Conversación con Research" }));
+    await waitFor(() => expect(fetcher.mock.calls.some(([input, init]) => String(input).endsWith("/messages") && init?.method === "POST")).toBe(true));
+    const mainCall = fetcher.mock.calls.find(([input]) => String(input).includes("main-conversation"));
+    expect(mainCall?.[1]?.method).toBe("PUT");
+    const selectionWrites = fetcher.mock.calls.filter(([input, init]) => String(input).endsWith("conversation-selection") && init?.method === "PUT");
+    expect(selectionWrites).toHaveLength(1);
+    expect(fetcher.mock.calls.findIndex(([input]) => String(input).includes("main-conversation"))).toBeLessThan(
+      fetcher.mock.calls.findIndex(([input, init]) => String(input).endsWith("/messages") && init?.method === "POST"),
+    );
+  });
+
+  it("binds an uploaded image to the newly resolved main thread before sending", async () => {
+    const main = conversationFixture({ id: "main-with-image", agentId: "research", isMain: true });
+    const imageCapabilities: HermesCapabilities = {
+      ...capabilities,
+      attachments: { enabled: true, acceptedMimeTypes: ["image/png"], maxFiles: 2, maxBytes: 1024 },
+    };
+    const calls: Array<{ path: string; method: string; body?: BodyInit | null | undefined }> = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      calls.push({ path, method: init?.method ?? "GET", body: init?.body });
+      if (path.endsWith("/conversation-selection")) return Response.json(init?.method === "PUT"
+        ? selectionFixture({ agentId: "research", conversationId: main.id, version: 1 })
+        : selectionFixture({ agentId: "research", conversationId: null, version: 0 }));
+      if (path.includes("/conversations?agentId=research")) return Response.json(emptyList);
+      if (path.endsWith("/agents/research/main-conversation")) return Response.json(main);
+      if (path.endsWith("/uploads")) return Response.json({
+        reference: "image-ref", kind: "attachment", name: "chart.png", mimeType: "image/png", size: 5,
+        expiresAt: "2026-10-12T12:00:00.000Z",
+      });
+      if (path.endsWith("/messages?limit=50")) return Response.json(history);
+      if (path.endsWith("/messages") && init?.method === "POST") return Response.json({
+        id: "message-image", conversationId: main.id, role: "user",
+        parts: [{ kind: "attachment", reference: "image-ref", name: "chart.png", mimeType: "image/png", size: 5 }],
+        deliveryState: "accepted", createdAt: "2026-10-12T12:00:00.000Z",
+      });
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const { container } = render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={imageCapabilities} />);
+    await screen.findByRole("button", { name: "Nueva conversación" });
+    const file = new File(["image"], "chart.png", { type: "image/png" });
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    fireEvent.submit(screen.getByRole("form", { name: "Conversación con Research" }));
+    await screen.findByText("chart.png");
+
+    const uploadCall = calls.find((call) => call.path.endsWith("/uploads"));
+    expect(uploadCall?.body).toBeInstanceOf(FormData);
+    expect((uploadCall?.body as FormData).get("conversationId")).toBe(main.id);
+    const mainIndex = calls.findIndex((call) => call.path.endsWith("/main-conversation"));
+    const uploadIndex = calls.findIndex((call) => call.path.endsWith("/uploads"));
+    const sendIndex = calls.findIndex((call) => call.path.endsWith("/messages") && call.method === "POST");
+    expect(mainIndex).toBeLessThan(uploadIndex);
+    expect(uploadIndex).toBeLessThan(sendIndex);
+  });
+
+  it("reloads persisted selection after a 409 without replaying the failed write", async () => {
+    const first = conversationFixture({ id: "thread-1", agentId: "research", isMain: false, title: "Uno" });
+    const second = conversationFixture({ id: "thread-2", agentId: "research", isMain: false, title: "Dos" });
+    let selectionReads = 0;
+    let selectionWrites = 0;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/conversation-selection")) {
+        if (init?.method === "PUT") { selectionWrites += 1; return Response.json({ detail: "conflict" }, { status: 409 }); }
+        selectionReads += 1;
+        return Response.json(selectionFixture({ agentId: "research", conversationId: selectionReads === 1 ? "thread-1" : "thread-2", version: selectionReads - 1 }));
+      }
+      if (path.includes("/conversations?agentId=research")) return Response.json({ items: [first, second], pageInfo: emptyList.pageInfo });
+      if (path.includes("/messages?limit=")) return Response.json(history);
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    await screen.findByRole("button", { name: "Seleccionar Dos" });
+    fireEvent.click(screen.getByRole("button", { name: "Seleccionar Uno" }));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert").textContent).toMatch(/se actualizó en otro lugar/i);
+    expect(selectionWrites).toBe(1);
+    expect(selectionReads).toBe(2);
+    expect(screen.getByRole("button", { name: "Seleccionar Dos" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("creates additional threads only after an explicit create action", async () => {
+    const created = conversationFixture({ id: "thread-new", agentId: "research", isMain: false, title: "Nueva conversación" });
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/conversation-selection") && init?.method === "PUT") return Response.json(selectionFixture({ agentId: "research", conversationId: created.id, version: 1 }));
+      if (path.endsWith("/conversation-selection")) return Response.json(selectionFixture({ agentId: "research", conversationId: null, version: 0 }));
+      if (path.includes("/conversations?agentId=research")) return Response.json(emptyList);
+      if (path === "/api/ui/v1/conversations") return Response.json(created, { status: 201 });
+      if (path.includes("/messages?limit=")) return Response.json(history);
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Nueva conversación" }));
+    await screen.findByRole("log");
+    expect(fetcher.mock.calls.some(([input, init]) => String(input) === "/api/ui/v1/conversations" && init?.method === "POST")).toBe(true);
+    expect(fetcher.mock.calls.filter(([input, init]) => String(input).endsWith("conversation-selection") && init?.method === "PUT")).toHaveLength(1);
+  });
+
+  it("uses returned versions for rename, archive and restore mutations", async () => {
+    const main = conversationFixture({ id: "main-thread", agentId: "research", isMain: true, title: "Principal" });
+    const extra = conversationFixture({ id: "extra-thread", agentId: "research", isMain: false, title: "Ideas", version: 6 });
+    const patchVersions: number[] = [];
+    let updatedExtra = extra;
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/conversation-selection")) return Response.json(selectionFixture({ agentId: "research", conversationId: main.id, version: 1 }));
+      if (path.includes("/conversations?agentId=research")) return Response.json({ items: path.includes("archived=true") ? [] : [main, extra], pageInfo: emptyList.pageInfo });
+      if (path.includes("/messages?limit=50")) return Response.json(history);
+      if (path.endsWith("/extra-thread") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body)) as { expectedVersion: number; title?: string; archived?: boolean };
+        patchVersions.push(body.expectedVersion);
+        updatedExtra = conversationFixture({
+          ...updatedExtra, title: body.title ?? updatedExtra.title, archived: body.archived ?? false, version: body.expectedVersion + 1,
+        });
+        return Response.json(updatedExtra);
+      }
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Renombrar Ideas" }));
+    const title = await screen.findByRole("textbox", { name: "Nuevo título para Ideas" });
+    fireEvent.change(title, { target: { value: "Plan actualizado" } });
+    fireEvent.submit(title.closest("form")!);
+    fireEvent.click(await screen.findByRole("button", { name: "Archivar Plan actualizado" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restaurar Plan actualizado" }));
+    await waitFor(() => expect(patchVersions).toEqual([6, 7, 8]));
+  });
+
+  it("restores the persisted selection and server history after remount without writes", async () => {
+    const selected = conversationFixture({ id: "thread-kept", agentId: "research", isMain: false, title: "Guardada" });
+    const fetcher = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/conversation-selection")) return Response.json(selectionFixture({ agentId: "research", conversationId: "thread-kept", version: 4 }));
+      if (path.includes("/conversations?agentId=research")) return Response.json({ items: [selected], pageInfo: emptyList.pageInfo });
+      if (path.endsWith("/messages?limit=50")) return Response.json({
+        ...history, items: [{ id: "persisted-message", conversationId: "thread-kept", role: "assistant", parts: [{ kind: "text", text: "Historial recuperado" }], deliveryState: "completed", createdAt: "2026-10-12T12:00:00.000Z" }],
+      });
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    expect(await screen.findByText("Historial recuperado")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar selector" }));
+    expect(document.activeElement?.textContent).toContain("Abrir selector de conversaciones");
+    view.unmount();
+    render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    expect(await screen.findByText("Historial recuperado")).toBeTruthy();
+    expect(fetcher.mock.calls.some(([, init]) => init?.method === "PUT" || init?.method === "POST")).toBe(false);
+  });
+
+  it("isolates and aborts conversation state when switching agents", async () => {
+    const research = conversationFixture({ id: "research-main", agentId: "research", isMain: true, title: "Research main" });
+    const planning = conversationFixture({ id: "planning-main", agentId: "planning", isMain: true, title: "Planning main" });
+    let releaseOld: ((response: Response) => void) | undefined;
+    let oldSignal: AbortSignal | undefined;
+    const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const path = String(input);
+      const agentId = path.includes("/agents/planning/") || path.includes("agentId=planning") ? "planning" : "research";
+      if (path.endsWith("/conversation-selection")) return Promise.resolve(Response.json(selectionFixture({
+        agentId, conversationId: agentId === "research" ? research.id : planning.id, version: 1,
+      })));
+      if (path.includes("/conversations?agentId=")) return Promise.resolve(Response.json({
+        items: [agentId === "research" ? research : planning], pageInfo: emptyList.pageInfo,
+      }));
+      if (path.includes("/research-main/messages?limit=50")) {
+        oldSignal = init?.signal ?? undefined;
+        return new Promise((resolve) => { releaseOld = resolve; });
+      }
+      if (path.includes("/planning-main/messages?limit=50")) return Promise.resolve(Response.json({
+        ...history, items: [{ id: "planning-message", conversationId: planning.id, role: "assistant", parts: [{ kind: "text", text: "Historial de Planning" }], deliveryState: "completed", createdAt: "2026-10-12T12:00:00.000Z" }],
+      }));
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    await screen.findByRole("button", { name: "Seleccionar Research main" });
+    view.rerender(<ThreadWorkspace agentId="planning" agentName="Planning" capabilities={capabilities} />);
+    expect(await screen.findByText("Historial de Planning")).toBeTruthy();
+    expect(oldSignal?.aborted).toBe(true);
+    releaseOld?.(Response.json({
+      ...history, items: [{ id: "research-message", conversationId: research.id, role: "assistant", parts: [{ kind: "text", text: "Historial privado de Research" }], deliveryState: "completed", createdAt: "2026-10-12T12:00:00.000Z" }],
+    }));
+    await waitFor(() => expect(screen.queryByText("Historial privado de Research")).toBeNull());
+    expect(screen.getByRole("button", { name: "Seleccionar Planning main" }).getAttribute("aria-pressed")).toBe("true");
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes("/agents/planning/conversation-selection"))).toBe(true);
+  });
+});
