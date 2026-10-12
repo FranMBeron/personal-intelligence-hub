@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && mkdir -p dist/src/migrations && cp src/migrations/*.sql dist/src/migrations/",
     "test": "vitest run --passWithNoTests --exclude '**/*.integration.test.ts'",
-    "test:integration": "vitest run '**/*.integration.test.ts'",
+    "test:integration": "vitest run .integration.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
