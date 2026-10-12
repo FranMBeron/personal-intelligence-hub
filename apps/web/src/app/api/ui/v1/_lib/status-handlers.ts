@@ -13,6 +13,7 @@ import {
   jsonResponse,
   parseJsonBody,
   requireContext,
+  requireEmptyQuery,
   requireGateway,
   requireSameOrigin,
   type RequestPolicy,
@@ -26,6 +27,8 @@ export const createSystemStatusHandler = (
   async (request) => {
     const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     const availableGateway = requireGateway(request, authenticated.context, gateway, "System status");
     if (availableGateway instanceof Response) return availableGateway;
     try {
@@ -45,6 +48,8 @@ export const createGetPreferencesHandler = (
   async (request) => {
     const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     const availableGateway = requireGateway(request, authenticated.context, gateway, "Preferences");
     if (availableGateway instanceof Response) return availableGateway;
     try {
@@ -66,6 +71,8 @@ export const createPatchPreferencesHandler = (
     if (!authenticated.ok) return authenticated.response;
     const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     try {
       const body = await parseJsonBody(request, UpdateUserPreferencesBodySchema);
       const availableGateway = requireGateway(request, authenticated.context, gateway, "Preferences");

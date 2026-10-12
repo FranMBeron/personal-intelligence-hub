@@ -23,6 +23,7 @@ import {
   parseResourceId,
   parseStrictQuery,
   requireContext,
+  requireEmptyQuery,
   requireGateway,
   requireSameOrigin,
   runAgentOperation,
@@ -68,6 +69,8 @@ export const createGetConversationHandler = (
   async (request, routeContext) => {
     const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     try {
       const { conversationId: rawId } = await routeContext.params;
       const conversationId = parseResourceId(rawId);
@@ -91,6 +94,8 @@ export const createUpdateConversationHandler = (
     if (!authenticated.ok) return authenticated.response;
     const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     try {
       const { conversationId: rawId } = await routeContext.params;
       const conversationId = parseResourceId(rawId);
@@ -137,6 +142,8 @@ export const createResolveMainConversationHandler = (
   async (request, routeContext) => {
     const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
     try {
@@ -162,6 +169,8 @@ export const createGetConversationSelectionHandler = (
   async (request, routeContext) => {
     const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     try {
       const { agentId: rawId } = await routeContext.params;
       const agentId = parseResourceId(rawId);
@@ -185,6 +194,8 @@ export const createSelectConversationHandler = (
     if (!authenticated.ok) return authenticated.response;
     const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     try {
       const { agentId: rawId } = await routeContext.params;
       const agentId = parseResourceId(rawId);
@@ -229,6 +240,8 @@ export const createGetDelegationHandler = (
   async (request, routeContext) => {
     const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     try {
       const { delegationId: rawId } = await routeContext.params;
       const delegationId = parseResourceId(rawId);

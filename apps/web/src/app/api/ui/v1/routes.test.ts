@@ -9,7 +9,7 @@ import type {
   SendMessageBody,
   UploadedMedia,
 } from "@personal-intelligence-hub/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { agentFixture, conversationFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
 
@@ -321,6 +321,42 @@ describe("Hermes BFF handlers", () => {
       code: "validation_failed",
       errors: expect.any(Array),
     });
+  });
+
+  it("returns 422 for syntactically invalid conversation JSON", async () => {
+    const createConversation = vi.fn();
+    const response = await createConversationHandler(
+      { createConversation } as unknown as HermesGateway,
+      requestPolicy,
+    )(
+      new Request("https://pih.example/api/ui/v1/conversations", {
+        method: "POST",
+        headers: authenticatedHeaders({ "content-type": "application/json" }),
+        body: "{",
+      }),
+    );
+    expect(response.status).toBe(422);
+    expect(createConversation).not.toHaveBeenCalled();
+  });
+
+  it("returns 422 for syntactically invalid message JSON", async () => {
+    const sendMessage = vi.fn();
+    const response = await createSendMessageHandler(
+      { sendMessage } as unknown as HermesGateway,
+      requestPolicy,
+    )(
+      new Request("https://pih.example/api/ui/v1/conversations/conversation-01/messages", {
+        method: "POST",
+        headers: authenticatedHeaders({
+          "content-type": "application/json",
+          "idempotency-key": "message-key-001",
+        }),
+        body: "{",
+      }),
+      { params: Promise.resolve({ conversationId: "conversation-01" }) },
+    );
+    expect(response.status).toBe(422);
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it.each([undefined, "short", "contains space"])(

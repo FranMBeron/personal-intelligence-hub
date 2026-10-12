@@ -19,11 +19,12 @@ const ImageMimeTypeSchema = z.enum(["image/jpeg", "image/png", "image/webp"]);
 import {
   failureResponse,
   jsonResponse,
-  parseJson,
+  parseJsonBody,
   parseResourceId,
   problem,
   problemResponse,
   requireContext,
+  requireEmptyQuery,
   requireGateway,
   requireSameOrigin,
   runAgentOperation,
@@ -41,6 +42,8 @@ export const createCapabilitiesHandler = (
   async (request) => {
     const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     const availableGateway = requireGateway(request, authenticated.context, gateway, "Hermes");
     if (availableGateway instanceof Response) return availableGateway;
     try {
@@ -60,6 +63,8 @@ export const createAgentsHandler = (
   async (request) => {
     const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     const availableGateway = requireGateway(request, authenticated.context, gateway, "Hermes");
     if (availableGateway instanceof Response) return availableGateway;
     try {
@@ -81,10 +86,12 @@ export const createConversationHandler = (
     if (!authenticated.ok) return authenticated.response;
     const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     const availableGateway = requireGateway(request, authenticated.context, gateway, "Hermes");
     if (availableGateway instanceof Response) return availableGateway;
     try {
-      const body = await parseJson(request, CreateConversationBodySchema);
+      const body = await parseJsonBody(request, CreateConversationBodySchema);
       const value = ConversationSchema.parse(
         await runAgentOperation(authenticated.context, policy, () =>
           availableGateway.createConversation(authenticated.context, body, request.signal),
@@ -105,6 +112,8 @@ export const createSendMessageHandler = (
     if (!authenticated.ok) return authenticated.response;
     const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     const idempotency = IdempotencyKeySchema.safeParse(request.headers.get("idempotency-key"));
     if (!idempotency.success) {
       return problemResponse(
@@ -121,7 +130,7 @@ export const createSendMessageHandler = (
     const availableGateway = requireGateway(request, authenticated.context, gateway, "Hermes");
     if (availableGateway instanceof Response) return availableGateway;
     try {
-      const body = await parseJson(request, SendMessageBodySchema);
+      const body = await parseJsonBody(request, SendMessageBodySchema);
       const { conversationId: rawConversationId } = await routeContext.params;
       const conversationId = parseResourceId(rawConversationId);
       const value = MessageSchema.parse(
@@ -144,6 +153,8 @@ export const createUploadHandler = (
     if (!authenticated.ok) return authenticated.response;
     const originFailure = requireSameOrigin(request, authenticated.context, policy);
     if (originFailure !== null) return originFailure;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     const declaredLength = request.headers.get("content-length");
     if (declaredLength !== null && /^\d+$/u.test(declaredLength) && Number(declaredLength) > policy.maxUploadBodyBytes) {
       return problemResponse(problem(
@@ -193,6 +204,8 @@ export const createEventsHandler = (
   async (request, routeContext) => {
     const authenticated = await requireContext(request, policy);
     if (!authenticated.ok) return authenticated.response;
+    const queryFailure = requireEmptyQuery(request, authenticated.context);
+    if (queryFailure !== null) return queryFailure;
     const availableGateway = requireGateway(request, authenticated.context, gateway, "Hermes");
     if (availableGateway instanceof Response) return availableGateway;
     try {

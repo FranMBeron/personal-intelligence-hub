@@ -64,6 +64,30 @@ describe("system and preference route handlers", () => {
     expect(unavailable.status).toBe(503);
   });
 
+  it.each([
+    ["system status", "/api/ui/v1/system/status", "GET"],
+    ["preference read", "/api/ui/v1/preferences", "GET"],
+    ["preference update", "/api/ui/v1/preferences", "PATCH"],
+  ])("rejects unknown query parameters on %s before invoking the gateway", async (_name, path, method) => {
+    const status = vi.fn(async () => ({ sources: [sourceStatusFixture()] }));
+    const get = vi.fn(async () => preferences);
+    const patch = vi.fn(async () => preferences);
+    const handler = method === "GET" && path.endsWith("/system/status")
+      ? createSystemStatusHandler({ status } as unknown as SystemGateway, policy)
+      : method === "GET"
+        ? createGetPreferencesHandler({ get, patch } as unknown as PreferencesGateway, policy)
+        : createPatchPreferencesHandler({ get, patch } as unknown as PreferencesGateway, policy);
+    const response = await handler(new Request(`https://pih.example${path}?private=x`, {
+      method,
+      headers: headers(),
+      ...(method === "PATCH" ? { body: JSON.stringify({ timeZone: "UTC", expectedVersion: 4 }) } : {}),
+    }));
+    expect(response.status).toBe(422);
+    expect(status).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
+  });
+
   it("GET preferences is read-only and does not require Origin", async () => {
     const get = vi.fn(async () => preferences);
     const patch = vi.fn();

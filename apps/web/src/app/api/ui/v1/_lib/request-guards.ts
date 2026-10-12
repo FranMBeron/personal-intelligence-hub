@@ -96,6 +96,26 @@ export const requireContext = (
       : { ok: false, response: problemResponse(result.problem) },
   );
 
+export const requireEmptyQuery = (
+  request: Request,
+  context: RequestContext,
+): Response | null => {
+  const keys = [...new URL(request.url).searchParams.keys()];
+  if (keys.length === 0) return null;
+  return problemResponse(
+    validationProblem(
+      request,
+      context,
+      new ZodError([...new Set(keys)].map((key) => ({
+        code: "unrecognized_keys" as const,
+        keys: [key],
+        path: [],
+        message: "Unrecognized query parameter.",
+      }))),
+    ),
+  );
+};
+
 export const requireSameOrigin = (
   request: Request,
   context: RequestContext,

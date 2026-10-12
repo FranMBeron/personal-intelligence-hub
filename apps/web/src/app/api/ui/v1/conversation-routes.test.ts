@@ -87,6 +87,67 @@ describe("conversation, selection and delegation route handlers", () => {
     expect(resolveMainConversation).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      name: "conversation detail",
+      path: "/conversations/fictional?private=x",
+      method: "GET",
+      factory: createGetConversationHandler,
+      gateway: { getConversation: vi.fn(async () => conversationFixture()) },
+      paramName: "conversationId",
+    },
+    {
+      name: "conversation update",
+      path: "/conversations/fictional?private=x",
+      method: "PATCH",
+      factory: createUpdateConversationHandler,
+      gateway: { updateConversation: vi.fn(async () => conversationFixture()) },
+      paramName: "conversationId",
+      body: { title: "Renamed", expectedVersion: 1 },
+    },
+    {
+      name: "main conversation",
+      path: "/agents/fictional/main-conversation?private=x",
+      method: "PUT",
+      factory: createResolveMainConversationHandler,
+      gateway: { resolveMainConversation: vi.fn(async () => conversationFixture()) },
+      paramName: "agentId",
+    },
+    {
+      name: "selection read",
+      path: "/agents/fictional/conversation-selection?private=x",
+      method: "GET",
+      factory: createGetConversationSelectionHandler,
+      gateway: { getConversationSelection: vi.fn(async () => selectionFixture()) },
+      paramName: "agentId",
+    },
+    {
+      name: "selection write",
+      path: "/agents/fictional/conversation-selection?private=x",
+      method: "PUT",
+      factory: createSelectConversationHandler,
+      gateway: { selectConversation: vi.fn(async () => selectionFixture()) },
+      paramName: "agentId",
+      body: { conversationId: "fictional", expectedVersion: 1 },
+    },
+    {
+      name: "delegation detail",
+      path: "/delegations/fictional?private=x",
+      method: "GET",
+      factory: createGetDelegationHandler,
+      gateway: { getDelegation: vi.fn(async () => delegationFixture()) },
+      paramName: "delegationId",
+    },
+  ])("rejects an unsupported query on $name before invoking its gateway", async ({ path, method, factory, gateway, paramName, body }) => {
+    const handler = factory(gateway as unknown as HermesGateway, policy);
+    const urlPath = path.split("?")[0]!;
+    const response = method === "GET"
+      ? await handler(new Request("https://pih.example/api/ui/v1" + path, { headers: headers() }), params(paramName, "fictional"))
+      : await handler(jsonRequest(urlPath + "?private=x", method, body), params(paramName, "fictional"));
+    expect(response.status).toBe(422);
+    expect(Object.values(gateway).every((call) => !call.mock.calls.length)).toBe(true);
+  });
+
   it("reads message history with a strict page query", async () => {
     const history = vi.fn(async () => ({
       items: [],
@@ -158,7 +219,7 @@ describe("conversation, selection and delegation route handlers", () => {
     expect(updateConversation).not.toHaveBeenCalled();
   });
 
-  it("rejects malformed conversation bodies and unsupported query before gateway calls", async () => {
+  it("rejects malformed conversation bodies before gateway calls", async () => {
     const updateConversation = vi.fn();
     const handler = createUpdateConversationHandler({ updateConversation } as unknown as HermesGateway, policy);
     const malformed = await handler(jsonRequest("/conversations/fictional", "PATCH", { title: "", expectedVersion: 0 }), params("conversationId", "fictional"));
