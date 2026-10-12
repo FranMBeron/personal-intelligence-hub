@@ -10,6 +10,8 @@ type FoundationProblemCode = Extract<
   | "authentication_required"
   | "forbidden"
   | "rate_limit_exceeded"
+  | "validation_failed"
+  | "version_conflict"
   | "internal_error"
 >;
 
@@ -19,6 +21,14 @@ type ProblemDefinition = Readonly<{
 }>;
 
 const definitions: Readonly<Record<FoundationProblemCode, ProblemDefinition>> = {
+  validation_failed: {
+    title: "Validation failed",
+    detail: "The request body is invalid.",
+  },
+  version_conflict: {
+    title: "Version conflict",
+    detail: "The preferences changed since the supplied version.",
+  },
   authentication_required: {
     title: "Authentication required",
     detail: "Valid connector credentials are required.",
@@ -39,11 +49,11 @@ const definitions: Readonly<Record<FoundationProblemCode, ProblemDefinition>> = 
 
 export class ConnectorProblem extends Error {
   readonly code: Exclude<FoundationProblemCode, "internal_error">;
-  readonly status: 401 | 403 | 429;
+  readonly status: 400 | 401 | 403 | 409 | 429;
 
   constructor(
     code: Exclude<FoundationProblemCode, "internal_error">,
-    status: 401 | 403 | 429,
+    status: 400 | 401 | 403 | 409 | 429,
     message: string = code,
   ) {
     super(message);
@@ -53,14 +63,25 @@ export class ConnectorProblem extends Error {
   }
 }
 
+const isInvalidJsonBodyError = (error: unknown): boolean =>
+  error instanceof Error &&
+  "code" in error &&
+  (error.code === "FST_ERR_CTP_INVALID_JSON_BODY" ||
+    error.code === "FST_ERR_CTP_EMPTY_JSON_BODY");
+
 export const toConnectorProblem = (
   error: unknown,
   requestId: string,
   instance: string,
 ): ApiProblem => {
+  const invalidJsonBody = isInvalidJsonBodyError(error);
   const code: FoundationProblemCode =
-    error instanceof ConnectorProblem ? error.code : "internal_error";
-  const status = error instanceof ConnectorProblem ? error.status : 500;
+    error instanceof ConnectorProblem
+      ? error.code
+      : invalidJsonBody
+        ? "validation_failed"
+        : "internal_error";
+  const status = error instanceof ConnectorProblem ? error.status : invalidJsonBody ? 400 : 500;
   const definition = definitions[code];
   return {
     type: `https://pih.example/problems/${code.replaceAll("_", "-")}`,
