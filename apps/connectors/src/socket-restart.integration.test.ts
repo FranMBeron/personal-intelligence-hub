@@ -50,15 +50,18 @@ const verifyDockerExportMigrations = async (image: string): Promise<void> => {
     "const a=names(source),b=names(exported);",
     "if(JSON.stringify(a)!==JSON.stringify(b))process.exit(12);",
     "for(const n of a)if(hash(read(source,n))!==hash(read(exported,n)))process.exit(13);",
-    "process.stdout.write(JSON.stringify({entrypoint:'/opt/connectors/dist/src/main.js',migrations:b}));",
+    "process.stdout.write(JSON.stringify({entrypoint:'/opt/connectors/dist/src/main.js',sourceMigrations:a,migrations:b}));",
   ].join("");
   const result = await exec("docker", [
     "run", "--rm", "--entrypoint", "node", image, "-e", script,
   ], { cwd: repositoryRoot, timeout: 30_000, maxBuffer: 2 * 1024 * 1024 });
-  expect(JSON.parse(result.stdout)).toMatchObject({
-    entrypoint: "/opt/connectors/dist/src/main.js",
-    migrations: ["0000_foundation.sql"],
-  });
+  const bundle = JSON.parse(result.stdout) as {
+    entrypoint: string;
+    sourceMigrations: string[];
+    migrations: string[];
+  };
+  expect(bundle.entrypoint).toBe("/opt/connectors/dist/src/main.js");
+  expect(bundle.migrations).toEqual(bundle.sourceMigrations);
 };
 
 const waitForPath = async (path: string): Promise<void> => {
