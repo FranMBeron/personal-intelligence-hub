@@ -318,7 +318,13 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
       safeReasonCode: selectionMissing ? "calendar_selection_required" : "provider_temporarily_unavailable",
       updatedAt: this.#clock().toISOString(),
     };
-    await this.#database.transaction((db) => this.#repository.saveConnection(db, updated));
+    const updatedCurrent = await this.#database.transaction((db) =>
+      this.#repository.saveConnectionIfUnchanged(db, existing, updated),
+    );
+    if (!updatedCurrent) {
+      // The caller reads source status again after this failure path.
+      await this.#database.read((db) => this.#repository.getConnection(db, actorId));
+    }
   }
 
   async #exclusive<T>(actorId: string, action: () => Promise<T>): Promise<T> {

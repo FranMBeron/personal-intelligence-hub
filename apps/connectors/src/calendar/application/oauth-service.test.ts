@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CalendarRuntimeConfig } from "../config.js";
 import { openCalendarValue, sealCalendarValue, type CalendarKeyring } from "../crypto/envelope.js";
 import type { GoogleOAuthPort, GoogleTokenGrant } from "../ports/google-oauth.js";
-import { createCalendarRepository } from "../storage/calendar-repository.js";
+import { createCalendarRepository, type CalendarRepository } from "../storage/calendar-repository.js";
 import type { CalendarConnectionRecord, CalendarRecord } from "../storage/records.js";
 import { openConnectorDatabase, type ConnectorDatabase } from "../../foundation/database.js";
 import type { CalendarSourceStatus, DelegatedPrincipal } from "@personal-intelligence-hub/contracts";
@@ -100,6 +100,7 @@ const makeService = (
   overrides: {
     oauth?: Partial<GoogleOAuthPort>;
     bootstrap?: Partial<CalendarPrimaryBootstrap>;
+    repository?: CalendarRepository;
     tokenProvider?: Partial<GoogleAccessTokenProvider>;
   } = {},
 ) => {
@@ -120,7 +121,7 @@ const makeService = (
   };
   return {
     service: new CalendarOAuthServiceImpl({
-      database, repository, config, oauth, keyring, clock, bootstrap, tokenProvider,
+      database, repository: overrides.repository ?? repository, config, oauth, keyring, clock, bootstrap, tokenProvider,
     }),
     oauth, bootstrap, tokenProvider,
   };
@@ -293,6 +294,50 @@ describe("Calendar OAuth service", () => {
     await expect(service.callback(principal(), { code: "fictional-code", state }))
       .rejects.toThrow("calendar_oauth_required_scope_missing");
     await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toBeNull();
+  });
+
+  it("does not downgrade a concurrent invalid_grant during bootstrap failure persistence", async () => {
+    currentTime = now;
+    const database = await createDatabase();
+    await database.write((db) => repository.saveConnection(db, oldConnection()));
+    let markerWritten = false;
+    const writeInvalidGrantMarker = (db: Parameters<CalendarRepository["saveConnection"]>[0]) => {
+      if (markerWritten) return;
+      const current = repository.getConnection(db, actorId);
+      if (current === null) return;
+      markerWritten = true;
+      repository.saveConnection(db, {
+        ...current,
+        state: "requires_reauthorization",
+        safeReasonCode: "reauthorization_required",
+        updatedAt: "2026-10-12T12:01:00.000Z",
+      });
+    };
+    const racingRepository: CalendarRepository = {
+      ...repository,
+      saveConnection(db, connection) {
+        writeInvalidGrantMarker(db);
+        repository.saveConnection(db, connection);
+      },
+      saveConnectionIfUnchanged(db, expected, replacement) {
+        writeInvalidGrantMarker(db);
+        return repository.saveConnectionIfUnchanged(db, expected, replacement);
+      },
+    };
+    const { service } = makeService(database, {
+      repository: racingRepository,
+      bootstrap: { bootstrapPrimary: vi.fn(async () => { throw new Error("calendar_provider_temporarily_unavailable"); }) },
+    });
+    await expect(service.bootstrap(principal())).resolves.toMatchObject({
+      state: "requires_reauthorization",
+      safeReasonCode: "reauthorization_required",
+    });
+    expect(markerWritten).toBe(true);
+    await expect(database.read((db) => repository.getConnection(db, actorId)))
+      .resolves.toMatchObject({
+        state: "requires_reauthorization",
+        safeReasonCode: "reauthorization_required",
+      });
   });
 
   it("preserves reauthorization state when bootstrap cannot obtain a token", async () => {
