@@ -8,7 +8,7 @@
 
 ## 1. Purpose
 
-Personal Intelligence Hub (PIH) currently has a working Second Brain API, web application, private deployment, and macOS client. Hermes operates separately on Remote Station and already serves the private Central Telegram chat, but PIH has no operational bridge to it. Google Calendar is also intentionally unconfigured. As a result, the interface correctly reports those capabilities as unavailable.
+Personal Intelligence Hub (PIH) currently has a working Second Brain API, web application, private deployment, and macOS client. Hermes operates separately on the private server and already serves the private Central Telegram chat, but PIH has no operational bridge to it. Google Calendar is also intentionally unconfigured. As a result, the interface correctly reports those capabilities as unavailable.
 
 This change adds a generic, open-source integration boundary that each installation can configure privately. It must make the current PIH interface operational without moving personal configuration, credentials, conversation content, calendar content, or Telegram chat identifiers into the public repository.
 
@@ -47,6 +47,8 @@ PIH Web / Electron
 
 The public repository contains provider-neutral contracts, adapters, safe examples, migrations, tests, and deployment templates. Each installation supplies its own endpoints, profile registry, tokens, OAuth client, encryption key, calendar selection, Telegram chat IDs, and user identity outside Git.
 
+In the private-server deployment, connectors runs as an unprivileged host `systemd` service because Hermes remains bound to host `127.0.0.1`. Its BFF socket is `/run/pih-connectors/web/connectors.sock`; the web container receives only that `web` subdirectory read-only at `/run/pih-connectors` and joins a dedicated client group, so a recreated socket remains visible after service restarts. The agent-only delegation socket remains outside that mount at `/run/pih-connectors/hermes-delegation.sock`. No TCP port is published and Hermes is not exposed to the container bridge.
+
 ### 3.1 Why this service is separate
 
 - The Second Brain API remains responsible for tasks, boards, cards, relations, events, and audit history.
@@ -69,10 +71,12 @@ They do not share domain tables or join data. Tables and migrations use independ
 
 Every BFF-to-connectors call requires both:
 
-1. a service token identifying the BFF; and
+1. a service credential that maps to a configured service identity; and
 2. a short-lived signed delegated principal containing actor, audience, scopes, expiry, and request ID.
 
-Every endpoint validates resource ownership in addition to possession of an identifier. Upstream URLs come only from static private configuration. Provider errors are normalized before returning to the BFF.
+The service identity is derived from the validated token or issuer/key mapping, never from a self-asserted claim. One installation-wide audience, `personal-intelligence-hub-connectors`, is used consistently. Each configured service has an allowlist of delegated actor types and maximum scopes: the PIH web service may delegate verified humans; Central may delegate only its agent identity and cannot configure or confirm Calendar changes; Telegram has no Calendar scopes; the deployer can read readiness only.
+
+The web BFF authenticates the human through exactly one configured mode: OIDC validation or Tailscale LocalAPI identity lookup behind an allowlisted same-host proxy. Each mode fails closed; unverified identity headers are ignored. Every endpoint validates resource ownership in addition to possession of an identifier. Upstream URLs come only from static private configuration. Provider errors are normalized before returning to the BFF.
 
 Representative scopes:
 
@@ -93,7 +97,7 @@ Central may receive `calendar:read` and `calendar:propose`. It never receives `c
 
 ### 5.1 Profile registry
 
-Profiles are installation configuration. Remote Station initially publishes:
+Profiles are installation configuration. The reference private installation initially publishes:
 
 - Central;
 - Fitness;
@@ -101,7 +105,7 @@ Profiles are installation configuration. Remote Station initially publishes:
 
 The public product must support other names and profile sets. Each profile has its own Hermes API key and allowed capabilities. Hermes listens only on loopback; Electron and the browser never receive its keys or direct endpoint.
 
-Remote Station must enable multiplexing explicitly, keep a closed profile allowlist, bind the Hermes API server to `127.0.0.1`, and reject every profile outside the configured set. The bot token exists only in Central. Profile API keys, peer credentials, and the bot token are three different credential classes and are never reused.
+The private installation must enable multiplexing explicitly, keep a closed profile allowlist, bind the Hermes API server to `127.0.0.1`, and reject every profile outside the configured set. The bot token exists only in Central. Profile API keys, peer credentials, and the bot token are three different credential classes and are never reused.
 
 ### 5.2 Direct conversations
 
@@ -206,7 +210,7 @@ Each installation creates its own Google OAuth client. Minimum scopes:
 
 Do not request Calendar ACL, Drive, calendar creation, or the broad Calendar scope. Documentation must explain that Google projects in Testing can issue refresh tokens that expire after seven days for these scopes.
 
-Before production activation on Remote Station, the implementation must verify the exact HTTPS redirect URI with Google, document how a personal installation moves beyond Testing when required, and test reauthorization when Google does not return a replacement refresh token. The BFF owns the public callback route, but connectors owns `state`, the PKCE verifier, code exchange, token storage, and the final safe redirect back to **Sistema**. The BFF never receives the refresh token.
+Before production activation on the private server, the implementation must verify the exact HTTPS redirect URI with Google, document how a personal installation moves beyond Testing when required, and test reauthorization when Google does not return a replacement refresh token. The BFF owns the public callback route, but connectors owns `state`, the PKCE verifier, code exchange, token storage, and the final safe redirect back to **Sistema**. The BFF never receives the refresh token.
 
 OAuth lifecycle operations are explicit:
 
@@ -268,7 +272,7 @@ calendar_change_proposals
 calendar_change_audit
 ```
 
-Refresh tokens, PKCE verifier, Google subject, provider IDs, calendar names, event IDs, and complete proposal content are encrypted with AES-256-GCM and a versioned installation key. Access tokens remain in memory. Audit rows contain operation, actor, state, and timestamps without event content, guests, or tokens.
+Refresh tokens, PKCE verifier, the actor-bound primary calendar identifier, provider IDs, calendar names, event IDs, and complete proposal content are encrypted with AES-256-GCM and a versioned installation key. The integration does not request OpenID identity scopes solely to obtain a Google subject; the verified PIH actor and encrypted primary calendar identifier form the local account binding. Access tokens remain in memory. Audit rows contain operation, actor, state, and timestamps without event content, guests, or tokens.
 
 Calendar titles and descriptions are untrusted external data. They are size-limited, stripped of active markup, returned as structured fields, and never interpreted as system instructions.
 
@@ -369,9 +373,9 @@ Suggested installation paths:
 - service runs as an unprivileged dedicated user;
 - data directory mode `0700`, secret file mode `0600`;
 - SQLite WAL enabled;
-- encrypted backups included in the existing private backup policy through SQLite's online backup API or a controlled checkpoint and pause, never by copying only the main database file while WAL is active;
+- encrypted backups included in the existing Restic policy: SQLite's online backup API writes a mode-`0600` snapshot into a private staging directory, Restic encrypts and verifies it, and the plaintext staging file is removed; never copy only the main database file while WAL is active;
 - backup metadata includes schema migration and encryption-key version; restore is tested against a real snapshot;
-- the master key is backed up under a separate custody policy, with prior keys retained during rotation; a snapshot without the matching key is not considered restorable;
+- the Restic password and the connectors master key remain under separate custody from `connectors.env`, with prior application keys retained during rotation; a snapshot without the matching Restic and application keys is not considered restorable;
 - single-replica and serialized deployment documented;
 - disconnecting Calendar attempts provider revocation, erases local tokens and selection, invalidates proposals, and retains only sanitized audit rows;
 - logs contain request IDs and safe metadata, never prompts, event content, attachments, identifiers, tokens, or secrets.
@@ -389,7 +393,7 @@ The repository may include:
 
 It must not include:
 
-- Remote Station URLs or Tailscale identity;
+- private installation URLs or Tailscale identity;
 - Hermes API keys or profile secrets;
 - Google client secrets or tokens;
 - Telegram bot token, chat IDs, or user ID;
