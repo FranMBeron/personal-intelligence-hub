@@ -11,6 +11,8 @@ import type { ConnectorModule, ConnectorModuleDependencies } from "./foundation/
 import { preferencesConnectorModule } from "./preferences/routes.js";
 
 const BODY_LIMIT_BYTES = 1_048_576;
+// Source health checks are lightweight; one stalled adapter must not hold either endpoint.
+export const MODULE_STATUS_PROBE_TIMEOUT_MS = 1_000;
 
 export type ConnectorsAppDependencies = ConnectorModuleDependencies & Readonly<{
   modules: readonly ConnectorModule[];
@@ -43,13 +45,23 @@ const getSourceStatuses = async (
   dependencies: ConnectorModuleDependencies,
 ): Promise<readonly SourceStatus[]> => {
   const statuses = await Promise.all(modules.map(async (module) => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const candidate: unknown = await module.status(dependencies);
+      const probe = Promise.resolve().then(() => module.status(dependencies));
+      const timeoutError = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Connector module status probe timed out")),
+          MODULE_STATUS_PROBE_TIMEOUT_MS,
+        );
+      });
+      const candidate: unknown = await Promise.race([probe, timeoutError]);
       const parsed = SourceStatusSchema.parse(candidate);
       if (parsed.id !== module.name) throw new Error("Source ID mismatch");
       return parsed;
     } catch {
       return safeUnavailable(module.name, dependencies.clock.now());
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
     }
   }));
   return statuses.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);

@@ -1,5 +1,5 @@
 import { CONNECTORS_AUDIENCE, type ConnectorsConfig, type ServiceCredentialPolicy } from "./config/private.js";
-import { createConnectorsApp } from "./app.js";
+import { createConnectorsApp, MODULE_STATUS_PROBE_TIMEOUT_MS } from "./app.js";
 import type { ConnectorModule } from "./foundation/module.js";
 import { openConnectorDatabase } from "./foundation/database.js";
 import type { ConnectorDatabase } from "./foundation/database.js";
@@ -7,7 +7,7 @@ import { SignJWT } from "jose";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const web: ServiceCredentialPolicy = {
   serviceId: "pih-web", serviceToken: "test-only-web-credential-000000000000",
@@ -30,6 +30,8 @@ const databases: ConnectorDatabase[] = [];
 const directories: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   await Promise.all(apps.splice(0).map((app) => app.close()));
   await Promise.all(databases.splice(0).map((database) => database.close()));
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
@@ -90,6 +92,49 @@ describe("connectors app", () => {
     expect(response.json()).toEqual({ sources: [{ ...status("bad", "unavailable"), safeReasonCode: "probe_failed" }, { ...status("calendar", "unavailable"), safeReasonCode: "probe_failed" }, status("zeta")] });
     expect(response.body).not.toContain("private provider text");
     expect(response.body).not.toContain("private");
+  });
+
+  it("bounds hung module probes for status and readiness and clears probe timers", async () => {
+    const lateRejectors: ((reason?: unknown) => void)[] = [];
+    const app = await createApp([
+      makeModule("calendar", () => new Promise((_resolve, reject) => { lateRejectors.push(reject); })),
+      makeModule("healthy", async () => status("healthy")),
+    ]);
+    const statusHeaders = await headers(web, "human", "system:read");
+    const readinessHeaders = await headers(deployer, "service", "health:read");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const start = Date.now();
+      const response = await app.inject({ method: "GET", url: "/v1/system/status", headers: statusHeaders });
+      expect(Date.now() - start).toBeLessThan(MODULE_STATUS_PROBE_TIMEOUT_MS + 1_000);
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        sources: [
+          { ...status("calendar", "unavailable"), safeReasonCode: "probe_failed" },
+          status("healthy"),
+        ],
+      });
+      expect(response.body).not.toContain("private");
+
+      const readinessStart = Date.now();
+      const readiness = await app.inject({ method: "GET", url: "/health/ready", headers: readinessHeaders });
+      expect(Date.now() - readinessStart).toBeLessThan(MODULE_STATUS_PROBE_TIMEOUT_MS + 1_000);
+      expect(readiness.statusCode).toBe(503);
+      expect(readiness.json()).toEqual({
+        status: "not_ready", database: true, migrations: true, modules: false,
+      });
+      expect(clearTimeoutSpy.mock.calls.length).toBeGreaterThanOrEqual(4);
+
+      lateRejectors.forEach((reject) => reject(new Error("private late probe failure")));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+      expect(response.body).not.toContain("private late probe failure");
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   it("returns the generated request ID with errors and applies the fixed body limit", async () => {
