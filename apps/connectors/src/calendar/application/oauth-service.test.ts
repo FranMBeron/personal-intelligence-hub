@@ -295,6 +295,29 @@ describe("Calendar OAuth service", () => {
     await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toBeNull();
   });
 
+  it("preserves reauthorization state when bootstrap cannot obtain a token", async () => {
+    currentTime = now;
+    const database = await createDatabase();
+    await database.write((db) => repository.saveConnection(db, {
+      ...oldConnection(),
+      state: "requires_reauthorization",
+      safeReasonCode: "reauthorization_required",
+      lastSuccessAt: now.toISOString(),
+    }));
+    const { service } = makeService(database, {
+      tokenProvider: { getAccessToken: vi.fn(async () => { throw new Error("calendar_reauthorization_required"); }) },
+    });
+    await expect(service.bootstrap(principal())).resolves.toMatchObject({
+      state: "requires_reauthorization",
+      safeReasonCode: "reauthorization_required",
+    });
+    await expect(database.read((db) => repository.getConnection(db, actorId)))
+      .resolves.toMatchObject({
+        state: "requires_reauthorization",
+        safeReasonCode: "reauthorization_required",
+      });
+  });
+
   it("keeps a valid connection and returns attention when primary bootstrap fails", async () => {
     currentTime = now;
     const database = await createDatabase();

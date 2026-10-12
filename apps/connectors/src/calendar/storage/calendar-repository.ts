@@ -118,6 +118,11 @@ export interface CalendarRepository {
   markOAuthAuthorizationCompleted(database: SqliteHandle, stateHash: string, completedAt: string): void;
   getConnection(database: SqliteHandle, actorId: string): CalendarConnectionRecord | null;
   saveConnection(database: SqliteHandle, connection: CalendarConnectionRecord): void;
+  saveConnectionIfUnchanged(
+    database: SqliteHandle,
+    expected: CalendarConnectionRecord,
+    replacement: CalendarConnectionRecord,
+  ): boolean;
   replaceConnectionAuthorization(database: SqliteHandle, connection: CalendarConnectionRecord): void;
   deleteConnection(database: SqliteHandle, actorId: string): void;
   listCalendars(database: SqliteHandle, actorId: string): readonly CalendarRecord[];
@@ -175,6 +180,39 @@ export const createCalendarRepository = (): CalendarRepository => ({
       createdAt: connection.createdAt, updatedAt: connection.updatedAt,
     });
     requireChanges(result.changes);
+  },
+  saveConnectionIfUnchanged(database, expected, replacement) {
+    if (expected.actorId !== replacement.actorId) return false;
+    const result = database.prepare(
+      "UPDATE calendar_connections SET state = :state, refresh_token_ciphertext = :refreshTokenCiphertext, " +
+      "primary_calendar_binding_ciphertext = :primaryCalendarBindingCiphertext, granted_scopes_json = :grantedScopesJson, " +
+      "selection_version = :selectionVersion, last_success_at = :lastSuccessAt, safe_reason_code = :safeReasonCode, updated_at = :updatedAt " +
+      "WHERE actor_id = :actorId AND state = :expectedState AND refresh_token_ciphertext = :expectedRefreshTokenCiphertext " +
+      "AND primary_calendar_binding_ciphertext IS :expectedPrimaryCalendarBindingCiphertext " +
+      "AND granted_scopes_json = :expectedGrantedScopesJson AND selection_version = :expectedSelectionVersion " +
+      "AND last_success_at IS :expectedLastSuccessAt AND safe_reason_code IS :expectedSafeReasonCode " +
+      "AND created_at = :expectedCreatedAt AND updated_at = :expectedUpdatedAt",
+    ).run({
+      actorId: expected.actorId,
+      state: replacement.state,
+      refreshTokenCiphertext: replacement.refreshTokenCiphertext,
+      primaryCalendarBindingCiphertext: replacement.primaryCalendarBindingCiphertext ?? null,
+      grantedScopesJson: JSON.stringify(replacement.grantedScopes),
+      selectionVersion: replacement.selectionVersion,
+      lastSuccessAt: replacement.lastSuccessAt ?? null,
+      safeReasonCode: replacement.safeReasonCode ?? null,
+      updatedAt: replacement.updatedAt,
+      expectedState: expected.state,
+      expectedRefreshTokenCiphertext: expected.refreshTokenCiphertext,
+      expectedPrimaryCalendarBindingCiphertext: expected.primaryCalendarBindingCiphertext ?? null,
+      expectedGrantedScopesJson: JSON.stringify(expected.grantedScopes),
+      expectedSelectionVersion: expected.selectionVersion,
+      expectedLastSuccessAt: expected.lastSuccessAt ?? null,
+      expectedSafeReasonCode: expected.safeReasonCode ?? null,
+      expectedCreatedAt: expected.createdAt,
+      expectedUpdatedAt: expected.updatedAt,
+    });
+    return result.changes === 1;
   },
   replaceConnectionAuthorization(database, connection) {
     database.prepare("DELETE FROM calendar_idempotency WHERE actor_id = :actorId").run({ actorId: connection.actorId });

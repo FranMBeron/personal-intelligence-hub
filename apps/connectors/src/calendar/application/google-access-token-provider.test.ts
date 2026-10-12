@@ -182,6 +182,57 @@ describe("Google access token provider", () => {
       .resolves.toMatchObject({ state: "requires_reauthorization", safeReasonCode: "reauthorization_required" });
   });
 
+  it("does not recreate credentials when disconnect races a refresh", async () => {
+    currentTime = now;
+    const database = await createDatabase();
+    await seed(database);
+    let begin!: () => void;
+    const started = new Promise<void>((resolve) => { begin = resolve; });
+    let release!: (value: GoogleTokenGrant) => void;
+    const waitForGrant = new Promise<GoogleTokenGrant>((resolve) => { release = resolve; });
+    const oauth: GoogleOAuthPort = {
+      exchangeAuthorizationCode: vi.fn(),
+      refreshAccessToken: vi.fn(() => { begin(); return waitForGrant; }),
+      revokeToken: vi.fn(),
+    };
+    const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
+    const pending = provider.getAccessToken(actorId);
+    await started;
+    provider.invalidate(actorId);
+    await database.transaction((db) => repositories.deleteConnection(db, actorId));
+    release(grant());
+    await expect(pending).rejects.toThrow("calendar_access_token_invalidated");
+    await expect(database.read((db) => repositories.getConnection(db, actorId))).resolves.toBeNull();
+  });
+
+  it("does not overwrite callback credentials when reauthorization races a refresh", async () => {
+    currentTime = now;
+    const database = await createDatabase();
+    await seed(database);
+    let begin!: () => void;
+    const started = new Promise<void>((resolve) => { begin = resolve; });
+    let release!: (value: GoogleTokenGrant) => void;
+    const waitForGrant = new Promise<GoogleTokenGrant>((resolve) => { release = resolve; });
+    const oauth: GoogleOAuthPort = {
+      exchangeAuthorizationCode: vi.fn(),
+      refreshAccessToken: vi.fn(() => { begin(); return waitForGrant; }),
+      revokeToken: vi.fn(),
+    };
+    const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
+    const pending = provider.getAccessToken(actorId);
+    await started;
+    const replacement = connection({
+      refreshTokenCiphertext: sealCalendarValue("fictional-callback-refresh-token", `calendar_connections:${actorId}:refresh`, keyring),
+      updatedAt: "2026-10-12T12:01:00.000Z",
+    });
+    provider.invalidate(actorId);
+    await database.transaction((db) => repositories.replaceConnectionAuthorization(db, replacement));
+    release(grant());
+    await expect(pending).rejects.toThrow("calendar_access_token_invalidated");
+    await expect(database.read((db) => repositories.getConnection(db, actorId)))
+      .resolves.toMatchObject({ refreshTokenCiphertext: replacement.refreshTokenCiphertext });
+  });
+
   it("invalidates the actor cache explicitly", async () => {
     currentTime = now;
     const database = await createDatabase();

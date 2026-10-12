@@ -306,7 +306,11 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
 
   async #recordBootstrapFailure(actorId: string): Promise<void> {
     const existing = await this.#database.read((db) => this.#repository.getConnection(db, actorId));
-    if (existing === null) return;
+    if (
+      existing === null ||
+      existing.state === "requires_reauthorization" ||
+      existing.safeReasonCode === "reauthorization_required"
+    ) return;
     const selectionMissing = existing.primaryCalendarBindingCiphertext === undefined;
     const updated: CalendarConnectionRecord = {
       ...existing,
