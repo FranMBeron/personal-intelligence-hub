@@ -9,6 +9,12 @@
       "development": "./src/index.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./testing/connectors": {
+      "types": "./src/testing/connectors.ts",
+      "development": "./src/testing/connectors.ts",
+      "import": "./dist/testing/connectors.js",
+      "default": "./dist/testing/connectors.js"
     }
   },
   "files": [
