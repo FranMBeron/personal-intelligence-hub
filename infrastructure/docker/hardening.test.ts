@@ -88,6 +88,13 @@ describe.each(["api", "web"])("%s runtime image", (application) => {
     expect(dockerfile).toContain("USER node");
     expect(dockerfile).not.toMatch(/COPY --from=build[^\n]*\/workspace\s+\/app/);
   });
+
+  it("refreshes vulnerable Alpine runtime libraries with reviewed exact versions", async () => {
+    const dockerfile = await read(`infrastructure/docker/${application}.Dockerfile`);
+    const runtime = dockerfile.split("AS runtime")[1];
+    expect(runtime).toMatch(/apk add --no-cache[^\n]*libcrypto3=3\.5\.9-r0[^\n]*libssl3=3\.5\.9-r0[^\n]*zlib=1\.3\.2-r1/);
+    expect(runtime).not.toContain("apk upgrade");
+  });
 });
 
 describe("Docker build context", () => {
