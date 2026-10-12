@@ -89,3 +89,75 @@ describe("loadServerConfig", () => {
     ).toThrow(/origin without a path/u);
   });
 });
+
+describe("private connector configuration", () => {
+  const oidcEnvironment = {
+    CONNECTORS_ENABLED: "true",
+    CONNECTORS_SERVICE_TOKEN: "fictional-connectors-service-token",
+    CONNECTORS_DELEGATED_JWT_KEY: "fictional-connectors-delegated-key-at-least-32-bytes",
+    CONNECTORS_HUMAN_AUTH_MODE: "oidc",
+    CONNECTORS_OIDC_ISSUER: "https://identity.example.test/",
+    CONNECTORS_OIDC_AUDIENCE: "fictional-web-audience",
+    CONNECTORS_OIDC_JWKS_URI: "https://identity.example.test/jwks",
+  };
+
+  it("does not enable connectors or select a default socket unless explicitly enabled", () => {
+    expect(loadServerConfig({})).not.toHaveProperty("connectors");
+  });
+
+  it("loads the complete OIDC mode and defaults only its private Unix socket", () => {
+    expect(loadServerConfig(oidcEnvironment).connectors).toEqual({
+      socketPath: "/run/pih-connectors/connectors.sock",
+      serviceToken: "fictional-connectors-service-token",
+      delegatedJwtKey: "fictional-connectors-delegated-key-at-least-32-bytes",
+      humanAuthMode: "oidc",
+      oidc: {
+        issuer: "https://identity.example.test/",
+        audience: "fictional-web-audience",
+        jwksUri: "https://identity.example.test/jwks",
+      },
+    });
+  });
+
+  it("loads only the selected Tailscale LocalAPI configuration", () => {
+    expect(loadServerConfig({
+      CONNECTORS_ENABLED: "true",
+      CONNECTORS_SERVICE_TOKEN: "fictional-connectors-service-token",
+      CONNECTORS_DELEGATED_JWT_KEY: "fictional-connectors-delegated-key-at-least-32-bytes",
+      CONNECTORS_HUMAN_AUTH_MODE: "tailscale-localapi",
+      CONNECTORS_SOCKET_PATH: "/run/pih-connectors/connectors.sock",
+      CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR: "172.30.0.0/16",
+      CONNECTORS_TAILSCALE_LOCALAPI_SOCKET: "/var/run/tailscale/tailscaled.sock",
+      CONNECTORS_TAILSCALE_ALLOWED_USERS: "allowed@example.test=a03f7492-09f0-4e8f-95d0-12b7c616aaea",
+    }).connectors).toMatchObject({
+      humanAuthMode: "tailscale-localapi",
+      tailscale: {
+        trustedProxyCidr: "172.30.0.0/16",
+        localApiSocketPath: "/var/run/tailscale/tailscaled.sock",
+        allowedUsers: {
+          "allowed@example.test": "a03f7492-09f0-4e8f-95d0-12b7c616aaea",
+        },
+      },
+    });
+  });
+
+  it.each([
+    { CONNECTORS_ENABLED: "true" },
+    { ...oidcEnvironment, CONNECTORS_OIDC_JWKS_URI: undefined },
+    { ...oidcEnvironment, CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR: "172.30.0.0/16" },
+    { ...oidcEnvironment, CONNECTORS_SOCKET_PATH: "relative.sock" },
+    { ...oidcEnvironment, CONNECTORS_OIDC_JWKS_URI: "http://identity.example.test/jwks" },
+    {
+      ...oidcEnvironment,
+      PIH_INTERNAL_AUTH_KEY: "fictional-connectors-delegated-key-at-least-32-bytes",
+    },
+  ])("rejects partial, mixed-mode, or unsafe connector configuration", (environment) => {
+    expect(() => loadServerConfig(environment)).toThrow();
+  });
+
+  it("rejects connector settings when the installation has not enabled connectors", () => {
+    expect(() => loadServerConfig({
+      CONNECTORS_SERVICE_TOKEN: "fictional-connectors-service-token",
+    })).toThrow();
+  });
+});

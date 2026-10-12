@@ -1,9 +1,15 @@
 import "server-only";
 
+import { isIP } from "node:net";
+import { isAbsolute } from "node:path";
+
 import { z } from "zod";
+
+import { UuidSchema } from "@personal-intelligence-hub/contracts";
 
 const defaultApiInternalUrl = "http://127.0.0.1:3001";
 const defaultPublicOrigin = "http://127.0.0.1:3000";
+const defaultConnectorsSocketPath = "/run/pih-connectors/connectors.sock";
 
 const parseAllowedUsers = (
   value: string | undefined,
@@ -20,6 +26,26 @@ const parseAllowedUsers = (
       throw new Error("TAILSCALE_ALLOWED_USERS contains a duplicate login.");
     }
     result[login] = entry.slice(separator + 1);
+  }
+  return result;
+};
+
+const parseConnectorsAllowedUsers = (
+  value: string | undefined,
+): Record<string, string> | undefined => {
+  if (value === undefined) return undefined;
+  const result: Record<string, string> = {};
+  for (const entry of value.split(",")) {
+    const separator = entry.indexOf("=");
+    if (separator <= 0 || separator === entry.length - 1) {
+      throw new Error("CONNECTORS_TAILSCALE_ALLOWED_USERS must contain login=actor-uuid entries.");
+    }
+    const login = entry.slice(0, separator).toLowerCase();
+    const actorId = entry.slice(separator + 1);
+    if (Object.hasOwn(result, login) || !UuidSchema.safeParse(actorId).success) {
+      throw new Error("CONNECTORS_TAILSCALE_ALLOWED_USERS contains an invalid mapping.");
+    }
+    result[login] = actorId;
   }
   return result;
 };
@@ -44,6 +70,149 @@ const uncredentialedHttpUrl = z
   })
   .transform((value) => new URL(value).toString());
 
+const httpsUrl = z.string().min(1).superRefine((value, context) => {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    context.addIssue({ code: "custom", message: "Expected a valid HTTPS URL." });
+    return;
+  }
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "") {
+    context.addIssue({ code: "custom", message: "Expected an uncredentialed HTTPS URL." });
+  }
+}).transform((value) => new URL(value).toString());
+
+const privateSocketPath = z.string().min(1).superRefine((value, context) => {
+  if (!isAbsolute(value) || !value.endsWith(".sock") || value.includes("\0")) {
+    context.addIssue({ code: "custom", message: "Expected an absolute Unix socket path." });
+  }
+});
+
+const trustedProxyCidr = z.string().superRefine((value, context) => {
+  const [address, prefix, extra] = value.split("/");
+  const family = address === undefined ? 0 : isIP(address);
+  const bits = prefix === undefined ? Number.NaN : Number(prefix);
+  if (
+    extra !== undefined ||
+    family === 0 ||
+    prefix === undefined ||
+    !/^\d+$/u.test(prefix) ||
+    !Number.isInteger(bits) ||
+    bits < 0 ||
+    bits > (family === 4 ? 32 : 128)
+  ) {
+    context.addIssue({ code: "custom", message: "Expected an IP CIDR for the trusted proxy." });
+  }
+});
+
+const connectorAllowedUsersSchema = z.record(z.string().min(1), z.uuid()).refine(
+  (value) => Object.keys(value).length > 0,
+  "At least one Tailscale user mapping is required.",
+);
+
+const ConnectorsConfigSchema = z.discriminatedUnion("humanAuthMode", [
+  z.object({
+    socketPath: privateSocketPath,
+    serviceToken: z.string().min(32),
+    delegatedJwtKey: z.string().min(32),
+    humanAuthMode: z.literal("oidc"),
+    oidc: z.object({
+      issuer: httpsUrl,
+      audience: z.string().min(1),
+      jwksUri: httpsUrl,
+    }).strict(),
+  }).strict(),
+  z.object({
+    socketPath: privateSocketPath,
+    serviceToken: z.string().min(32),
+    delegatedJwtKey: z.string().min(32),
+    humanAuthMode: z.literal("tailscale-localapi"),
+    tailscale: z.object({
+      trustedProxyCidr,
+      localApiSocketPath: privateSocketPath,
+      allowedUsers: connectorAllowedUsersSchema,
+    }).strict(),
+  }).strict(),
+]);
+
+export type HumanAuthMode = "tailscale-localapi" | "oidc";
+export type ConnectorsConfig = z.infer<typeof ConnectorsConfigSchema>;
+
+const connectorEnvironmentKeys = [
+  "CONNECTORS_SOCKET_PATH",
+  "CONNECTORS_SERVICE_TOKEN",
+  "CONNECTORS_DELEGATED_JWT_KEY",
+  "CONNECTORS_HUMAN_AUTH_MODE",
+  "CONNECTORS_OIDC_ISSUER",
+  "CONNECTORS_OIDC_AUDIENCE",
+  "CONNECTORS_OIDC_JWKS_URI",
+  "CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR",
+  "CONNECTORS_TAILSCALE_LOCALAPI_SOCKET",
+  "CONNECTORS_TAILSCALE_ALLOWED_USERS",
+] as const;
+
+type Environment = Readonly<Record<string, string | undefined>>;
+
+const loadConnectorsConfig = (environment: Environment): ConnectorsConfig | undefined => {
+  const hasSettings = connectorEnvironmentKeys.some((key) => environment[key] !== undefined);
+  const enabled = environment.CONNECTORS_ENABLED;
+  if (enabled === undefined) {
+    if (hasSettings) throw new Error("Connector settings require CONNECTORS_ENABLED=true.");
+    return undefined;
+  }
+  if (enabled !== "true" && enabled !== "false") {
+    throw new Error("CONNECTORS_ENABLED must be true or false.");
+  }
+  if (enabled === "false") {
+    if (hasSettings) throw new Error("Connector settings cannot be supplied while connectors are disabled.");
+    return undefined;
+  }
+
+  const humanAuthMode = environment.CONNECTORS_HUMAN_AUTH_MODE;
+  if (humanAuthMode !== "oidc" && humanAuthMode !== "tailscale-localapi") {
+    throw new Error("CONNECTORS_HUMAN_AUTH_MODE must select exactly one supported mode.");
+  }
+  const hasOidcSettings = [
+    environment.CONNECTORS_OIDC_ISSUER,
+    environment.CONNECTORS_OIDC_AUDIENCE,
+    environment.CONNECTORS_OIDC_JWKS_URI,
+  ].some((value) => value !== undefined);
+  const hasTailscaleSettings = [
+    environment.CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR,
+    environment.CONNECTORS_TAILSCALE_LOCALAPI_SOCKET,
+    environment.CONNECTORS_TAILSCALE_ALLOWED_USERS,
+  ].some((value) => value !== undefined);
+  if ((humanAuthMode === "oidc" && hasTailscaleSettings) || (humanAuthMode === "tailscale-localapi" && hasOidcSettings)) {
+    throw new Error("Connector human-auth settings cannot mix modes.");
+  }
+
+  const common = {
+    socketPath: environment.CONNECTORS_SOCKET_PATH ?? defaultConnectorsSocketPath,
+    serviceToken: environment.CONNECTORS_SERVICE_TOKEN,
+    delegatedJwtKey: environment.CONNECTORS_DELEGATED_JWT_KEY,
+    humanAuthMode,
+  };
+  if (humanAuthMode === "oidc") {
+    return ConnectorsConfigSchema.parse({
+      ...common,
+      oidc: {
+        issuer: environment.CONNECTORS_OIDC_ISSUER,
+        audience: environment.CONNECTORS_OIDC_AUDIENCE,
+        jwksUri: environment.CONNECTORS_OIDC_JWKS_URI,
+      },
+    });
+  }
+  return ConnectorsConfigSchema.parse({
+    ...common,
+    tailscale: {
+      trustedProxyCidr: environment.CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR,
+      localApiSocketPath: environment.CONNECTORS_TAILSCALE_LOCALAPI_SOCKET,
+      allowedUsers: parseConnectorsAllowedUsers(environment.CONNECTORS_TAILSCALE_ALLOWED_USERS),
+    },
+  });
+};
+
 const ServerConfigSchema = z
   .object({
     authMode: z.enum(["oidc", "tailscale"]),
@@ -56,11 +225,7 @@ const ServerConfigSchema = z
     pihApiInternalUrl: uncredentialedHttpUrl,
     publicOrigin: uncredentialedHttpUrl.transform((value, context) => {
       const url = new URL(value);
-      if (
-        url.pathname !== "/" ||
-        url.search !== "" ||
-        url.hash !== ""
-      ) {
+      if (url.pathname !== "/" || url.search !== "" || url.hash !== "") {
         context.addIssue({
           code: "custom",
           message: "Expected an origin without a path, query, or fragment.",
@@ -97,12 +262,14 @@ const ServerConfigSchema = z
     }
   });
 
-export type ServerConfig = z.infer<typeof ServerConfigSchema>;
+export type ServerConfig = z.infer<typeof ServerConfigSchema> & Readonly<{
+  connectors?: ConnectorsConfig;
+}>;
 
 export const loadServerConfig = (
-  environment: Readonly<Record<string, string | undefined>> = process.env,
-): ServerConfig =>
-  ServerConfigSchema.parse({
+  environment: Environment = process.env,
+): ServerConfig => {
+  const existing = ServerConfigSchema.parse({
     authMode: environment.AUTH_MODE ?? "oidc",
     internalAuthKey: environment.PIH_INTERNAL_AUTH_KEY,
     tailscaleAllowedUsers: parseAllowedUsers(environment.TAILSCALE_ALLOWED_USERS),
@@ -123,5 +290,12 @@ export const loadServerConfig = (
     hermesServiceToken: environment.HERMES_SERVICE_TOKEN,
     hermesDashboardUrl: environment.HERMES_DASHBOARD_URL,
   });
+  const connectors = loadConnectorsConfig(environment);
+  if (connectors === undefined) return existing;
+  if (connectors.delegatedJwtKey === environment.PIH_INTERNAL_AUTH_KEY) {
+    throw new Error("The connectors delegated JWT key must be distinct from the Second Brain key.");
+  }
+  return { ...existing, connectors };
+};
 
 export const serverConfig = Object.freeze(loadServerConfig());

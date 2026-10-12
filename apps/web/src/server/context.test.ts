@@ -87,3 +87,57 @@ describe("deriveRequestContext", () => {
     ).toMatchObject({ ok: true, context: { requestId: generatedRequestId } });
   });
 });
+
+
+describe("verified connector principal in request context", () => {
+  it("preserves a principal only when a verifier explicitly returns one", async () => {
+    const principal = {
+      actorId: "a03f7492-09f0-4e8f-95d0-12b7c616aaea",
+      subject: "fictional-oidc-subject",
+      actorType: "human" as const,
+    };
+    const identity = {
+      resolve: async () => ({
+        ok: true as const,
+        authorization: "Bearer unchanged-second-brain-authorization",
+        concurrencyKey: "test:principal",
+        principal,
+      }),
+    };
+
+    await expect(deriveRequestContext(new Headers({
+      authorization: "Bearer unchanged-second-brain-authorization",
+      "tailscale-user-login": "spoofed@example.test",
+    }), () => generatedRequestId, identity)).resolves.toEqual({
+      ok: true,
+      context: {
+        authorization: "Bearer unchanged-second-brain-authorization",
+        concurrencyKey: "test:principal",
+        requestId: generatedRequestId,
+        principal,
+      },
+    });
+  });
+
+  it("does not turn a syntactically valid bearer or identity header into a principal", async () => {
+    const identity = {
+      resolve: async () => ({
+        ok: true as const,
+        authorization: "Bearer unverified-payload",
+        concurrencyKey: "oidc:unverified",
+      }),
+    };
+    await expect(deriveRequestContext(new Headers({
+      authorization: "Bearer unverified-payload",
+      "tailscale-user-login": "attacker@example.test",
+      "x-forwarded-user": "attacker@example.test",
+    }), () => generatedRequestId, identity)).resolves.toEqual({
+      ok: true,
+      context: {
+        authorization: "Bearer unverified-payload",
+        concurrencyKey: "oidc:unverified",
+        requestId: generatedRequestId,
+      },
+    });
+  });
+});
