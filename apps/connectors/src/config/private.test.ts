@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONNECTORS_AUDIENCE,
   loadConnectorsConfig,
+  type ServiceCredentialPolicy,
 } from "./private.js";
 
 const SERVICE_IDS = [
@@ -155,6 +156,26 @@ describe("private connector configuration", () => {
     expect(config.defaultTimeZone).toBe(
       "America/Argentina/Buenos_Aires",
     );
+  });
+
+  it("keeps the closed credential collection structurally immutable", () => {
+    const config = loadConnectorsConfig(validEnvironment());
+    const credentials = config.serviceCredentials as ServiceCredentialPolicy[];
+
+    expect(Object.isFrozen(credentials)).toBe(true);
+    expect(() => credentials.pop()).toThrow();
+    expect(config.serviceCredentials).toHaveLength(4);
+  });
+
+  it("returns defensive copies of delegated key bytes", () => {
+    const config = loadConnectorsConfig(validEnvironment());
+    const credential = config.serviceCredentials[0]!;
+    const exposedKey = credential.delegatedKey;
+
+    exposedKey[0] = 255;
+
+    expect(credential.delegatedKey[0]).toBe(1);
+    expect(credential.delegatedKey).not.toBe(exposedKey);
   });
 
   it("rejects TCP transport in production", () => {

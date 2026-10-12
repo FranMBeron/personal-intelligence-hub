@@ -158,7 +158,13 @@ describe("provider configuration namespaces", () => {
     expect(Object.hasOwn(config, "fictional")).toBe(false);
   });
 
-  it.each(["transport", "databasePath", "__proto__"])(
+  it.each([
+    "transport",
+    "databasePath",
+    "__proto__",
+    "constructor",
+    "prototype",
+  ])(
     "rejects the unsafe provider namespace %s",
     (name) => {
       const namespace = providerNamespace(

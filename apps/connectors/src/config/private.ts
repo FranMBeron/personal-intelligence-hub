@@ -90,13 +90,15 @@ const SERVICE_CEILINGS = {
   }
 >;
 
-const BASE_CONFIG_FIELDS = new Set([
+const RESERVED_PROVIDER_NAMES = new Set([
   "transport",
   "databasePath",
   "serviceCredentials",
   "audience",
   "defaultTimeZone",
   "logLevel",
+  ...Object.getOwnPropertyNames(Object.prototype),
+  "prototype",
 ]);
 
 const DelegatedKeySchema = z
@@ -220,7 +222,7 @@ const parseCredentials = (
     credentials.map((credential) => [credential.serviceId, credential]),
   );
 
-  return SERVICE_IDS.map((serviceId) => {
+  return Object.freeze(SERVICE_IDS.map((serviceId) => {
     const credential = byService.get(serviceId);
     if (credential === undefined) {
       throw new Error("Missing credential for " + serviceId);
@@ -241,14 +243,20 @@ const parseCredentials = (
       throw new Error("Credential policy exceeds the ceiling for " + serviceId);
     }
 
+    const delegatedKey = new Uint8Array(credential.delegatedKey);
     return Object.freeze({
-      ...credential,
+      serviceId: credential.serviceId,
+      serviceToken: credential.serviceToken,
+      delegatedIssuer: credential.delegatedIssuer,
+      get delegatedKey() {
+        return new Uint8Array(delegatedKey);
+      },
       actorTypes: Object.freeze([...credential.actorTypes]),
       maxScopes: Object.freeze(
         credential.maxScopes.filter((scope) => allowedScopes.has(scope)),
       ),
     });
-  });
+  }));
 };
 
 const parseTimeZone = (
@@ -304,7 +312,10 @@ const validateNamespaces = (
     "provider namespace",
   );
   for (const { name } of namespaces) {
-    if (!/^[a-z][a-z0-9-]*$/.test(name) || BASE_CONFIG_FIELDS.has(name)) {
+    if (
+      !/^[a-z][a-z0-9-]*$/.test(name) ||
+      RESERVED_PROVIDER_NAMES.has(name)
+    ) {
       throw new Error("Unsafe provider namespace: " + name);
     }
   }
