@@ -197,3 +197,29 @@ fi
     ).rejects.toMatchObject({ code: 2 });
   });
 });
+
+describe("connectors host configuration examples", () => {
+  it("keeps required private connector values blank and uses only safe defaults", async () => {
+    const example = await readFile(
+      `${repositoryRoot}/infrastructure/operations/config/connectors.env.example`,
+      "utf8",
+    );
+    const values = new Map(
+      example.split(/\r?\n/u)
+        .filter((line) => /^[A-Z0-9_]+=/.test(line))
+        .map((line) => {
+          const separator = line.indexOf("=");
+          return [line.slice(0, separator), line.slice(separator + 1)];
+        }),
+    );
+    expect(values.get("NODE_ENV")).toBe("production");
+    expect(values.get("CONNECTORS_SOCKET_PATH")).toBe("/run/pih-connectors/web/connectors.sock");
+    expect(values.get("CONNECTORS_SOCKET_GID")).toBe("");
+    expect(values.get("CONNECTORS_DATABASE_PATH")).toBe("/var/lib/pih-connectors/connectors.sqlite");
+    expect(values.get("CONNECTORS_SERVICE_CREDENTIALS_JSON")).toBe("");
+    expect(values.get("DEFAULT_TIME_ZONE")).toBe("Etc/UTC");
+    expect(values.get("LOG_LEVEL")).toBe("info");
+    expect(example).toContain("getent group pih-connectors-clients");
+    expect(example).toContain("generated directly into the private installation file");
+  });
+});

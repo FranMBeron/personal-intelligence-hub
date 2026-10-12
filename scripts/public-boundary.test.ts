@@ -434,3 +434,19 @@ describe("public repository boundary", () => {
     }
   });
 });
+
+describe("connectors environment example boundary", () => {
+  it("tracks only safe defaults and no installation-specific identity", async () => {
+    const path = "infrastructure/operations/config/connectors.env.example";
+    const inventory = await repositoryPaths(repositoryRoot);
+    expect(inventory.publicPaths).toContain(path);
+    expect(await fileBoundaryViolations(repositoryRoot)).not.toContain(path);
+    expect(await privateIdentityViolations(repositoryRoot)).not.toContain(path);
+
+    const example = await readFile(join(repositoryRoot, path), "utf8");
+    expect(example).toContain("CONNECTORS_SOCKET_PATH=/run/pih-connectors/web/connectors.sock");
+    expect(example).toContain("DEFAULT_TIME_ZONE=Etc/UTC");
+    expect(example).not.toContain("remote-station");
+    expect(example).not.toContain("/home/franmb");
+  });
+});

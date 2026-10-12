@@ -174,6 +174,10 @@ services:
       options:
         max-size: 10m
         max-file: "3"
+    group_add:
+      - "${PIH_CONNECTORS_CLIENT_GID:?required}"
+    volumes:
+      - ${PIH_CONNECTORS_SOCKET_SOURCE:-/run/pih-connectors/web}:/run/pih-connectors:ro
     networks:
       - edge
 

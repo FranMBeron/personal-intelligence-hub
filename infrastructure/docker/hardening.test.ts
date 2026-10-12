@@ -10,6 +10,7 @@ type Service = {
   cap_drop?: string[];
   cpus?: number | string;
   image?: string;
+  group_add?: string[];
   mem_limit?: string;
   pids_limit?: number;
   ports?: string[];
@@ -143,5 +144,60 @@ describe("Docker build context", () => {
     expect(dockerignore).toMatch(/^\.local-docs$/m);
     expect(dockerignore).toMatch(/^\.env\.\*$/m);
     expect(dockerignore).toMatch(/^secrets$/m);
+  });
+});
+
+describe("private connectors host bundle", () => {
+  it("mounts only the recreated BFF socket directory into web", async () => {
+    const { services } = await readCompose("infrastructure/docker/compose.production.yaml");
+    const web = services.web;
+    expect(web?.volumes).toContain("/run/pih-connectors/web:/run/pih-connectors:ro");
+    expect(web?.group_add).toContain("${PIH_CONNECTORS_CLIENT_GID:?required}");
+    expect(JSON.stringify(web?.volumes)).not.toContain("connectors.sock:");
+    expect(JSON.stringify(web?.volumes)).not.toContain("/run/pih-connectors:/run/pih-connectors:ro");
+    expect(JSON.stringify(web?.volumes)).not.toContain("hermes-delegation.sock");
+    expect(JSON.stringify(services)).not.toContain("3010:3010");
+  });
+
+  it("configures the local web service with the same directory mount and client group", async () => {
+    const { services } = await readCompose("infrastructure/docker/compose.yaml");
+    expect(services.web?.volumes).toContain(
+      "${PIH_CONNECTORS_SOCKET_SOURCE:-/run/pih-connectors/web}:/run/pih-connectors:ro",
+    );
+    expect(services.web?.group_add).toContain("${PIH_CONNECTORS_CLIENT_GID:?required}");
+  });
+
+  it("runs connectors as a hardened unprivileged host service", async () => {
+    const unit = await read("infrastructure/systemd/personal-intelligence-hub-connectors.service");
+    const sysusers = await read("infrastructure/systemd/pih-connectors.sysusers");
+    expect(unit).toContain("User=pih-connectors");
+    expect(unit).toContain("Group=pih-connectors");
+    expect(unit).toContain("SupplementaryGroups=pih-connectors-clients hermes-agents");
+    expect(unit).toContain("EnvironmentFile=/etc/pih-connectors/connectors.env");
+    expect(unit).toContain("ExecStart=/usr/bin/node /opt/pih-connectors/current/dist/src/main.js");
+    expect(unit).toContain("RuntimeDirectory=pih-connectors");
+    expect(unit).toContain("RuntimeDirectoryMode=0750");
+    expect(unit).toContain("StateDirectory=pih-connectors");
+    expect(unit).toContain("StateDirectoryMode=0700");
+    expect(unit).toContain("UMask=0007");
+    expect(unit).toContain("NoNewPrivileges=yes");
+    expect(unit).toContain("ProtectSystem=strict");
+    expect(unit).toContain("ReadWritePaths=/var/lib/pih-connectors /run/pih-connectors");
+    expect(sysusers).toContain("g pih-connectors -");
+    expect(sysusers).toContain("g pih-connectors-clients -");
+    expect(sysusers).toContain("g hermes-agents -");
+    expect(sysusers).toContain('u pih-connectors - "PIH private connectors" /var/lib/pih-connectors /usr/sbin/nologin');
+  });
+
+  it("exports a build-only bundle and packages the compiled entrypoint and SQL migrations", async () => {
+    const dockerfile = await read("infrastructure/docker/connectors-build.Dockerfile");
+    expect(dockerfile).toContain("ARG NODE_IMAGE");
+    expect(dockerfile).toContain("FROM ${NODE_IMAGE} AS build");
+    expect(dockerfile).toContain("pnpm install --frozen-lockfile");
+    expect(dockerfile).toContain("pnpm --filter @personal-intelligence-hub/connectors deploy --prod /opt/connectors");
+    expect(dockerfile).toContain("cp -R apps/connectors/dist /opt/connectors/dist");
+    expect(dockerfile).not.toMatch(/^(CMD|ENTRYPOINT|EXPOSE)\s/m);
+
+
   });
 });

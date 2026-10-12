@@ -1,0 +1,28 @@
+[Unit]
+Description=Personal Intelligence Hub private connectors
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pih-connectors
+Group=pih-connectors
+SupplementaryGroups=pih-connectors-clients hermes-agents
+EnvironmentFile=/etc/pih-connectors/connectors.env
+ExecStart=/usr/bin/node /opt/pih-connectors/current/dist/src/main.js
+RuntimeDirectory=pih-connectors
+RuntimeDirectoryMode=0750
+StateDirectory=pih-connectors
+StateDirectoryMode=0700
+UMask=0007
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pih-connectors /run/pih-connectors
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

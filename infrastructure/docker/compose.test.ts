@@ -1,8 +1,11 @@
 import { execFile } from "node:child_process";
+import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { afterAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const exec = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -10,10 +13,15 @@ const composeFile = "infrastructure/docker/compose.yaml";
 const project = `pih-compose-${process.pid}`;
 const apiPort = 43_101;
 const webPort = 43_100;
+const socketSource = join(tmpdir(), `pih-compose-connectors-${process.pid}`);
+const clientGid = process.getgid?.();
+if (clientGid === undefined) throw new Error("Compose socket test requires a Unix group ID");
 const environment = {
   ...process.env,
   PIH_API_PORT: String(apiPort),
   PIH_WEB_PORT: String(webPort),
+  PIH_CONNECTORS_SOCKET_SOURCE: socketSource,
+  PIH_CONNECTORS_CLIENT_GID: String(clientGid),
 };
 
 const compose = (...args: string[]) =>
@@ -60,8 +68,10 @@ const waitForWeb = async (): Promise<Response> => {
 };
 
 describe("local Docker Compose", () => {
+  beforeAll(async () => { await mkdir(socketSource, { recursive: true }); });
   afterAll(async () => {
     await compose("down", "--volumes", "--remove-orphans").catch(() => undefined);
+    await rm(socketSource, { recursive: true, force: true });
   }, 120_000);
 
   test(
@@ -69,12 +79,14 @@ describe("local Docker Compose", () => {
     async () => {
       const { stdout: rendered } = await compose("config", "--format", "json");
       const configuration = JSON.parse(rendered) as {
-        services: Record<string, { ports?: unknown[] }>;
+        services: Record<string, { ports?: unknown[]; volumes?: unknown[]; group_add?: unknown[] }>;
       };
       expect(configuration.services.postgres?.ports ?? []).toEqual([]);
       expect(configuration.services.migrate).toBeDefined();
       expect(configuration.services.api).toBeDefined();
       expect(configuration.services.web).toBeDefined();
+      expect(configuration.services.web?.volumes).toEqual(expect.arrayContaining([expect.objectContaining({ source: socketSource, target: "/run/pih-connectors", read_only: true })]));
+      expect(configuration.services.web?.group_add).toContain(String(clientGid));
 
       await compose("up", "--build", "--detach", "--wait");
       await expect((await waitForLive()).json()).resolves.toEqual({ status: "ok" });

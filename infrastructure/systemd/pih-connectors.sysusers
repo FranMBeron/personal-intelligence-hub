@@ -1,0 +1,4 @@
+g pih-connectors -
+g pih-connectors-clients -
+g hermes-agents -
+u pih-connectors - "PIH private connectors" /var/lib/pih-connectors /usr/sbin/nologin
