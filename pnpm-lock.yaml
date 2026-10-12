@@ -11,7 +11,7 @@ overrides:
 
 patchedDependencies:
   appdmg@0.6.6:
-    hash: plnneq27jzdzme3qc6blg5ywcq
+    hash: chasnzzpr5ndyho2emiqvjs7uu
     path: patches/appdmg@0.6.6.patch
 
 importers:
@@ -6938,7 +6938,7 @@ snapshots:
     dependencies:
       environment: 1.1.0
 
-  appdmg@0.6.6(patch_hash=plnneq27jzdzme3qc6blg5ywcq):
+  appdmg@0.6.6(patch_hash=chasnzzpr5ndyho2emiqvjs7uu):
     dependencies:
       async: 1.5.2
       ds-store: 0.1.6
@@ -7024,7 +7024,7 @@ snapshots:
       debug: 4.4.3
       minimist: 1.2.8
     optionalDependencies:
-      appdmg: 0.6.6(patch_hash=plnneq27jzdzme3qc6blg5ywcq)
+      appdmg: 0.6.6(patch_hash=chasnzzpr5ndyho2emiqvjs7uu)
     transitivePeerDependencies:
       - supports-color
     optional: true

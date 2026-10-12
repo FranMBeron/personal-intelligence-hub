@@ -2,16 +2,10 @@ diff --git a/lib/appdmg.js b/lib/appdmg.js
 index 77748bfcdaf55ea9597f65b03c9953c63ffa50dc..b40a532baddd4fd2ec6e0a8755a5e76358534ea4 100644
 --- a/lib/appdmg.js
 +++ b/lib/appdmg.js
-@@ -6,7 +6,11 @@ const path = require('path')
- 
- const async = require('async')
- const DSStore = require('ds-store')
+@@ -9 +9,5 @@
 -const sizeOf = require('image-size')
 +const { imageSizeFromFile } = require('image-size/fromFile')
 +const sizeOf = (file, callback) => imageSizeFromFile(file).then(
 +  value => callback(null, value),
 +  error => callback(error)
 +)
- const validator = require('is-my-json-valid')
- const parseColor = require('parse-color')
- 
