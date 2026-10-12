@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { loadHermesConfig } from "./config.js";
+import { findHermesRepositoryRoot, loadHermesConfig } from "./config.js";
 import { HermesProfileRegistry } from "./profile-registry.js";
 
 const orchestratorKey = "fictional-orchestrator-key-32-bytes";
@@ -148,6 +148,16 @@ describe("Hermes private configuration", () => {
     profiles[0]!.enabled = false;
     env.HERMES_PROFILES_JSON = JSON.stringify(profiles);
     expect(expectSafeFailure(env)).toMatch(/default/u);
+  });
+
+  it("does not use cwd as a repository marker in a packaged runtime", () => {
+    const previousDirectory = process.cwd();
+    process.chdir("/");
+    try {
+      expect(findHermesRepositoryRoot("/opt/connectors/dist/src/hermes")).toBeUndefined();
+    } finally {
+      process.chdir(previousDirectory);
+    }
   });
 
   it("requires a safe absolute upload path outside the repository", () => {

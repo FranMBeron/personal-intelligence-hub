@@ -132,15 +132,17 @@ const parseLoopbackOrigin = (value: string): URL => {
   }
 };
 
-const findRepositoryRoot = (): string => {
-  let current = dirname(fileURLToPath(import.meta.url));
+export const findHermesRepositoryRoot = (
+  startDirectory = dirname(fileURLToPath(import.meta.url)),
+): string | undefined => {
+  let current = resolve(startDirectory);
   while (current !== dirname(current)) {
     if (existsSync(resolve(current, "pnpm-workspace.yaml"))) {
       return realpathSync(current);
     }
     current = dirname(current);
   }
-  return realpathSync(resolve(process.cwd()));
+  return undefined;
 };
 
 const resolvedExistingPath = (path: string): string => {
@@ -165,9 +167,9 @@ const validateUploadDirectory = (value: string): string => {
   if (!isAbsolute(value)) {
     throw new Error("Hermes upload directory must be absolute and outside the repository");
   }
-  const root = findRepositoryRoot();
+  const root = findHermesRepositoryRoot();
   const lexicalPath = resolve(value);
-  if (isWithin(root, lexicalPath)) {
+  if (root !== undefined && isWithin(root, lexicalPath)) {
     throw new Error("Hermes upload directory must be absolute and outside the repository");
   }
   let canonicalPath: string;
@@ -176,7 +178,7 @@ const validateUploadDirectory = (value: string): string => {
   } catch {
     throw new Error("Hermes upload directory is not accessible");
   }
-  if (isWithin(root, canonicalPath)) {
+  if (root !== undefined && isWithin(root, canonicalPath)) {
     throw new Error("Hermes upload directory must be outside the repository");
   }
   return lexicalPath;
