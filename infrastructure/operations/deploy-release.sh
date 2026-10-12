@@ -78,7 +78,8 @@ for required_file in \
   "$release_directory/infrastructure/docker/postgres.Dockerfile" \
   "$release_directory/infrastructure/docker/connectors-build.Dockerfile" \
   "$release_directory/apps/connectors/src/migrations/0000_foundation.sql" \
-  "$release_directory/infrastructure/operations/check-connectors-readiness.mjs"; do
+  "$release_directory/infrastructure/operations/check-connectors-readiness.mjs" \
+  "$release_directory/infrastructure/operations/check-connectors-migration-baseline.mjs"; do
   [ -f "$required_file" ] || { echo "Release source is incomplete." >&2; exit 1; }
 done
 
@@ -224,17 +225,23 @@ while IFS= read -r migration; do
     exit 1
   fi
 done < "$expected_migrations"
+connector_migrations_json=$(jq -Rn '[inputs | sub("\\.sql$"; "")]' < "$expected_migrations")
+active_connectors_manifest=-
+if [ -n "$previous_release" ] && [ -f "$previous_release/release-manifest.json" ]; then
+  active_connectors_manifest="$previous_release/release-manifest.json"
+fi
+previous_connectors_enabled=$(systemctl is-enabled "$connectors_service" 2>/dev/null || true)
+previous_connectors_active=$(systemctl is-active "$connectors_service" 2>/dev/null || true)
+[ -n "$previous_connectors_enabled" ] || previous_connectors_enabled=not-found
+[ -n "$previous_connectors_active" ] || previous_connectors_active=inactive
+node "$release_directory/infrastructure/operations/check-connectors-migration-baseline.mjs" \
+  deploy "$expected_migrations" "$active_connectors_manifest" "$previous_connectors_active"
 rm -f "$expected_migrations" "$actual_migrations"
 chown -R 0:0 "$connectors_release_directory"
 chmod -R a-w "$connectors_release_directory"
 
 postgres_image=$(docker image inspect --format '{{.Id}}' "pih-postgres:$release_sha")
 printf '\nPIH_POSTGRES_IMAGE=%s\n' "$postgres_image" >> "$release_environment"
-
-previous_connectors_enabled=$(systemctl is-enabled "$connectors_service" 2>/dev/null || true)
-previous_connectors_active=$(systemctl is-active "$connectors_service" 2>/dev/null || true)
-[ -n "$previous_connectors_enabled" ] || previous_connectors_enabled=not-found
-[ -n "$previous_connectors_active" ] || previous_connectors_active=inactive
 
 image_inspect_temporary="$release_directory/image-inspect.tmp.$$"
 docker image inspect "pih-api:$release_sha" "pih-web:$release_sha" "pih-postgres:$release_sha" "pih-connectors-build:$release_sha" \
@@ -252,6 +259,7 @@ jq -n \
   --arg previousConnectorsRuntime "$previous_connectors_runtime" \
   --arg previousConnectorsEnabled "$previous_connectors_enabled" \
   --arg previousConnectorsActive "$previous_connectors_active" \
+  --argjson connectorMigrations "$connector_migrations_json" \
   --slurpfile images "$release_directory/image-manifests.json" \
   '{gitSha: $gitSha, deployedAt: $deployedAt, images: $images[0],
     connectors: {buildImage: $connectorsImage, runtimeDirectory: $connectorsRuntime,
@@ -259,6 +267,7 @@ jq -n \
       previousConnectorsRuntime: (if $previousConnectorsRuntime == "" then null else $previousConnectorsRuntime end),
       previousConnectorsEnabled: $previousConnectorsEnabled,
       previousConnectorsActive: $previousConnectorsActive,
+      migrationHistoryFormatVersion: 1, migrations: $connectorMigrations,
       enabled: "enabled", active: "active"}}' \
   > "$release_manifest"
 chown 0:0 "$release_manifest" "$release_directory/image-manifests.json" "$release_directory/sbom-connectors.cyclonedx.json"

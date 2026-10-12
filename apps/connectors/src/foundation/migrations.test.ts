@@ -60,6 +60,14 @@ afterEach(async () => {
 });
 
 describe("connector migrations", () => {
+  it("keeps packaged migration SQL additive for rollback compatibility", () => {
+    const destructiveSql = /\b(?:DROP\s+(?:TABLE|COLUMN|INDEX|TRIGGER|VIEW)|RENAME\s+(?:TABLE|COLUMN)|ALTER\s+TABLE\b[\s\S]{0,240}\b(?:DROP|RENAME)\b|VACUUM)\b/iu;
+    const violations = loadMigrations()
+      .filter(({ sql }) => destructiveSql.test(sql))
+      .map(({ name }) => name);
+    expect(violations).toEqual([]);
+  });
+
   it("loads SQL files in lexical order with lowercase SHA-256 checksums", () => {
     const loaded = loadMigrations();
 
@@ -162,6 +170,107 @@ describe("connector migrations", () => {
       "0000_foundation",
       "0100_concurrent",
     ]);
+  });
+
+  it("lets an older runtime reopen an additive newer schema and preserves the full migration prefix", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pih-connectors-cross-version-"));
+    directories.push(directory);
+    const path = join(directory, "connectors.sqlite");
+    const v1 = loadMigrations();
+    const v2 = [
+      ...v1,
+      ...migrations({
+        "0001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT NOT NULL);",
+        "0002_additive_tags": "CREATE TABLE tags(id TEXT PRIMARY KEY, label TEXT NOT NULL);",
+      }),
+    ];
+    const first = openConnectorDatabase(path, v1);
+    databases.push(first);
+    await first.read(() => undefined);
+    await applyMigrations(first, v2);
+    await first.write((handle) => handle.prepare("INSERT INTO notes VALUES(:id,:body)").run({ id: "note-1", body: "kept" }));
+    await first.close();
+
+    const olderRuntime = openConnectorDatabase(path, v1);
+    databases.push(olderRuntime);
+    await expect(olderRuntime.read((handle) =>
+      handle.prepare("SELECT body FROM notes WHERE id = :id").get({ id: "note-1" }),
+    )).resolves.toEqual({ body: "kept" });
+    await olderRuntime.close();
+
+    const newerRuntime = openConnectorDatabase(path, v2);
+    databases.push(newerRuntime);
+    await expect(newerRuntime.read((handle) =>
+      handle.prepare("SELECT name FROM connector_migrations ORDER BY name").all<{name:string}>().map(({name})=>name),
+    )).resolves.toEqual(["0000_foundation", "0001_additive_notes", "0002_additive_tags"]);
+  });
+
+  it("rejects an altered future checksum when the migration record and compatibility ledger disagree", async () => {
+    const database = await createDatabase();
+    const future = migrations({
+      "0001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY);",
+    });
+    await applyMigrations(database, [...loadMigrations(), ...future]);
+    const databasePath = join(directories.at(-1)!, "connectors.sqlite");
+    await database.write((handle) => {
+      handle.prepare("UPDATE connector_migrations SET sha256 = :sha WHERE name = :name")
+        .run({ name: "0001_additive_notes", sha: "f".repeat(64) });
+    });
+    await database.close();
+    const reopened = openConnectorDatabase(databasePath, loadMigrations());
+    databases.push(reopened);
+    await expect(reopened.read(() => undefined)).rejects.toMatchObject({ code: "migration_history_invalid" });
+  });
+
+  it("rejects a missing applied-history sequence entry before accepting a future suffix", async () => {
+    const database = await createDatabase();
+    await applyMigrations(database, [
+      ...loadMigrations(),
+      ...migrations({
+        "0001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY);",
+      }),
+    ]);
+    await database.write((handle) => {
+      handle.prepare("DELETE FROM connector_migration_history WHERE sequence = :sequence")
+        .run({ sequence: 1 });
+    });
+    const databasePath = join(directories.at(-1)!, "connectors.sqlite");
+    await database.close();
+
+    const reopened = openConnectorDatabase(databasePath, loadMigrations());
+    databases.push(reopened);
+    await expect(reopened.read(() => undefined))
+      .rejects.toMatchObject({ code: "migration_history_invalid" });
+  });
+
+  it("rejects an unknown migration inserted before the packaged prefix", async () => {
+    const database = await createDatabase();
+    await database.write((handle) => {
+      handle.prepare("INSERT INTO connector_migrations(name,sha256,applied_at) VALUES(:name,:sha,:time)")
+        .run({ name: "0000_injected", sha: "a".repeat(64), time: "seeded" });
+    });
+    const databasePath = join(directories.at(-1)!, "connectors.sqlite");
+    await database.close();
+
+    const reopened = openConnectorDatabase(databasePath, loadMigrations());
+    databases.push(reopened);
+    await expect(reopened.read(() => undefined))
+      .rejects.toMatchObject({ code: "migration_history_invalid" });
+  });
+
+  it("rejects an unsupported migration history compatibility format", async () => {
+    const database = await createDatabase();
+    const path = join(directories.at(-1)!, "connectors.sqlite");
+    await database.write((handle) => {
+      handle.prepare("UPDATE connector_migration_history_metadata SET format_version = :version")
+        .run({ version: 99 });
+    });
+    await database.close();
+
+    const reopened = openConnectorDatabase(path, loadMigrations());
+    databases.push(reopened);
+    await expect(reopened.read(() => undefined))
+      .rejects.toMatchObject({ code: "migration_history_invalid" });
   });
 
   it("does not expose mutable migration definitions", () => {

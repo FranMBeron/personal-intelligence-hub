@@ -53,6 +53,23 @@ The PostgreSQL derivative preserves the vendor entrypoint and data layout while
 installing exact reviewed Alpine library patches. Its generated release setting
 uses the inspected image ID; do not set `PIH_POSTGRES_IMAGE` in the base environment.
 
+Connector SQLite migrations are append-only and must remain forward-compatible with the
+previous release for the rollback window. Provider migrations are allowed only when
+(A) the active connector runtime is history-compatible with a matching migration
+prefix, or (B) there is no active connector runtime; they are never allowed while
+an unmarked connector runtime is active. The Task 9 release at `3d4a4d3` predates
+the history marker and cannot remain active when provider migrations are introduced.
+If first activation fails, rollback restores the prior inactive service state and
+leaves the migrated database dormant; deploy a history-compatible runtime before
+restarting it. Deploy records migration-history format 1 and the sorted packaged
+migration names in its release manifest. Rollback rejects an older unmarked runtime
+when that target would run after provider migrations are present. Add tables, nullable/defaulted columns, and
+other additive structures first; use expand-and-contract across releases before removing
+or changing structures. Rollback restores the application and connector runtime only and
+never rewinds database data or schema. The migration history compatibility ledger lets
+an older runtime verify its packaged prefix and an intact recorded future suffix; it
+does not make destructive schema changes safe to roll back.
+
 Rollback requires an existing release and generated environment:
 
 ```bash

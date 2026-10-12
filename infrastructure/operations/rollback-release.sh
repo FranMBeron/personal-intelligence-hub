@@ -84,6 +84,24 @@ if [ -n "$connectors_runtime" ]; then
   fi
 fi
 
+active_connectors_manifest=-
+if [ -n "$previous_release" ] && [ -f "$previous_release/release-manifest.json" ]; then
+  active_connectors_manifest="$previous_release/release-manifest.json"
+fi
+migration_policy_script="$release_directory/infrastructure/operations/check-connectors-migration-baseline.mjs"
+if [ -n "$previous_release" ] && \
+  [ -f "$previous_release/infrastructure/operations/check-connectors-migration-baseline.mjs" ]; then
+  migration_policy_script="$previous_release/infrastructure/operations/check-connectors-migration-baseline.mjs"
+fi
+if [ -f "$migration_policy_script" ]; then
+  node "$migration_policy_script" rollback /dev/null "$active_connectors_manifest" "$release_manifest" "$target_connectors_active"
+elif [ -n "$previous_release" ] && \
+  [ "$(jq -r '.connectors.migrationHistoryFormatVersion // 0' "$active_connectors_manifest")" -eq 1 ] && \
+  [ "$(jq -r '.connectors.migrations | length' "$active_connectors_manifest")" -gt 1 ]; then
+  echo "Active provider migration history requires the migration baseline policy helper." >&2
+  exit 1
+fi
+
 deployer_environment=${CONNECTORS_DEPLOYER_ENV_FILE:-$pih_root/secrets/connectors-deployer.env}
 if [ ! -f "$deployer_environment" ] || [ "$(stat -c '%u:%a' "$deployer_environment" 2>/dev/null || true)" != "0:600" ]; then
   echo "Root-only connectors deployer credentials are missing or have unsafe permissions." >&2

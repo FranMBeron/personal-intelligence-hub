@@ -22,7 +22,13 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { openConnectorDatabase, type ConnectorDatabase } from "./database.js";
-import { loadMigrations } from "./migrations.js";
+import {
+  loadMigrations,
+  validateMigrationHistory,
+  type MigrationHistoryEntry,
+  type MigrationHistoryMetadata,
+  type MigrationRecord,
+} from "./migrations.js";
 
 export type ConnectorBackupManifest = Readonly<{
   formatVersion: 1;
@@ -241,17 +247,31 @@ const readMigrations = (databasePath: string): readonly Readonly<{ name: string;
       typeof row.sha256 !== "string" || !shaPattern.test(row.sha256))) {
       fail("backup_migration_mismatch", "Backup contains invalid migration records");
     }
-    const packaged = new Map(loadMigrations().map(({ name, sha256 }) => [name, sha256]));
-    for (const row of rows) {
-      if (packaged.get(row.name as string) !== row.sha256) {
-        fail("backup_migration_mismatch", "Backup migration differs from packaged SQL");
-      }
+    const hasTable = (name: string): boolean => db!.prepare(
+      "SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name=:name",
+    ).get({ name }) !== undefined;
+    const hasHistory = hasTable("connector_migration_history");
+    const hasMetadata = hasTable("connector_migration_history_metadata");
+    const state: { entries?: readonly MigrationHistoryEntry[]; metadata?: MigrationHistoryMetadata } = {};
+    if (hasHistory) {
+      state.entries = db.prepare(
+        "SELECT sequence, name, sha256, previous_sha256 AS previousSha256, entry_sha256 AS entrySha256 " +
+          "FROM connector_migration_history ORDER BY sequence",
+      ).all() as MigrationHistoryEntry[];
     }
+    if (hasMetadata) {
+      const metadata = db.prepare(
+        "SELECT singleton_id AS singletonId, format_version AS formatVersion, applied_count AS appliedCount, " +
+          "head_sha256 AS headSha256 FROM connector_migration_history_metadata",
+      ).all() as MigrationHistoryMetadata[];
+      if (metadata.length !== 1 || metadata[0] === undefined) {
+        fail("backup_migration_mismatch", "Backup migration metadata is invalid");
+      }
+      state.metadata = metadata[0]!;
+    }
+    const validated = validateMigrationHistory(rows as MigrationRecord[], state, loadMigrations());
     assertRegularFile(databasePath, before);
-    return Object.freeze(rows.map(({ name, sha256 }) => Object.freeze({
-      name: name as string,
-      sha256: sha256 as string,
-    })));
+    return Object.freeze(validated.map(({ name, sha256 }) => Object.freeze({ name, sha256 })));
   } catch (error) {
     if (error instanceof ConnectorBackupError) throw error;
     return fail("backup_migration_mismatch", "Backup database migration records could not be verified", error);

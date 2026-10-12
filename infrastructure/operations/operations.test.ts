@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
+import { assertDeployBaseline, assertRollbackBaseline } from "./check-connectors-migration-baseline.mjs";
 
 const exec = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -143,6 +144,8 @@ describe("connectors atomic release", () => {
     expect(deploy).toContain('previousConnectorsRuntime');
     expect(deploy).toContain('previousConnectorsEnabled');
     expect(deploy).toContain('previousConnectorsActive');
+    expect(deploy).toContain('check-connectors-migration-baseline.mjs');
+    expect(rollback).toContain('check-connectors-migration-baseline.mjs');
     expect(deploy).toContain('CONNECTORS_DEPLOYER_ENV_FILE');
     expect(deploy).toContain('flock -n 9');
     expect(rollback).toContain('systemctl restart "$connectors_service"');
@@ -183,13 +186,98 @@ describe("connectors atomic release", () => {
   });
 });
 
+describe("connector migration rollback baseline policy", () => {
+  it("requires history-aware active baselines before provider migrations", async () => {
+    expect(() => assertDeployBaseline(
+      ["0000_foundation", "0001_provider"],
+      { gitSha: "3d4a4d3", connectors: {} },
+    )).toThrow("history-compatible active baseline");
+    expect(() => assertDeployBaseline(
+      ["0000_foundation", "0001_provider"],
+      { gitSha: "a".repeat(40), connectors: {
+        migrationHistoryFormatVersion: 1,
+        migrations: ["0000_foundation"],
+      } },
+    )).not.toThrow();
+  });
+
+  it("allows first provider activation when no legacy connectors process is running", () => {
+    expect(() => assertDeployBaseline(
+      ["0000_foundation", "0001_provider"],
+      null,
+      "inactive",
+    )).not.toThrow();
+    expect(() => assertDeployBaseline(
+      ["0000_foundation", "0001_provider"],
+      null,
+      "active",
+    )).toThrow("history-compatible active baseline");
+  });
+
+  it("rejects rollback to a runtime older than the applied provider suffix", async () => {
+    const active = { gitSha: "b".repeat(40), connectors: {
+      migrationHistoryFormatVersion: 1,
+      migrations: ["0000_foundation", "0001_provider"],
+    } };
+    expect(() => assertRollbackBaseline(active, {
+      gitSha: "3d4a4d3", connectors: {},
+    })).toThrow("history-compatible active rollback target");
+    expect(() => assertRollbackBaseline(active, {
+      gitSha: "3d4a4d3", connectors: {},
+    }, "inactive")).not.toThrow();
+    expect(() => assertRollbackBaseline(active, {
+      gitSha: "a".repeat(40), connectors: {
+        migrationHistoryFormatVersion: 1,
+        migrations: ["0000_foundation"],
+      },
+    })).not.toThrow();
+  });
+
+  it("fails closed when active release migration metadata is missing and target would run", () => {
+    expect(() => assertRollbackBaseline(
+      { gitSha: "b".repeat(40), connectors: {} },
+      { gitSha: "c".repeat(40), connectors: {} },
+      "active",
+    )).toThrow("missing migration-history metadata");
+    expect(() => assertRollbackBaseline(
+      { gitSha: "b".repeat(40), connectors: {} },
+      { gitSha: "c".repeat(40), connectors: {} },
+      "inactive",
+    )).not.toThrow();
+  });
+
+  it("applies the active-versus-inactive rule through the release helper CLI", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pih-migration-baseline-cli-"));
+    temporaryDirectories.push(root);
+    const candidate = join(root, "candidate.txt");
+    const active = join(root, "active.json");
+    await writeFile(candidate, "0000_foundation.sql\n0001_provider.sql\n");
+    await writeFile(active, JSON.stringify({ gitSha: "3d4a4d3", connectors: {} }));
+    const helper = join(operationsRoot, "check-connectors-migration-baseline.mjs");
+    await expect(exec(process.execPath, [helper, "deploy", candidate, active, "active"]))
+      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("history-compatible active baseline") });
+    await expect(exec(process.execPath, [helper, "deploy", candidate, active, "inactive"]))
+      .resolves.toBeDefined();
+  });
+
+  it("does not accept a migration list that is not an exact lexical prefix", async () => {
+    expect(() => assertDeployBaseline(
+      ["0000_foundation", "0001_provider"],
+      { gitSha: "a".repeat(40), connectors: {
+        migrationHistoryFormatVersion: 1,
+        migrations: ["0000_foundation", "0002_other"],
+      } },
+    )).toThrow("migration prefix");
+  });
+});
+
 describe("connectors recovery", () => {
   it.each([
     { previous: "enabled active", expectedReadinessChecks: "2", hasPreviousRuntime: true, failRestoreLink: false, failPointerUpdate: false },
-    { previous: "disabled inactive", expectedReadinessChecks: "1", hasPreviousRuntime: false, failRestoreLink: false, failPointerUpdate: false },
+    { previous: "disabled inactive", expectedReadinessChecks: "1", hasPreviousRuntime: false, hasProviderMigrations: true, failRestoreLink: false, failPointerUpdate: false },
     { previous: "enabled active", expectedReadinessChecks: "1", hasPreviousRuntime: true, failRestoreLink: true, failPointerUpdate: false },
     { previous: "enabled active", expectedReadinessChecks: "2", hasPreviousRuntime: true, failRestoreLink: false, failPointerUpdate: true },
-  ])("restores connector symlink and exact systemd state without touching web when readiness fails ($previous)", async ({ previous, expectedReadinessChecks, hasPreviousRuntime, failRestoreLink, failPointerUpdate }) => {
+  ])("restores connector symlink and exact systemd state without touching web when readiness fails ($previous)", async ({ previous, expectedReadinessChecks, hasPreviousRuntime, hasProviderMigrations = false, failRestoreLink, failPointerUpdate }) => {
     const root = await mkdtemp(join(tmpdir(), "pih-connectors-deploy-failure-"));
     temporaryDirectories.push(root);
     const sha = "c".repeat(40);
@@ -212,6 +300,7 @@ describe("connectors recovery", () => {
     await mkdir(join(release, "infrastructure/docker"), { recursive: true });
     await mkdir(join(release, "infrastructure/operations"), { recursive: true });
     await writeFile(join(release, "infrastructure/operations/check-connectors-readiness.mjs"), "export {};\n");
+    await writeFile(join(release, "infrastructure/operations/check-connectors-migration-baseline.mjs"), "export {};\n");
     await mkdir(join(oldRelease, "infrastructure/docker"), { recursive: true });
     await mkdir(join(root, "config/releases"), { recursive: true });
     await mkdir(join(root, "secrets"), { recursive: true });
@@ -225,6 +314,9 @@ describe("connectors recovery", () => {
     }
     await writeFile(join(release, "infrastructure/docker/connectors-build.Dockerfile"), "FROM scratch\n");
     await writeFile(join(migrationDirectory, "0000_foundation.sql"), "CREATE TABLE fixture(id TEXT);\n");
+    if (hasProviderMigrations) {
+      await writeFile(join(migrationDirectory, "0001_provider.sql"), "CREATE TABLE provider_fixture(id TEXT);\n");
+    }
     await writeFile(join(oldRelease, "infrastructure/docker/compose.production.yaml"), "services: {}\n");
     const oldEnvironment = join(root, "config/releases", `${oldSha}.compose.env`);
     await writeFile(oldEnvironment, "PIH_WEB_PORT=3000\n");
@@ -270,6 +362,7 @@ for argument do case "$argument" in cyclonedx-json=*) : > "\${argument#*=}" ;; e
       grype: "#!/bin/sh\nexit 0\n",
       curl: "#!/bin/sh\nexit 0\n",
       node: `#!/bin/sh
+case "$1" in *check-connectors-migration-baseline.mjs) exit 0 ;; esac
 count=0
 [ ! -f "$READINESS_COUNT" ] || count=$(cat "$READINESS_COUNT")
 count=$((count + 1))
@@ -466,6 +559,7 @@ if [ "$1" = "-c" ]; then printf '0:600\\n'; else exec /usr/bin/stat "$@"; fi
 
     await mkdir(join(targetRelease, "infrastructure/docker"), { recursive: true });
     await mkdir(join(activeRelease, "infrastructure/docker"), { recursive: true });
+    await mkdir(join(activeRelease, "infrastructure/operations"), { recursive: true });
     await mkdir(join(root, "config/releases"), { recursive: true });
     await mkdir(join(root, "secrets"), { recursive: true });
     await mkdir(join(connectorsRoot, "releases"), { recursive: true });
@@ -477,10 +571,16 @@ if [ "$1" = "-c" ]; then printf '0:600\\n'; else exec /usr/bin/stat "$@"; fi
     await writeFile(oldEnvironment, "PIH_WEB_PORT=3000\n");
     await writeFile(activeEnvironment, "PIH_WEB_PORT=3000\n");
     await writeFile(join(targetRelease, "release-manifest.json"), JSON.stringify({ gitSha: targetSha, images: [] }));
+    await writeFile(
+      join(activeRelease, "infrastructure/operations/check-connectors-migration-baseline.mjs"),
+      await readFile(join(operationsRoot, "check-connectors-migration-baseline.mjs"), "utf8"),
+    );
     await writeFile(join(activeRelease, "release-manifest.json"), JSON.stringify({
       gitSha: activeSha,
       images: [],
       connectors: {
+        migrationHistoryFormatVersion: 1,
+        migrations: ["0000_foundation", "0001_provider"],
         runtimeDirectory: activeRuntime,
         previousReleaseSha: targetSha,
         previousConnectorsRuntime: null,
@@ -559,7 +659,8 @@ case "$action" in is-enabled|is-active) ;; *) printf '%s %s\n' "$enabled" "$acti
     expect(await readlink(join(root, "config/current-compose.env"))).toBe(oldEnvironment);
     expect((await readFile(systemdState, "utf8")).trim()).toBe("disabled inactive");
     expect((await readFile(dockerLog, "utf8"))).toMatch(/compose[\s\S]*up --detach/u);
-    await expect(readFile(nodeLog, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(nodeLog, "utf8")).toContain("check-connectors-migration-baseline.mjs rollback");
+    expect(await readFile(nodeLog, "utf8")).not.toContain("check-connectors-readiness.mjs");
     const events = await readFile(join(root, "events.log"), "utf8");
     expect(events.indexOf("systemctl disable personal-intelligence-hub-connectors.service")).toBeLessThan(
       events.indexOf("docker compose"),

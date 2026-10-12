@@ -18,8 +18,10 @@ import {
 
 import {
   applyMigrationToHandle,
+  initializeMigrationHistory,
   loadMigrations,
   pendingMigrations,
+  type Migration,
 } from "./migrations.js";
 
 export type SqlValue = string | number | bigint | Uint8Array | null;
@@ -280,15 +282,21 @@ class NodeConnectorDatabase implements ConnectorDatabase {
   #nativeClosed = false;
   readonly #activeReads = new Set<Promise<unknown>>();
 
-  constructor(native: DatabaseSync, databasePath: string) {
+  constructor(
+    native: DatabaseSync,
+    databasePath: string,
+    availableMigrations: readonly Migration[],
+  ) {
     this.#native = native;
     this.#databasePath = databasePath;
     this.#ready = Promise.resolve()
       .then(() => {
-        const available = loadMigrations();
-        const pending = this.#startupTransaction(() =>
-          pendingMigrations(wrapHandle(this.#native, { active: true, readOnly: false }), available),
-        );
+        const available = availableMigrations;
+        const handle = wrapHandle(this.#native, { active: true, readOnly: false });
+        const pending = this.#startupTransaction(() => {
+          initializeMigrationHistory(handle, available);
+          return pendingMigrations(handle, available);
+        });
         for (const migration of pending) {
           this.#startupTransaction(() => {
             applyMigrationToHandle(
@@ -478,6 +486,7 @@ class NodeConnectorDatabase implements ConnectorDatabase {
 
 export const openConnectorDatabase = (
   databasePath: string,
+  availableMigrations: readonly Migration[] = loadMigrations(),
 ): ConnectorDatabase => {
   if (!isAbsolute(databasePath)) {
     throw new Error("Connector database path must be absolute");
@@ -493,7 +502,7 @@ export const openConnectorDatabase = (
       native.exec("PRAGMA busy_timeout=5000");
       native.exec("PRAGMA synchronous=NORMAL");
       secureSidecars(databasePath);
-      return new NodeConnectorDatabase(native, databasePath);
+      return new NodeConnectorDatabase(native, databasePath, availableMigrations);
     } catch (error) {
       native.close();
       throw error;

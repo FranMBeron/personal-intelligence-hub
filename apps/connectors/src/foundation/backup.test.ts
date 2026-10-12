@@ -12,7 +12,7 @@ import {
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openConnectorDatabase, type ConnectorDatabase } from "./database.js";
@@ -98,6 +98,61 @@ describe("connector backups", () => {
     )).toEqual({ actor_id: actorId });
     expect((await stat(destinationDirectory)).mode & 0o777).toBe(0o700);
     expect((await stat(backup.databasePath)).mode & 0o777).toBe(0o600);
+  });
+
+  it("verifies and restores a newer additive migration suffix using an older runtime bundle", async () => {
+    const database = await createDatabase();
+    await (await import("./migrations.js")).applyMigrations(database, [
+      ...(await import("./migrations.js")).loadMigrations(),
+      ...(await import("./migrations.js")).migrations({
+        "0001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT NOT NULL);",
+      }),
+    ]);
+    await database.write((handle) => handle.prepare("INSERT INTO notes VALUES(:id,:body)").run({ id: "kept", body: "restore" }));
+    const backup = await createConnectorBackup({
+      database,
+      destinationDirectory: await createDestination(),
+      encryptionKeyVersions: [],
+      clock: fixedClock,
+    });
+    const manifest = await verifyConnectorBackup(verificationInput(backup, []));
+    const restored = await restoreConnectorBackup({
+      ...verificationInput(backup, []),
+      targetPath: join(dirname(backup.databasePath), "older-restore.sqlite"),
+    });
+    databases.push(restored);
+
+    expect(manifest.migrations.map(({ name }) => name)).toEqual(["0000_foundation", "0001_additive_notes"]);
+    await expect(restored.read((handle) =>
+      handle.prepare("SELECT body FROM notes WHERE id = :id").get({ id: "kept" }),
+    )).resolves.toEqual({ body: "restore" });
+  });
+
+  it("rejects a changed future migration checksum during backup verification", async () => {
+    const database = await createDatabase();
+    const { applyMigrations, loadMigrations, migrations } = await import("./migrations.js");
+    await applyMigrations(database, [
+      ...loadMigrations(),
+      ...migrations({
+        "0001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY);",
+      }),
+    ]);
+    const backup = await createConnectorBackup({
+      database,
+      destinationDirectory: await createDestination(),
+      encryptionKeyVersions: [],
+      clock: fixedClock,
+    });
+    const db = new DatabaseSync(backup.databasePath);
+    db.prepare("UPDATE connector_migrations SET sha256 = :sha WHERE name = :name")
+      .run({ name: "0001_additive_notes", sha: "f".repeat(64) });
+    db.close();
+    const manifest = JSON.parse(await readFile(backup.manifestPath, "utf8")) as Record<string, unknown>;
+    manifest.databaseSha256 = createHash("sha256").update(await readFile(backup.databasePath)).digest("hex");
+    await writeFile(backup.manifestPath, JSON.stringify(manifest));
+
+    await expect(verifyConnectorBackup(verificationInput(backup, [])))
+      .rejects.toMatchObject({ code: "backup_migration_mismatch" });
   });
 
   it("rejects corrupted database bytes and unavailable encryption key versions", async () => {

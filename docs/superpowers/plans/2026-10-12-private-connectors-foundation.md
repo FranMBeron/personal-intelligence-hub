@@ -656,7 +656,7 @@ CREATE TABLE user_preferences (
 );
 ```
 
-The migration runner loads lexically ordered `apps/connectors/src/migrations/*.sql`, computes lowercase SHA-256, and first verifies every previously recorded checksum. Any mismatch aborts before applying a new migration. Each new file executes in one transaction and records name/checksum/time in that transaction. The build copies the SQL directory beside compiled output; startup fails if a recorded migration file is absent.
+The migration runner loads lexically ordered `apps/connectors/src/migrations/*.sql`, computes lowercase SHA-256, and verifies the complete packaged prefix before applying a new migration. Each new file executes in one transaction and records name/checksum/time in that transaction. Applied history has a versioned, validated hash-chain marker. A runtime may serve a database whose applied records are an exact, checksum-matching packaged prefix followed only by a strictly later lexical suffix, and only when that marker validates; an unmarked history may not contain migrations newer than the runtime. Gaps, changed checksums, unknown records within the known prefix, malformed/incompatible marker metadata, or any non-prefix history fail closed. Provider migrations must be additive and backward-compatible so an older compatible runtime can serve the migrated database during release rollback; data and schema are never rewound. The build copies SQL beside compiled output. Release policy permits provider migrations only when (A) the active connector runtime is history-compatible with a matching migration prefix, or (B) there is no active connector runtime; it never permits them while an unmarked connector runtime is active. A failed first activation restores the prior inactive service state and leaves the migrated database dormant. Rollback to an older unmarked runtime is allowed only when the target service state is inactive.
 
 - [ ] **Step 4: Run focused and package verification**
 
@@ -1178,6 +1178,8 @@ git commit -m "feat: package private connectors host service"
 - Modify: `infrastructure/operations/operations.test.ts`
 - Create: `infrastructure/operations/check-connectors-readiness.mjs`
 - Create: `infrastructure/operations/check-connectors-readiness.test.ts`
+- Create: `infrastructure/operations/check-connectors-migration-baseline.mjs`
+- Create: `infrastructure/operations/check-connectors-migration-baseline.d.mts`
 - Modify: `.github/workflows/ci.yml`
 
 **Interfaces:**
@@ -1225,12 +1227,13 @@ In `deploy-release.sh`:
 1. build `infrastructure/docker/connectors-build.Dockerfile` as `pih-connectors-build:$release_sha` with the pinned Node digest;
 2. generate `sbom-connectors.cyclonedx.json` and fail Grype on high severity;
 3. create the write-once release directory, extract `/opt/connectors`, compare packaged migration checksums to source, and set root-owned non-writable runtime files;
-4. capture the previous connectors symlink target and service state in release metadata;
-5. atomically point `/opt/pih-connectors/current` to the new runtime and restart the host service before changing web Compose;
-6. call the authenticated readiness script;
-7. only after readiness succeeds, recreate web so its directory mount and supplemental GID are active.
+4. capture the previous connectors symlink target and service state in release metadata, plus migration-history format 1 and sorted packaged migration names;
+5. permit provider migrations only when (A) the active connector runtime is history-compatible with a matching migration prefix, or (B) there is no active connector runtime; never when an unmarked connector runtime is active. Rollback to an unmarked legacy target is allowed only when its restored service state is inactive;
+6. atomically point `/opt/pih-connectors/current` to the new runtime and restart the host service before changing web Compose;
+7. call the authenticated readiness script;
+8. only after readiness succeeds, recreate web so its directory mount and supplemental GID are active.
 
-If restart or readiness fails, stop the new process, restore the previous symlink and prior enabled/running state, verify prior authenticated readiness, and exit before web changes. `rollback-release.sh` performs the same ordered restoration. Serialize deploy/rollback with the repository's existing deployment lock. Do not activate the new service on the private server until provider plans and the coordinator integration gate complete.
+If restart or readiness fails, stop the new process, restore the previous symlink and prior enabled/running state, verify prior authenticated readiness when the prior process was active, and exit before web changes. On first provider activation, failure restores the prior inactive service state and leaves the forward-migrated database dormant until a compatible runtime is deployed. `rollback-release.sh` performs the same ordered restoration. Serialize deploy/rollback with the repository's existing deployment lock. Do not activate the new service on the private server until provider plans and the coordinator integration gate complete.
 
 - [ ] **Step 4: Run all policy checks**
 
