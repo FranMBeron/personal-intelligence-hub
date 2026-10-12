@@ -52,6 +52,17 @@ const primaryAad = (actorId: string) => `calendar_connections:${actorId}:primary
 const refFor = (actorId: string, providerCalendarId: string, key: Uint8Array): string =>
   "cal_" + createHmac("sha256", key).update(actorId + "\0" + providerCalendarId, "utf8").digest("base64url");
 const canWrite = (role: GoogleCalendarRecord["accessRole"] | CalendarRecord["providerAccessRole"]): boolean => role === "writer" || role === "owner";
+const sameConnectionSnapshot = (left: CalendarConnectionRecord, right: CalendarConnectionRecord): boolean =>
+  left.actorId === right.actorId &&
+  left.state === right.state &&
+  left.refreshTokenCiphertext === right.refreshTokenCiphertext &&
+  (left.primaryCalendarBindingCiphertext ?? null) === (right.primaryCalendarBindingCiphertext ?? null) &&
+  JSON.stringify(left.grantedScopes) === JSON.stringify(right.grantedScopes) &&
+  left.selectionVersion === right.selectionVersion &&
+  (left.lastSuccessAt ?? null) === (right.lastSuccessAt ?? null) &&
+  (left.safeReasonCode ?? null) === (right.safeReasonCode ?? null) &&
+  left.createdAt === right.createdAt &&
+  left.updatedAt === right.updatedAt;
 const safeProviderError = (error: unknown): string =>
   error instanceof Error && providerSafeCodes.has(error.message) ? error.message : "google_calendar_temporarily_unavailable";
 const accessRole = (role: GoogleCalendarRecord["accessRole"]): CalendarRecord["providerAccessRole"] => ({
@@ -197,6 +208,8 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
     if (!parsedBody.success) return fail("calendar_selection_invalid");
     return this.#exclusive(principal.actorId, async () => {
       const token = await this.#token(principal.actorId);
+      const connectionSnapshot = await this.#database.read((db) => this.#repository.getConnection(db, principal.actorId));
+      if (connectionSnapshot === null) return fail("calendar_not_configured");
       let providerCalendars: readonly GoogleCalendarRecord[];
       try {
         providerCalendars = await this.#google.listCalendars(token);
@@ -204,7 +217,6 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
         await this.#recordProviderFailure(principal.actorId, error);
         throw this.#publicProviderError(error);
       }
-      await this.#recordSuccess(principal.actorId);
       const discovered = new Map(providerCalendars.map((item) => [this.#calendarRef(principal.actorId, item.id), item]));
       const timestamp = this.#clock().toISOString();
       const records: CalendarRecord[] = [];
@@ -235,6 +247,7 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
         const version = await this.#database.transaction((db) => {
           const current = this.#repository.getConnection(db, principal.actorId);
           if (current === null) return fail("calendar_not_configured");
+          if (!sameConnectionSnapshot(current, connectionSnapshot)) return fail("calendar_connection_changed");
           const nextVersion = this.#repository.replaceCalendarSelection(db, principal.actorId, parsedBody.data.expectedVersion, records);
           this.#repository.appendAudit(db, {
             id: randomUUID(), actorId: principal.actorId, operation: "selection_change", outcome: "selection_updated",
@@ -242,12 +255,14 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
           });
           return nextVersion;
         });
+        await this.#recordSuccess(principal.actorId);
         return CalendarSelectionSchema.parse({
           version,
           items: records.filter((record) => record.readEnabled || record.writeEnabled).map((record) => openRecord(record, this.#keyring)),
         });
       } catch (error) {
         if (error instanceof Error && error.message === "calendar_selection_version_conflict") throw error;
+        if (error instanceof Error && error.message === "calendar_connection_changed") throw error;
         if (error instanceof Error && error.message === "calendar_selection_primary_required") throw error;
         if (error instanceof Error && error.message === "calendar_selection_actor_mismatch") throw error;
         throw new Error("calendar_selection_update_failed");

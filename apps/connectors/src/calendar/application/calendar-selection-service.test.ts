@@ -154,6 +154,45 @@ describe("Calendar selection service", () => {
     expect(JSON.stringify(rows)).not.toContain("Primary calendar");
   });
 
+  it("rejects selection results fetched under credentials replaced while provider discovery was in flight", async () => {
+    const db = await openDb();
+    await seedConnection(db);
+    let shouldDefer = false;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let finish!: () => void;
+    const waitForProvider = new Promise<void>((resolve) => { finish = resolve; });
+    const google = mockGoogle({ listCalendars: vi.fn(async () => {
+      if (shouldDefer) {
+        entered();
+        await waitForProvider;
+      }
+      return [primary, secondary];
+    }) });
+    const { service } = makeService(db, google);
+    await service.bootstrapPrimary({ actorId, accessToken: "fictional-access-token", requestId: "request-fictional" });
+    const primaryRef = (await service.get(principal())).items[0]!.calendarRef;
+    shouldDefer = true;
+    const pending = service.update(principal(), {
+      expectedVersion: 1,
+      calendars: [{ calendarRef: primaryRef, readEnabled: true, writeEnabled: true }],
+    });
+    await started;
+    const current = await db.read((handle) => repository.getConnection(handle, actorId));
+    const replacement = {
+      ...current!,
+      refreshTokenCiphertext: sealCalendarValue("fictional-reauthorized-refresh-token", "calendar_connections:" + actorId + ":refresh", keyring),
+      updatedAt: "2026-10-12T12:01:00.000Z",
+    };
+    await db.transaction((handle) => repository.replaceConnectionAuthorization(handle, replacement));
+    finish();
+    await expect(pending).rejects.toThrow("calendar_connection_changed");
+    expect(await db.read((handle) => repository.listCalendars(handle, actorId))).toEqual([]);
+    expect(await db.read((handle) => repository.getConnection(handle, actorId))).toMatchObject({
+      refreshTokenCiphertext: replacement.refreshTokenCiphertext,
+    });
+  });
+
   it("disables write after a provider role downgrade and denies Hermes Central configuration", async () => {
     const db = await openDb();
     await seedConnection(db);

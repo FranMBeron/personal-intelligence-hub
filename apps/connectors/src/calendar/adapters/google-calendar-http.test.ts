@@ -44,6 +44,16 @@ describe("Google Calendar HTTP adapter", () => {
     expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("authorization")).toBe("Bearer fictional-access-token");
   });
 
+  it("uses a generic calendar label when the provider omits the summary", async () => {
+    const privateId = "fictional-private-calendar@example.test";
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(calendarList([
+      calendar({ id: privateId, summary: null }),
+    ])));
+    const result = await makeAdapter(fetcher).listCalendars("fictional-token");
+    expect(result[0]?.summary).toBe("Unnamed calendar");
+    expect(result[0]?.summary).not.toContain(privateId);
+  });
+
   it("rejects repeated page cursors and stops at the pagination ceiling", async () => {
     const repeated = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(response(calendarList([calendar()], "repeat")))

@@ -157,7 +157,7 @@ export class GoogleCalendarHttpAdapter implements GoogleCalendarPort {
         if (!item.success) return fail("google_calendar_response_invalid");
         results.push({
           id: item.data.id,
-          summary: (item.data.summaryOverride ?? item.data.summary ?? item.data.id).slice(0, 200),
+          summary: (item.data.summaryOverride ?? item.data.summary ?? "Unnamed calendar").slice(0, 200),
           primary: item.data.primary ?? false,
           accessRole: item.data.accessRole,
           ...(item.data.timeZone === undefined ? {} : { timeZone: item.data.timeZone }),
