@@ -19,6 +19,7 @@ import {
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { openConnectorDatabase, type ConnectorDatabase } from "./database.js";
 import { loadMigrations } from "./migrations.js";
@@ -230,7 +231,8 @@ const readMigrations = (databasePath: string): readonly Readonly<{ name: string;
   const before = assertRegularFile(databasePath);
   let db: DatabaseSync | undefined;
   try {
-    db = new DatabaseSync(databasePath, { readOnly: true, allowExtension: false });
+    const immutablePath = pathToFileURL(databasePath).href + "?immutable=1";
+    db = new DatabaseSync(immutablePath, { readOnly: true, allowExtension: false });
     const rows = db.prepare("SELECT name, sha256 FROM connector_migrations ORDER BY name").all() as {
       name: unknown;
       sha256: unknown;

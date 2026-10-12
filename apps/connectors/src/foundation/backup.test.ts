@@ -307,4 +307,19 @@ describe("connector backups", () => {
       .toEqual({ size: 16777216 });
   });
 
+  it("leaves no SQLite sidecars in a completed backup directory", async () => {
+    const destinationDirectory = await createDestination();
+    await createConnectorBackup({
+      database: await createDatabase(),
+      destinationDirectory,
+      encryptionKeyVersions: [],
+      clock: fixedClock,
+    });
+
+    expect((await readdir(destinationDirectory)).sort()).toEqual([
+      "connectors.sqlite",
+      "manifest.json",
+    ]);
+  });
+
 });
