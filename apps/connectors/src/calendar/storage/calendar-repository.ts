@@ -98,6 +98,13 @@ const mapProposal = (row: ProposalRow | undefined): ProposalRecord | null => row
   ...optional({}, "safeReasonCode", row.safe_reason_code),
 });
 
+const requireOwnedEventReference = (database: SqliteHandle, actorId: string, eventRef: string | undefined): void => {
+  if (eventRef === undefined) return;
+  const row = database.prepare("SELECT 1 AS found FROM calendar_event_refs WHERE actor_id = :actorId AND event_ref = :eventRef")
+    .get<{ found: number }>({ actorId, eventRef });
+  if (row === undefined) fail("calendar_event_reference_not_found");
+};
+
 const selectConnection = (database: SqliteHandle, actorId: string) =>
   database.prepare("SELECT * FROM calendar_connections WHERE actor_id = :actorId").get<ConnectionRow>({ actorId });
 const selectProposal = (database: SqliteHandle, actorId: string, proposalId: string) =>
@@ -251,6 +258,7 @@ export const createCalendarRepository = (): CalendarRepository => ({
     requireChanges(result.changes);
   },
   insertProposal(database, proposal, idempotencyKey, requestHash) {
+    requireOwnedEventReference(database, proposal.actorId, proposal.eventRef);
     const previous = database.prepare("SELECT request_hash, proposal_id FROM calendar_idempotency WHERE actor_id = :actorId AND idempotency_key_hash = :idempotencyKey")
       .get<{ request_hash: string; proposal_id: string }>({ actorId: proposal.actorId, idempotencyKey });
     if (previous !== undefined) {
@@ -283,6 +291,7 @@ export const createCalendarRepository = (): CalendarRepository => ({
       .all<ProposalRow>({ limit }).map((row) => mapProposal(row)!);
   },
   transitionProposal(database, input) {
+    requireOwnedEventReference(database, input.actorId, input.eventRef);
     if (input.from.length === 0) fail("calendar_proposal_transition_invalid");
     const placeholders = input.from.map((_, index) => `:from${index}`).join(", ");
     const parameters: Record<string, string | number | null> = {

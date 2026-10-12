@@ -426,3 +426,71 @@ describe("Calendar repository", () => {
     databases.splice(databases.indexOf(reopened), 1);
   });
 });
+
+describe("proposal event ownership", () => {
+  it("rejects inserting proposals that reference missing or another actor's events", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await seedConnection(database, otherActor);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })]);
+      repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
+    });
+
+    await expect(database.transaction((db) => repository.insertProposal(db, proposal({ id: "proposal-missing-event", eventRef: "missing-event-ref" }), "idem-missing-event", "hash-missing-event"))).rejects.toThrow();
+    await expect(database.transaction((db) => repository.insertProposal(db, proposal({ id: "proposal-foreign-event", eventRef: "foreign-event-ref" }), "idem-foreign-event", "hash-foreign-event"))).rejects.toThrow();
+    await expect(count(database, "calendar_change_proposals")).resolves.toBe(0);
+  });
+
+  it("rejects assigning missing or another actor's events during proposal transitions", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await seedConnection(database, otherActor);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })]);
+      repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
+      repository.insertProposal(db, proposal({ id: "proposal-transition-ref" }), "idem-transition-ref", "hash-transition-ref");
+    });
+
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-transition-ref", expectedVersion: 1, from: ["pending"], to: "executing", eventRef: "missing-event-ref",
+    }))).rejects.toThrow();
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-transition-ref", expectedVersion: 1, from: ["pending"], to: "executing", eventRef: "foreign-event-ref",
+    }))).rejects.toThrow();
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-transition-ref"))).resolves.toMatchObject({ status: "pending", version: 1 });
+  });
+});
+
+describe("proposal foreign event ownership", () => {
+  it("rejects inserting a proposal for another actor's event", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await seedConnection(database, otherActor);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })]);
+      repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
+    });
+
+    await expect(database.transaction((db) => repository.insertProposal(db, proposal({ id: "proposal-foreign-only", eventRef: "foreign-event-ref" }), "idem-foreign-only", "hash-foreign-only"))).rejects.toThrow();
+  });
+
+  it("rejects transitioning a proposal to another actor's event", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await seedConnection(database, otherActor);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })]);
+      repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
+      repository.insertProposal(db, proposal(), "idem-transition-foreign", "hash-transition-foreign");
+    });
+
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-transition-ref", expectedVersion: 1, from: ["pending"], to: "executing", eventRef: "foreign-event-ref",
+    }))).rejects.toThrow();
+  });
+});
