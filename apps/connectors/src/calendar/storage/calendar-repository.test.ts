@@ -151,6 +151,23 @@ describe("Calendar repository", () => {
     await expect(count(database, "calendar_allowlist")).resolves.toBe(1);
   });
 
+  it("rejects calendar rows supplied for a different actor", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await database.write((db) => repository.saveConnection(db, connection({ actorId: otherActor })));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()]));
+
+    await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [
+      calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" }),
+    ]))).rejects.toThrow();
+
+    await expect(database.read((db) => repository.listCalendars(db, actorId))).resolves.toMatchObject([
+      { actorId, calendarRef: "calendar-ref-01" },
+    ]);
+    await expect(database.read((db) => repository.listCalendars(db, otherActor))).resolves.toEqual([]);
+    await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toMatchObject({ selectionVersion: 2 });
+  });
+
   it("rejects selection version conflicts without changing the saved selection", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
@@ -281,6 +298,39 @@ describe("Calendar repository", () => {
     expect(purged).toMatchObject({ payloadPurgedAt: "2026-10-10T00:00:00.000Z", status: "completed" });
   });
 
+  it("preserves active proposals and idempotency when saving the same selection again", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    const selectedCalendar = calendar();
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [selectedCalendar]);
+      repository.upsertEventReference(db, eventReference());
+      repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idempotency-resave", "request-resave");
+    });
+
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [selectedCalendar]));
+
+    await expect(database.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.not.toBeNull();
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "pending", eventRef: "event-ref-01" });
+    await expect(count(database, "calendar_idempotency")).resolves.toBe(1);
+    await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toMatchObject({ selectionVersion: 3 });
+  });
+
+  it("preserves active proposals and idempotency when stale event references are purged", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.upsertEventReference(db, eventReference({ lastObservedAt: "2026-10-01T00:00:00.000Z" }));
+      repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idempotency-stale-event", "request-stale-event");
+    });
+
+    await expect(database.write((db) => repository.purgeStaleEventReferences(db, "2026-10-10T00:00:00.000Z"))).resolves.toBe(1);
+    await expect(database.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.toBeNull();
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "pending", eventRef: "event-ref-01" });
+    await expect(count(database, "calendar_idempotency")).resolves.toBe(1);
+  });
+
   it("purges stale event references and aged idempotency rows at cutoffs", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
@@ -336,6 +386,32 @@ describe("Calendar repository", () => {
     await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toBeNull();
     await expect(count(database, "calendar_idempotency")).resolves.toBe(0);
     await expect(count(database, "calendar_change_audit")).resolves.toBe(1);
+  });
+
+  it("upgrades the event-reference foreign key without losing proposals or idempotency", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pih-calendar-upgrade-"));
+    directories.push(directory);
+    const databasePath = join(directory, "connectors.sqlite");
+    const oldMigrations = loadMigrations().filter(({ name }) => name === "0000_foundation" || name === "0200_calendar");
+    const oldDatabase = openConnectorDatabase(databasePath, oldMigrations);
+    databases.push(oldDatabase);
+    await oldDatabase.transaction((db) => {
+      repository.saveConnection(db, connection());
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.upsertEventReference(db, eventReference());
+      repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idempotency-migration", "request-migration");
+    });
+    await oldDatabase.close();
+    databases.splice(databases.indexOf(oldDatabase), 1);
+
+    const upgraded = openConnectorDatabase(databasePath);
+    databases.push(upgraded);
+    await expect(upgraded.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({
+      eventRef: "event-ref-01", status: "pending",
+    });
+    await expect(upgraded.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.not.toBeNull();
+    await expect(count(upgraded, "calendar_idempotency")).resolves.toBe(1);
+    await expect(upgraded.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
   });
 
   it("reopens the same file without reapplying migrations", async () => {

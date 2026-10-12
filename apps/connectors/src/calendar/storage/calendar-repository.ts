@@ -187,6 +187,9 @@ export const createCalendarRepository = (): CalendarRepository => ({
       .all<CalendarRow>({ actorId }).map(mapCalendar);
   },
   replaceCalendarSelection(database, actorId, expectedVersion, calendars) {
+    if (calendars.some((item) => item.actorId !== actorId)) {
+      fail("calendar_selection_actor_mismatch");
+    }
     const connectionRow = selectConnection(database, actorId);
     if (connectionRow === undefined || connectionRow.selection_version !== expectedVersion) fail("calendar_selection_version_conflict");
     const selected = calendars.filter((item) => item.readEnabled || item.writeEnabled);
@@ -197,14 +200,29 @@ export const createCalendarRepository = (): CalendarRepository => ({
     const update = database.prepare("UPDATE calendar_connections SET selection_version = selection_version + 1 WHERE actor_id = :actorId AND selection_version = :expectedVersion")
       .run({ actorId, expectedVersion });
     requireChanges(update.changes, "calendar_selection_version_conflict");
-    database.prepare("DELETE FROM calendar_allowlist WHERE actor_id = :actorId").run({ actorId });
-    const insert = database.prepare(
+
+    const selectedRefs = new Set(selected.map((item) => item.calendarRef));
+    const existing = database.prepare("SELECT calendar_ref, provider_calendar_blind_index FROM calendar_allowlist WHERE actor_id = :actorId")
+      .all<{ calendar_ref: string; provider_calendar_blind_index: string }>({ actorId });
+    const removeCalendar = database.prepare("DELETE FROM calendar_allowlist WHERE actor_id = :actorId AND calendar_ref = :calendarRef");
+    for (const row of existing) {
+      if (!selectedRefs.has(row.calendar_ref)) {
+        removeCalendar.run({ actorId, calendarRef: row.calendar_ref });
+      }
+    }
+
+    const upsert = database.prepare(
       "INSERT INTO calendar_allowlist(actor_id, calendar_ref, provider_calendar_id_ciphertext, provider_calendar_blind_index, display_name_ciphertext, provider_access_role, read_enabled, write_enabled, is_primary, last_verified_at) " +
-      "VALUES(:actorId, :calendarRef, :providerCalendarIdCiphertext, :providerCalendarBlindIndex, :displayNameCiphertext, :providerAccessRole, :readEnabled, :writeEnabled, :isPrimary, :lastVerifiedAt)",
+      "VALUES(:actorId, :calendarRef, :providerCalendarIdCiphertext, :providerCalendarBlindIndex, :displayNameCiphertext, :providerAccessRole, :readEnabled, :writeEnabled, :isPrimary, :lastVerifiedAt) " +
+      "ON CONFLICT(actor_id, calendar_ref) DO UPDATE SET provider_calendar_id_ciphertext = excluded.provider_calendar_id_ciphertext, provider_calendar_blind_index = excluded.provider_calendar_blind_index, display_name_ciphertext = excluded.display_name_ciphertext, provider_access_role = excluded.provider_access_role, read_enabled = excluded.read_enabled, write_enabled = excluded.write_enabled, is_primary = excluded.is_primary, last_verified_at = excluded.last_verified_at",
     );
     for (const item of selected) {
-      const result = insert.run({
-        actorId: item.actorId, calendarRef: item.calendarRef,
+      const previous = existing.find((row) => row.calendar_ref === item.calendarRef);
+      if (previous !== undefined && previous.provider_calendar_blind_index !== item.providerCalendarBlindIndex) {
+        removeCalendar.run({ actorId, calendarRef: item.calendarRef });
+      }
+      const result = upsert.run({
+        actorId, calendarRef: item.calendarRef,
         providerCalendarIdCiphertext: item.providerCalendarIdCiphertext,
         providerCalendarBlindIndex: item.providerCalendarBlindIndex,
         displayNameCiphertext: item.displayNameCiphertext, providerAccessRole: item.providerAccessRole,
