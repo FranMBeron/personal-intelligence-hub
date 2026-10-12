@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { Pool } from "pg";
@@ -57,10 +57,18 @@ const main = async (): Promise<void> => {
   await runMigrations(connectionString);
 };
 
-if (
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
-) {
+const isMainModule = (): boolean => {
+  const entrypoint = process.argv[1];
+  if (entrypoint === undefined || entrypoint === "-") return false;
+  try {
+    if (!statSync(entrypoint).isFile()) return false;
+    return import.meta.url === pathToFileURL(realpathSync(entrypoint)).href;
+  } catch {
+    return false;
+  }
+};
+
+if (isMainModule()) {
   void main().catch((error: unknown) => {
     process.stderr.write(
       `Database migration failed: ${error instanceof Error ? error.message : String(error)}\n`,

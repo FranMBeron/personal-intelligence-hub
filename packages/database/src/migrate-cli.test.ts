@@ -22,3 +22,26 @@ it("executes the migration CLI through a package symlink instead of silently exi
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+it("allows import-only use of the database package from stdin", () => {
+  const indexUrl = new URL("./index.ts", import.meta.url).href;
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-"], {
+    input: `await import(${JSON.stringify(indexUrl)}); console.log('imported');`,
+    encoding: "utf8",
+  });
+  expect(result.status).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(result.stdout.trim()).toBe("imported");
+});
+
+
+it.each([undefined, "/nonexistent-pih-entrypoint", tmpdir()])("ignores a missing or non-file entrypoint %s during library import", (entrypoint) => {
+  const indexUrl = new URL("./index.ts", import.meta.url).href;
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-"], {
+    input: `process.argv[1] = ${JSON.stringify(entrypoint)}; await import(${JSON.stringify(indexUrl)}); console.log('imported');`,
+    encoding: "utf8",
+  });
+  expect(result.status).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(result.stdout.trim()).toBe("imported");
+});
