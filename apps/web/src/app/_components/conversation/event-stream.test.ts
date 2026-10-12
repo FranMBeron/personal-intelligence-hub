@@ -73,6 +73,33 @@ describe("subscribeToConversationEvents", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("does not retry a 410 when the one-shot snapshot reload rejects", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let requestCount = 0;
+    const fetcher = vi.fn(async () => {
+      requestCount += 1;
+      if (requestCount > 1) controller.abort();
+      return new Response(null, { status: 410 });
+    });
+    const snapshotReload = vi.fn(async () => {
+      throw new Error("snapshot unavailable");
+    });
+    const task = subscribeToConversationEvents({
+      conversationId: "conversation-1",
+      initialCursor: "9",
+      signal: controller.signal,
+      fetcher,
+      onEvent: vi.fn(),
+      onCursorExpired: snapshotReload,
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await task;
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(snapshotReload).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
   it.each([401, 403])("does not retry after authentication status %s", async (status) => {
     const fetcher = vi.fn(async () => new Response(null, { status }));
     await subscribeToConversationEvents({

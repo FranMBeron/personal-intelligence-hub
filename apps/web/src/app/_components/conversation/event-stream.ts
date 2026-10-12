@@ -95,7 +95,11 @@ export const subscribeToConversationEvents = async ({
         { cache: "no-store", credentials: "same-origin", headers, signal },
       );
       if (response.status === 410) {
-        await onCursorExpired?.();
+        try {
+          await onCursorExpired?.();
+        } catch {
+          onUnavailable?.();
+        }
         return;
       }
       if (response.status === 401 || response.status === 403) {

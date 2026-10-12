@@ -42,8 +42,8 @@ export type ConversationAction =
   | Readonly<{
       type: "event.received";
       event: HermesEvent;
-      conversationId?: string;
-      generation?: number;
+      conversationId: string;
+      generation: number;
     }>;
 
 export const initialConversationState: ConversationState = {
@@ -107,9 +107,16 @@ const receiveEvent = (
   state: ConversationState,
   event: HermesEvent,
 ): ConversationState => {
-  if (state.seenEventIds.includes(event.id)) return state;
+  if (
+    state.seenEventIds.includes(event.id) ||
+    (state.eventCursor !== null && !cursorAfter(event.id, state.eventCursor))
+  ) return state;
   const seenEventIds = [...state.seenEventIds, event.id];
-  const base = { ...state, seenEventIds, eventCursor: event.id };
+  const base = {
+    ...state,
+    seenEventIds,
+    eventCursor: latestCursor(state.eventCursor, event.id),
+  };
 
   if (event.type === "message.accepted" || event.type === "message.completed") {
     const incoming = event.message;
@@ -173,6 +180,16 @@ const matchesGeneration = (
   generation: number,
 ): boolean => state.conversationId === conversationId && state.generation === generation;
 
+const cursorAfter = (candidate: string, current: string): boolean =>
+  candidate === current
+    ? false
+    : /^\d+$/u.test(candidate) && /^\d+$/u.test(current)
+      ? BigInt(candidate) > BigInt(current)
+      : candidate.localeCompare(current, undefined, { numeric: true }) > 0;
+
+const latestCursor = (current: string | null, candidate: string): string =>
+  current === null || cursorAfter(candidate, current) ? candidate : current;
+
 export const conversationReducer = (
   state: ConversationState,
   action: ConversationAction,
@@ -190,10 +207,9 @@ export const conversationReducer = (
       if (!matchesGeneration(state, action.conversationId, action.generation)) return state;
       return {
         ...state,
-        messages: mergeMessages([], action.history.items),
-        eventCursor: action.history.streamCursor,
+        messages: mergeMessages(state.messages, action.history.items),
+        eventCursor: latestCursor(state.eventCursor, action.history.streamCursor),
         pageInfo: action.history.pageInfo,
-        seenEventIds: [],
       };
     case "history.prepended":
       if (!matchesGeneration(state, action.conversationId, action.generation)) return state;
@@ -251,11 +267,7 @@ export const conversationReducer = (
       };
     }
     case "event.received":
-      if (
-        action.conversationId !== undefined &&
-        action.generation !== undefined &&
-        !matchesGeneration(state, action.conversationId, action.generation)
-      ) return state;
+      if (!matchesGeneration(state, action.conversationId, action.generation)) return state;
       return receiveEvent(state, action.event);
   }
 };

@@ -86,20 +86,30 @@ describe("conversationReducer", () => {
       },
     };
 
-    const accepted = conversationReducer(initialConversationState, {
+    const selected = conversationReducer(initialConversationState, {
+      type: "thread.selected",
+      conversationId: "conversation-01",
+      generation: 1,
+    });
+    const context = { conversationId: "conversation-01", generation: 1 };
+    const accepted = conversationReducer(selected, {
       type: "event.received",
+      ...context,
       event: acceptedEvent,
     });
     const streamed = conversationReducer(accepted, {
       type: "event.received",
+      ...context,
       event: deltaEvent,
     });
     const duplicate = conversationReducer(streamed, {
       type: "event.received",
+      ...context,
       event: deltaEvent,
     });
     const completed = conversationReducer(duplicate, {
       type: "event.received",
+      ...context,
       event: completedEvent,
     });
 
@@ -133,8 +143,15 @@ describe("conversationReducer", () => {
   });
 
   it("ignores deltas for unknown messages", () => {
-    const next = conversationReducer(initialConversationState, {
+    const selected = conversationReducer(initialConversationState, {
+      type: "thread.selected",
+      conversationId: "conversation-01",
+      generation: 1,
+    });
+    const next = conversationReducer(selected, {
       type: "event.received",
+      conversationId: "conversation-01",
+      generation: 1,
       event: {
         id: "event-04",
         type: "message.delta",
@@ -306,6 +323,85 @@ describe("conversation hydration and generations", () => {
     expect(prepended.messages.map(({ id }) => id)).toEqual(["older-message", "current-message"]);
     expect(prepended.eventCursor).toBe("21");
     expect(prepended.pageInfo).toEqual({ nextCursor: "older-cursor" as MessageHistory["pageInfo"]["nextCursor"], hasNextPage: true });
+  });
+
+  it("reconciles a late same-generation snapshot without removing live state or rewinding the cursor", () => {
+    const selected = conversationReducer(initialConversationState, {
+      type: "thread.selected",
+      conversationId: "conversation-b",
+      generation: 3,
+    });
+    const liveMessage = messageFixture({
+      id: "live-message",
+      conversationId: "conversation-b",
+      deliveryState: "accepted",
+      createdAt: "2026-10-11T12:00:00.000Z",
+    });
+    const optimistic = messageFixture({
+      id: "optimistic-message",
+      conversationId: "conversation-b",
+      role: "user",
+      deliveryState: "sending",
+      createdAt: "2026-10-12T12:00:00.000Z",
+    });
+    const afterLiveEvent = conversationReducer(selected, {
+      type: "event.received",
+      conversationId: "conversation-b",
+      generation: 3,
+      event: { id: "21", type: "message.accepted", occurredAt, message: liveMessage },
+    });
+    const withOptimistic = conversationReducer(afterLiveEvent, {
+      type: "message.submitted",
+      message: optimistic,
+      idempotencyKey: "retry-stable-key",
+    });
+    const reloaded = conversationReducer(withOptimistic, {
+      type: "history.loaded",
+      conversationId: "conversation-b",
+      generation: 3,
+      history: history([
+        messageFixture({
+          id: "snapshot-message",
+          conversationId: "conversation-b",
+          createdAt: "2026-10-10T12:00:00.000Z",
+        }),
+        { ...liveMessage, deliveryState: "accepted" },
+      ], "20"),
+    });
+
+    expect(reloaded.messages.map(({ id }) => id)).toEqual([
+      "snapshot-message",
+      "live-message",
+      "optimistic-message",
+    ]);
+    expect(reloaded.eventCursor).toBe("21");
+    expect(reloaded.seenEventIds).toContain("21");
+    expect(reloaded.messages.find(({ id }) => id === "optimistic-message")).toMatchObject({
+      deliveryState: "sending",
+      idempotencyKey: "retry-stable-key",
+    });
+  });
+
+  it("ignores unseen events older than the applied cursor", () => {
+    const selected = conversationReducer(initialConversationState, {
+      type: "thread.selected",
+      conversationId: "conversation-b",
+      generation: 3,
+    });
+    const snapshot = conversationReducer(selected, {
+      type: "history.loaded",
+      conversationId: "conversation-b",
+      generation: 3,
+      history: history([], "21"),
+    });
+    const older = conversationReducer(snapshot, {
+      type: "event.received",
+      conversationId: "conversation-b",
+      generation: 3,
+      event: { id: "20", type: "heartbeat", occurredAt },
+    });
+    expect(older).toBe(snapshot);
+    expect(older.eventCursor).toBe("21");
   });
 
   it("keeps the same idempotency key when a failed message is retried", () => {
