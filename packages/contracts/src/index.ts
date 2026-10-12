@@ -11,3 +11,4 @@ export * from "./preferences.js";
 export * from "./relations.js";
 export * from "./tags.js";
 export * from "./tasks.js";
+export * from "./calendar.js";
