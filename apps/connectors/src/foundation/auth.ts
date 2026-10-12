@@ -325,6 +325,16 @@ export const installConnectorAuthentication = (
   config: ConnectorsConfig,
   options: ConnectorAuthenticationOptions = {},
 ): void => {
+  app.setChildLoggerFactory((logger, bindings, childOptions) =>
+    logger.child(bindings, {
+      ...childOptions,
+      serializers: {
+        ...childOptions.serializers,
+        req: (request) => ({ method: request.method }),
+      },
+    }),
+  );
+
   const configuredLimit = options.preAuthenticationLimit;
   const processWideMax = positiveOption(
     configuredLimit?.processWideMax,

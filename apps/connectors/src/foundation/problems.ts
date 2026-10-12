@@ -79,7 +79,7 @@ export const installConnectorProblemHandler = (
 ): void => {
   app.setErrorHandler((error, request, reply) => {
     const requestId = requestIdFactory();
-    const instance = request.url.split("?", 1)[0] ?? request.url;
+    const instance = request.routeOptions.url ?? "/unmatched";
     const problem = toConnectorProblem(error, requestId, instance);
     if (problem.status >= 500) {
       request.log.error(

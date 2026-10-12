@@ -3,6 +3,7 @@ import type {
   ConnectorScope,
   ConnectorServiceId,
 } from "@personal-intelligence-hub/contracts";
+import { Writable } from "node:stream";
 import fastify from "fastify";
 import { SignJWT } from "jose";
 import { afterEach, describe, expect, it } from "vitest";
@@ -561,6 +562,147 @@ describe("connector authentication", () => {
     });
     expect(response.body).not.toContain(serviceToken);
     expect(response.body).not.toContain(jwt);
+  });
+
+  it("keeps credentials and claims out of logger-enabled responses and logs", async () => {
+    const config = makeConfig();
+    const chunks: string[] = [];
+    const stream = new Writable({
+      write(chunk, _encoding, callback) {
+        chunks.push(String(chunk));
+        callback();
+      },
+    });
+    const app = fastify({ logger: { level: "info", stream } });
+    apps.push(app);
+    installConnectorAuthentication(app, config);
+    app.get("/v1/test", async () => ({ status: "ok" }));
+    app.get("/v1/items/:itemId", async () => ({ status: "ok" }));
+    app.get("/v1/fail", async () => {
+      throw new Error("handler-error-private-value");
+    });
+
+    const serviceToken = credentialFor(config, "hermes-central").serviceToken;
+    const decodedSubject = "decoded-subject-private-value";
+    const decodedRequestId = "decoded-request-private-value";
+    const deniedAuthorization =
+      "Bearer " +
+      (await delegatedToken(config, {
+        issuerServiceId: "hermes-central",
+        subject: decodedSubject,
+        requestId: decodedRequestId,
+        actorType: "agent",
+        scopes: ["calendar:confirm"],
+      }));
+    const failureAuthorization =
+      "Bearer " +
+      (await delegatedToken(config, {
+        subject: decodedSubject,
+        requestId: decodedRequestId,
+      }));
+    const queryCredential = "query-credential-private-value";
+    const matchedPathCredential = "matched-path-private-value";
+    const unmatchedPathCredential = "unmatched-path-private-value";
+    const digestIdentifier = "invalid:" + "a".repeat(64);
+
+    const queryResponse = await app.inject({
+      method: "GET",
+      url:
+        "/v1/test?service_token=" +
+        encodeURIComponent(queryCredential) +
+        "&authorization=" +
+        encodeURIComponent(deniedAuthorization) +
+        "&bucket=" +
+        encodeURIComponent(digestIdentifier),
+    });
+    const matchedPathResponse = await app.inject({
+      method: "GET",
+      url: "/v1/items/" + matchedPathCredential,
+    });
+    const unmatchedPathResponse = await app.inject({
+      method: "GET",
+      url: "/v1/" + unmatchedPathCredential,
+    });
+    const deniedResponse = await app.inject({
+      method: "GET",
+      url: "/v1/test",
+      headers: {
+        "x-pih-service-token": serviceToken,
+        authorization: deniedAuthorization,
+      },
+    });
+    const failureResponse = await app.inject({
+      method: "GET",
+      url: "/v1/fail",
+      headers: {
+        "x-pih-service-token": credentialFor(config, "pih-web").serviceToken,
+        authorization: failureAuthorization,
+      },
+    });
+
+    expect(deniedResponse.statusCode).toBe(403);
+    expect(failureResponse.statusCode).toBe(500);
+
+    const responseBodies = [
+      queryResponse.body,
+      matchedPathResponse.body,
+      unmatchedPathResponse.body,
+      deniedResponse.body,
+      failureResponse.body,
+    ];
+    const logLines = chunks
+      .join("")
+      .split(/\r?\n/u)
+      .filter((line) => line.length > 0);
+    const secrets = [
+      serviceToken,
+      credentialFor(config, "pih-web").serviceToken,
+      deniedAuthorization,
+      failureAuthorization,
+      decodedSubject,
+      decodedRequestId,
+      queryCredential,
+      matchedPathCredential,
+      unmatchedPathCredential,
+      digestIdentifier,
+      "handler-error-private-value",
+    ];
+
+    for (const secret of secrets) {
+      for (const body of responseBodies) expect(body).not.toContain(secret);
+      for (const line of logLines) expect(line).not.toContain(secret);
+    }
+    for (const line of logLines) {
+      expect(line).not.toMatch(/invalid:[a-f0-9]{64}/u);
+    }
+
+    expect(queryResponse.json()).toMatchObject({ instance: "/v1/test" });
+    expect(matchedPathResponse.json()).toMatchObject({
+      instance: "/v1/items/:itemId",
+    });
+    expect(unmatchedPathResponse.json()).toMatchObject({
+      instance: "/unmatched",
+    });
+
+    const parsedLogLines = logLines.map(
+      (line) => JSON.parse(line) as Record<string, unknown>,
+    );
+    const incomingRequestLogs = parsedLogLines.filter(
+      (entry) => entry.msg === "incoming request",
+    );
+    expect(incomingRequestLogs).toHaveLength(5);
+    for (const entry of incomingRequestLogs) {
+      expect(entry.req).toEqual({ method: "GET" });
+    }
+
+    const failureProblem = failureResponse.json();
+    expect(parsedLogLines).toContainEqual(
+      expect.objectContaining({
+        code: "internal_error",
+        requestId: failureProblem.requestId,
+        msg: "Connector request failed",
+      }),
+    );
   });
 
   it("authorizes only explicitly allowed services", async () => {
