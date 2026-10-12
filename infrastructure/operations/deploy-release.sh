@@ -44,6 +44,19 @@ if grep -Eq '^PIH_(API|WEB|POSTGRES)_IMAGE=' "$base_environment"; then
   exit 1
 fi
 
+# A release SHA is write-once: never replace metadata or image tags that may
+# still be required by the active deployment or a later rollback.
+if [ -e "$release_environment" ]; then
+  echo "Release metadata already exists; deploy a new Git SHA." >&2
+  exit 1
+fi
+for image_name in api web postgres; do
+  if docker image inspect "pih-$image_name:$release_sha" > /dev/null 2>&1; then
+    echo "Release image already exists; deploy a new Git SHA." >&2
+    exit 1
+  fi
+done
+
 mkdir -p "$pih_root/config/releases"
 environment_temporary="$release_environment.tmp.$$"
 cp "$base_environment" "$environment_temporary"

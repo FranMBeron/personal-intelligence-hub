@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -88,6 +88,43 @@ describe("host operation scripts", () => {
     expect(application).toContain("ProtectSystem=strict");
     expect(backup).toContain("OnFailure=personal-intelligence-hub-alert@%n.service");
     expect(backup).toContain("EnvironmentFile=/srv/personal-intelligence-hub/secrets/restic.env");
+  });
+});
+
+describe("immutable release deployment", () => {
+  it.each(["metadata", "image"])("rejects a reused SHA with existing %s before writes or builds", async (existing) => {
+    const root = await mkdtemp(join(tmpdir(), "pih-deploy-reuse-"));
+    temporaryDirectories.push(root);
+    const sha = "a".repeat(40);
+    const release = join(root, "releases", sha);
+    const bin = join(root, "bin");
+    await mkdir(join(release, "infrastructure", "docker"), { recursive: true });
+    await mkdir(join(root, "config", "releases"), { recursive: true });
+    await mkdir(bin);
+    await writeFile(join(release, "infrastructure", "docker", "compose.production.yaml"), "services: {}\n");
+    await writeFile(join(root, "config", "compose.env"), "POSTGRES_DB=fixture\n");
+    const environment = join(root, "config", "releases", `${sha}.compose.env`);
+    const original = "PIH_API_IMAGE=sha256:fixture-api\nPIH_WEB_IMAGE=sha256:fixture-web\nPIH_POSTGRES_IMAGE=sha256:fixture-postgres\n";
+    if (existing === "metadata") await writeFile(environment, original);
+    await symlink(release, join(root, "current"));
+    for (const command of ["jq", "curl", "syft", "grype"]) {
+      await writeFile(join(bin, command), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+    }
+    const log = join(root, "docker.log");
+    await writeFile(join(bin, "docker"), `#!/bin/sh
+if [ "$1 $2" = "image inspect" ]; then
+  [ "$EXISTING_IMAGE" = "yes" ] && exit 0
+  exit 1
+fi
+printf '%s\\n' "$*" >> "$DEPLOY_TEST_LOG"
+exit 42
+`, { mode: 0o700 });
+    await expect(exec("sh", [`${operationsRoot}/deploy-release.sh`, sha], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PIH_ROOT: root, EXISTING_IMAGE: existing === "image" ? "yes" : "no", DEPLOY_TEST_LOG: log },
+    })).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("already exists") });
+    if (existing === "metadata") await expect(readFile(environment, "utf8")).resolves.toBe(original);
+    else await expect(readFile(environment, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(log, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

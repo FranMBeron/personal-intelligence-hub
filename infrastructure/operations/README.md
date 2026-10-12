@@ -96,3 +96,6 @@ PostgreSQL have no host ports. Point a dedicated Tailscale Serve HTTPS port at
 the web listener without resetting any existing Serve routes. Never enable
 Funnel. The alert webhook must be HTTPS or a loopback HTTP endpoint and belongs
 in the root-readable `secrets/alert.env` file.
+
+
+Release identifiers are write-once. Deployment rejects a SHA if its release environment or any production image tag already exists, before writing metadata or building images. Use a new reviewed commit for a retry; use the rollback command to select an existing release. This preserves active and historical rollback inputs even when a new deployment fails.
