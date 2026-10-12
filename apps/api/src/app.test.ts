@@ -436,7 +436,9 @@ describe("problem mapping", () => {
     [new IdempotencyKeyReusedError(), "idempotency_key_reused", 409, "Idempotency key reused", "The idempotency key was already used for a different request."],
     [new InvalidCursorError(), "invalid_cursor", 400, "Invalid cursor", "The cursor is invalid for this request."],
     [new CursorExpiredError(), "cursor_expired", 409, "Cursor expired", "The cursor is older than the retained event history."],
+    [{ code: "event_cursor_expired" }, "event_cursor_expired", 410, "Event cursor expired", "The event cursor is older than the retained event history."],
     [new ConflictError(), "conflict", 409, "Conflict", "The operation conflicts with the current resource state."],
+    [{ code: "rate_limit_exceeded" }, "rate_limit_exceeded", 429, "Rate limit exceeded", "The connector request rate limit was exceeded."],
     [new ApplicationError("internal_error"), "internal_error", 500, "Internal server error", "The server could not complete the request."],
     [new DependencyUnavailableError(), "dependency_unavailable", 503, "Dependency unavailable", "A required dependency is unavailable."],
   ] as const)(
