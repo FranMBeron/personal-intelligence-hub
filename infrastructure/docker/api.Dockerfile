@@ -18,7 +18,7 @@ COPY . .
 RUN pnpm --filter @personal-intelligence-hub/contracts build \
  && pnpm --filter @personal-intelligence-hub/database build \
  && pnpm --filter @personal-intelligence-hub/api build \
- && pnpm --offline --filter @personal-intelligence-hub/api deploy --prod /opt/api
+ && pnpm --filter @personal-intelligence-hub/api deploy --prod /opt/api
 
 FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production
