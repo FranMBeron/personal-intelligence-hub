@@ -36,13 +36,13 @@ export class DelegationRepository {
     const result=connection.prepare(
       "INSERT INTO hermes_delegations(id,actor_id,source_agent_id,target_agent_id,source_conversation_id,upstream_session_id,upstream_run_id,idempotency_key,request_hash,state,safe_summary,result_summary,created_at,updated_at,completed_at) " +
       "SELECT :id,:actorId,:sourceAgentId,:targetAgentId,:sourceConversationId,:upstreamSessionId,:upstreamRunId,:idempotencyKey,:requestHash,:state,:safeSummary,:resultSummary,:createdAt,:updatedAt,:completedAt " +
-      "WHERE :sourceConversationId IS NULL OR EXISTS (SELECT 1 FROM hermes_conversations WHERE id=:sourceConversationId AND actor_id=:actorId)",
+      "WHERE :sourceConversationId IS NULL OR EXISTS (SELECT 1 FROM hermes_conversations WHERE id=:sourceConversationId AND actor_id=:actorId AND agent_id=:sourceAgentId)",
     ).run({...input,sourceConversationId:input.sourceConversationId??null,upstreamRunId:input.upstreamRunId??null,safeSummary:input.safeSummary??null,resultSummary:input.resultSummary??null,completedAt:input.completedAt??null});
     if(result.changes!==1)fail("hermes_delegation_conversation_not_found");
     return this.getOwned(connection,input.actorId,input.id)??fail("hermes_delegation_missing");
   }
-  attachRun(connection:SqliteHandle,id:string,runId:string):void {
-    const result=connection.prepare("UPDATE hermes_delegations SET upstream_run_id=:runId WHERE id=:id AND state IN ('queued','running')").run({id,runId});
+  attachRun(connection:SqliteHandle,actorId:string,id:string,runId:string):void {
+    const result=connection.prepare("UPDATE hermes_delegations SET upstream_run_id=:runId WHERE actor_id=:actorId AND id=:id AND state IN ('queued','running')").run({actorId,id,runId});
     if(result.changes!==1)fail("hermes_delegation_state_conflict");
   }
   transition(connection:SqliteHandle,input:DelegationTransition):void {

@@ -97,5 +97,5 @@ CREATE TABLE hermes_delegations (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   completed_at TEXT,
-  UNIQUE (source_agent_id, idempotency_key)
+  UNIQUE (actor_id, source_agent_id, idempotency_key)
 ) STRICT;

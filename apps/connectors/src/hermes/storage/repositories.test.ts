@@ -69,7 +69,7 @@ const createConversation = async (database: ConnectorDatabase, overrides: Partia
   const repository = new ConversationRepository();
   await database.transaction((db) => {
     repository.reserve(db, reserveInput(overrides));
-    repository.markReady(db, overrides.id ?? conversationId);
+    repository.markReady(db, overrides.actorId ?? actorId, overrides.id ?? conversationId);
   });
   return repository;
 };
@@ -138,11 +138,11 @@ describe("Hermes repositories", () => {
     const repository = new ConversationRepository();
     await database.transaction((db) => {
       repository.reserve(db, reserveInput({ id: "conversation-a", isMain: false, updatedAt: now }));
-      repository.markReady(db, "conversation-a");
+      repository.markReady(db, actorId, "conversation-a");
       repository.reserve(db, reserveInput({ id: "conversation-b", isMain: false, updatedAt: later }));
-      repository.markReady(db, "conversation-b");
+      repository.markReady(db, actorId, "conversation-b");
       repository.reserve(db, reserveInput({ id: "conversation-foreign", actorId: otherActor, isMain: false }));
-      repository.markReady(db, "conversation-foreign");
+      repository.markReady(db, otherActor, "conversation-foreign");
     });
     const first = await database.read((db) => repository.listOwned(db, actorId, query(1)));
     expect(first.items.map(({ id }) => id)).toEqual(["conversation-b"]);
@@ -173,7 +173,7 @@ describe("Hermes repositories", () => {
     const events = new EventRepository();
     await database.transaction((db) => {
       messages.insert(db, storedMessage());
-      events.append(db, conversationId, HermesEventSchema.parse({
+      events.append(db, actorId, conversationId, HermesEventSchema.parse({
         id: "temporary-event-id", type: "heartbeat", occurredAt: now,
       }), later);
     });
@@ -190,9 +190,9 @@ describe("Hermes repositories", () => {
     const repository = new ConversationRepository();
     await database.transaction((db) => {
       repository.reserve(db, reserveInput({ id: conversationId }));
-      repository.markReady(db, conversationId);
+      repository.markReady(db, actorId, conversationId);
       repository.reserve(db, reserveInput({ id: "conversation-other", actorId: otherActor, isMain: false }));
-      repository.markReady(db, "conversation-other");
+      repository.markReady(db, otherActor, "conversation-other");
     });
     await expect(database.transaction((db) => new MessageRepository().insert(db, storedMessage({
       id: "message-cross-actor", conversationId: "conversation-other",
@@ -204,12 +204,12 @@ describe("Hermes repositories", () => {
     await createConversation(database);
     const repository = new EventRepository();
     const event = HermesEventSchema.parse({ id: "temporary", type: "heartbeat", occurredAt: now }) as HermesEvent;
-    const sequence = await database.transaction((db) => repository.append(db, conversationId, event, "2026-10-12T12:30:00.000Z"));
+    const sequence = await database.transaction((db) => repository.append(db, actorId, conversationId, event, "2026-10-12T12:30:00.000Z"));
     expect(sequence).toBe("1");
     await database.write((db) => repository.deleteExpired(db, "2026-10-12T13:00:00.000Z"));
-    await expect(database.read((db) => repository.latest(db, conversationId))).resolves.toBe(1n);
-    await expect(database.read((db) => repository.after(db, conversationId, 0n, 10))).rejects.toThrow();
-    await expect(database.read((db) => repository.cursorFloor(db, conversationId))).resolves.toBe(1n);
+    await expect(database.read((db) => repository.latest(db, actorId, conversationId))).resolves.toBe(1n);
+    await expect(database.read((db) => repository.after(db, actorId, conversationId, 0n, 10))).rejects.toThrow();
+    await expect(database.read((db) => repository.cursorFloor(db, actorId, conversationId))).resolves.toBe(1n);
   });
 
   it("replays same-hash idempotency reservations and conflicts on changed requests", async () => {
@@ -289,7 +289,7 @@ describe("Hermes repositories", () => {
       }));
     });
     await expect(database.read((db) => repository.getOwned(db, otherActor, "delegation-fictional-01"))).resolves.toBeNull();
-    await database.transaction((db) => repository.attachRun(db, "delegation-fictional-01", "run-fictional"));
+    await database.transaction((db) => repository.attachRun(db, actorId, "delegation-fictional-01", "run-fictional"));
     await database.transaction((db) => repository.transition(db, {
       actorId, id: "delegation-fictional-01", expectedState: "queued",
       state: "running", updatedAt: later,
@@ -297,6 +297,73 @@ describe("Hermes repositories", () => {
     await expect(database.read((db) => repository.listOwned(db, actorId, delegationQuery()))).resolves.toMatchObject({
       items: [{ id: "delegation-fictional-01", state: "running" }],
     });
+  });
+
+  it("does not let a different actor mark a conversation ready", async () => {
+    const database = await configuredDatabase();
+    const repository = new ConversationRepository();
+    await database.transaction((db) => repository.reserve(db, reserveInput({ actorId: otherActor })));
+    await expect(database.transaction((db) => repository.markReady(db, actorId, conversationId))).rejects.toThrow();
+    await expect(database.read((db) => repository.getOwned(db, otherActor, conversationId)))
+      .resolves.toMatchObject({ provisionState: "pending" });
+    await database.transaction((db) => repository.markReady(db, otherActor, conversationId));
+    await expect(database.read((db) => repository.getOwned(db, otherActor, conversationId)))
+      .resolves.toMatchObject({ provisionState: "ready" });
+  });
+
+  it("binds event append and replay to the owning actor", async () => {
+    const database = await configuredDatabase();
+    await createConversation(database, { actorId: otherActor });
+    const repository = new EventRepository();
+    const event = HermesEventSchema.parse({ id: "event-actor", type: "heartbeat", occurredAt: now });
+    await expect(database.transaction((db) => repository.append(
+      db, otherActor, conversationId, event, later,
+    ))).resolves.toBe("1");
+    await expect(database.read((db) => repository.after(db, actorId, conversationId, 0n, 10))).rejects.toThrow();
+    await expect(database.read((db) => repository.after(db, otherActor, conversationId, 0n, 10))).resolves.toHaveLength(1);
+  });
+
+  it("does not let a different actor attach a run to a delegation", async () => {
+    const database = await configuredDatabase();
+    await createConversation(database);
+    const repository = new DelegationRepository();
+    await database.transaction((db) => repository.reserve(db, delegationInput()));
+    await expect(database.transaction((db) => repository.attachRun(
+      db, otherActor, "delegation-fictional-01", "run-foreign",
+    ))).rejects.toThrow();
+    await expect(database.read((db) => repository.getOwned(db, actorId, "delegation-fictional-01")))
+      .resolves.not.toHaveProperty("upstreamRunId");
+    await database.transaction((db) => repository.attachRun(
+      db, actorId, "delegation-fictional-01", "run-owned",
+    ));
+    await expect(database.read((db) => repository.getOwned(db, actorId, "delegation-fictional-01")))
+      .resolves.toMatchObject({ upstreamRunId: "run-owned" });
+  });
+
+  it("rejects a delegation source conversation owned by another actor", async () => {
+    const database = await configuredDatabase();
+    await createConversation(database);
+    const repository = new DelegationRepository();
+    await expect(database.transaction((db) => repository.reserve(db, delegationInput({
+      id: "delegation-cross-actor",
+      actorId: otherActor,
+      sourceConversationId: conversationId,
+      idempotencyKey: "key-cross-actor",
+    })))).rejects.toThrow();
+  });
+
+  it("rejects a delegation whose source conversation belongs to another profile", async () => {
+    const database = await configuredDatabase();
+    const profilesRepository = new ProfileRepository();
+    await database.transaction((db) => profilesRepository.replaceConfigured(db, [
+      ...profiles,
+      { id: "profile-other-fictional", displayName: "Other fictional", enabled: true },
+    ], now));
+    await createConversation(database);
+    const repository = new DelegationRepository();
+    await expect(database.transaction((db) => repository.reserve(db, delegationInput({
+      sourceAgentId: "profile-other-fictional",
+    })))).rejects.toThrow();
   });
 
   it("paginates delegations and excludes rows owned by another actor", async () => {

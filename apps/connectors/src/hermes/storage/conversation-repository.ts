@@ -114,9 +114,9 @@ export class ConversationRepository {
     return this.getById(connection, input.id) ?? fail("hermes_conversation_missing");
   }
 
-  markReady(connection: SqliteHandle, id: string): void {
-    const result = connection.prepare("UPDATE hermes_conversations SET provision_state = 'ready' WHERE id = :id AND provision_state = 'pending'")
-      .run({ id });
+  markReady(connection: SqliteHandle, actorId: string, id: string): void {
+    const result = connection.prepare("UPDATE hermes_conversations SET provision_state = 'ready' WHERE actor_id = :actorId AND id = :id AND provision_state = 'pending'")
+      .run({ actorId, id });
     if (result.changes !== 1) fail("hermes_conversation_state_conflict");
   }
 

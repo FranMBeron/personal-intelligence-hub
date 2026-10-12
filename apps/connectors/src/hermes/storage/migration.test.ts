@@ -76,6 +76,26 @@ describe("Hermes projection migration", () => {
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
   });
 
+  it("scopes delegation idempotency to actor and source profile", async () => {
+    const database = await createDatabase();
+    await database.transaction((db) => {
+      db.prepare("INSERT INTO hermes_profiles(id, display_name, enabled, updated_at) VALUES('profile-fictional', 'Fictional', 1, :now)").run({ now });
+      db.prepare("INSERT INTO hermes_profiles(id, display_name, enabled, updated_at) VALUES('profile-other', 'Other fictional', 1, :now)").run({ now });
+    });
+    const insertSql =
+      "INSERT INTO hermes_delegations(id, actor_id, source_agent_id, target_agent_id, upstream_session_id, idempotency_key, request_hash, state, created_at, updated_at) " +
+      "VALUES(:id, :actorId, :profileId, :profileId, :session, 'same-key', 'same-hash', 'queued', :now, :now)";
+    await database.transaction((db) => {
+      const insert = db.prepare(insertSql);
+      insert.run({ id: "delegation-a", actorId: "actor-a", profileId: "profile-fictional", session: "session-a", now });
+      insert.run({ id: "delegation-b", actorId: "actor-b", profileId: "profile-fictional", session: "session-b", now });
+      insert.run({ id: "delegation-a-other-profile", actorId: "actor-a", profileId: "profile-other", session: "session-a-other", now });
+    });
+    await expect(database.write((db) => db.prepare(insertSql).run({
+      id: "delegation-a-replay", actorId: "actor-a", profileId: "profile-fictional", session: "session-a-2", now,
+    }))).rejects.toThrow();
+  });
+
   it("enforces foreign keys for conversation-owned rows", async () => {
     const database = await createDatabase();
     await expect(database.write((db) => db.prepare(
