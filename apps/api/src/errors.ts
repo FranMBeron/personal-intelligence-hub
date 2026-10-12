@@ -43,7 +43,7 @@ const problems: Readonly<Record<ApiProblemCode, ProblemDefinition>> = {
   too_many_requests: {
     status: 429,
     title: "Too many requests",
-    detail: "The configured concurrency limit was reached.",
+    detail: "The configured request limit was reached.",
   },
   validation_failed: {
     status: 422,

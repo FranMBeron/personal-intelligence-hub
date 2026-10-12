@@ -40,6 +40,7 @@ const commonProblems = {
   401: problem("Authentication required."),
   403: problem("The principal is not authorized."),
   404: problem("The resource was not found."),
+  429: problem("The configured request limit was reached."),
 } as const;
 
 export const readRouteSchema = (

@@ -1,3 +1,4 @@
+import rateLimit from "@fastify/rate-limit";
 import {
   ETagSchema,
   IdempotencyKeySchema,
@@ -8,7 +9,7 @@ import {
   type Principal,
   type Scope,
 } from "@personal-intelligence-hub/contracts";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 
 import {
   ApplicationError,
@@ -88,7 +89,17 @@ export const installAuthentication = (
   app.decorateRequest("principal");
   app.decorateRequest("mutationContext");
 
-  app.addHook("onRequest", async (request) => {
+  // A shared socket-address budget also bounds missing/invalid credentials.
+  // Identity and forwarded headers are untrusted before authentication.
+  void app.register(rateLimit, {
+    global: false,
+    max: 1_000,
+    timeWindow: 60_000,
+    allowList: (request) => !protectedPath(request.url),
+    errorResponseBuilder: () => new ApplicationError("too_many_requests"),
+  });
+
+  const authenticateRequest = async (request: FastifyRequest): Promise<void> => {
     if (!protectedPath(request.url)) {
       return;
     }
@@ -177,5 +188,13 @@ export const installAuthentication = (
       ...(expectedVersion === undefined ? {} : { expectedVersion }),
       ...(ifMatch === undefined ? {} : { expectedEtag: ifMatch }),
     };
+  };
+
+  app.after((error) => {
+    if (error) throw error;
+    // Parent hooks run before route hooks, so install the limiter here rather
+    // than relying on the plugin's global onRoute hook after authentication.
+    app.addHook("onRequest", app.rateLimit());
+    app.addHook("onRequest", authenticateRequest);
   });
 };

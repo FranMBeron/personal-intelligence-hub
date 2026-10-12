@@ -3178,6 +3178,24 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
           }
         }
       }
@@ -3279,6 +3297,24 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
           }
         }
       }
@@ -3365,6 +3401,24 @@
           },
           "422": {
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
             "headers": {
               "X-Request-Id": {
                 "schema": {
@@ -3489,6 +3543,24 @@
           },
           "422": {
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
             "headers": {
               "X-Request-Id": {
                 "schema": {
@@ -3710,6 +3782,24 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
           }
         }
       }
@@ -3812,6 +3902,24 @@
           },
           "422": {
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
             "headers": {
               "X-Request-Id": {
                 "schema": {
@@ -4035,6 +4143,24 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
           }
         }
       }
@@ -4137,6 +4263,24 @@
           },
           "422": {
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
             "headers": {
               "X-Request-Id": {
                 "schema": {
@@ -4356,6 +4500,24 @@
           },
           "428": {
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
             "headers": {
               "X-Request-Id": {
                 "schema": {
@@ -4601,6 +4763,24 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
           }
         }
       },
@@ -4804,6 +4984,24 @@
           },
           "428": {
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
             "headers": {
               "X-Request-Id": {
                 "schema": {
@@ -5036,6 +5234,24 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
           }
         }
       }
@@ -5247,6 +5463,24 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
           }
         }
       }
@@ -5356,6 +5590,24 @@
           },
           "422": {
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
             "headers": {
               "X-Request-Id": {
                 "schema": {
@@ -5562,6 +5814,24 @@
           },
           "428": {
             "description": "If-Match is required.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
             "headers": {
               "X-Request-Id": {
                 "schema": {
@@ -5798,6 +6068,24 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
           }
         }
       }
@@ -5907,6 +6195,24 @@
           },
           "422": {
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
             "headers": {
               "X-Request-Id": {
                 "schema": {
@@ -6143,6 +6449,24 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
           }
         }
       }
@@ -6229,6 +6553,24 @@
           },
           "422": {
             "description": "Request validation failed.",
+            "headers": {
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiProblem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The configured request limit was reached.",
             "headers": {
               "X-Request-Id": {
                 "schema": {
