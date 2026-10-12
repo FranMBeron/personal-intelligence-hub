@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16.15-alpine3.24@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    image: ${PIH_POSTGRES_IMAGE:?set PIH_POSTGRES_IMAGE to an immutable image reference}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB outside Git}
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password

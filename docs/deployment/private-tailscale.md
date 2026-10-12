@@ -30,7 +30,8 @@ for those headers. The web tier discards browser authorization and emits a
 short-lived internal token for API and audit attribution.
 
 Run `infrastructure/operations/deploy-release.sh <git-sha>` to build and scan
-the SHA-tagged images, write the release manifest and SBOMs, start the stack,
+the SHA-tagged API, web and PostgreSQL images, write the release manifest and
+one SBOM per image, start the stack,
 wait for health, and atomically switch `current`. Review and install the
 checked-in systemd units only after adapting their ownership and alert files.
 

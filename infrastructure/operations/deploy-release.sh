@@ -39,7 +39,7 @@ if [ -f "$release_directory/REVISION" ] && \
   echo "Release directory revision does not match requested SHA." >&2
   exit 1
 fi
-if grep -Eq '^PIH_(API|WEB)_IMAGE=' "$base_environment"; then
+if grep -Eq '^PIH_(API|WEB|POSTGRES)_IMAGE=' "$base_environment"; then
   echo "Base Compose environment must not contain release image references." >&2
   exit 1
 fi
@@ -73,16 +73,24 @@ docker build --file "$release_directory/infrastructure/docker/api.Dockerfile" \
   --tag "pih-api:$release_sha" "$release_directory"
 docker build --file "$release_directory/infrastructure/docker/web.Dockerfile" \
   --tag "pih-web:$release_sha" "$release_directory"
+docker build --file "$release_directory/infrastructure/docker/postgres.Dockerfile" \
+  --tag "pih-postgres:$release_sha" "$release_directory"
 
 syft "pih-api:$release_sha" \
   --output "cyclonedx-json=$release_directory/sbom-api.cyclonedx.json"
 syft "pih-web:$release_sha" \
   --output "cyclonedx-json=$release_directory/sbom-web.cyclonedx.json"
+syft "pih-postgres:$release_sha" \
+  --output "cyclonedx-json=$release_directory/sbom-postgres.cyclonedx.json"
 grype "pih-api:$release_sha" --fail-on high
 grype "pih-web:$release_sha" --fail-on high
+grype "pih-postgres:$release_sha" --fail-on high
+
+postgres_image=$(docker image inspect --format '{{.Id}}' "pih-postgres:$release_sha")
+printf '\nPIH_POSTGRES_IMAGE=%s\n' "$postgres_image" >> "$release_environment"
 
 image_inspect_temporary="$release_directory/image-inspect.tmp.$$"
-docker image inspect "pih-api:$release_sha" "pih-web:$release_sha" \
+docker image inspect "pih-api:$release_sha" "pih-web:$release_sha" "pih-postgres:$release_sha" \
   > "$image_inspect_temporary"
 jq '[.[] | {id: .Id, repoTags: .RepoTags, repoDigests: .RepoDigests}]' \
   "$image_inspect_temporary" \

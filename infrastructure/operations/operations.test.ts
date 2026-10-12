@@ -56,6 +56,21 @@ describe("host operation scripts", () => {
     expect(lockGuard).not.toContain("--remove-all");
   });
 
+  it("audits every production image before any rollout and pins PostgreSQL by image ID", async () => {
+    const deploy = await readFile(`${operationsRoot}/deploy-release.sh`, "utf8");
+    const rollout = deploy.indexOf("up --detach --wait --remove-orphans", deploy.indexOf("image_inspect_temporary="));
+    for (const image of ["api", "web", "postgres"]) {
+      expect(deploy).toContain(`infrastructure/docker/${image}.Dockerfile`);
+      expect(deploy).toContain(`sbom-${image}.cyclonedx.json`);
+      const audit = deploy.indexOf(`grype "pih-${image}:$release_sha" --fail-on high`);
+      expect(audit).toBeGreaterThan(0);
+      expect(audit).toBeLessThan(rollout);
+    }
+    expect(deploy).toContain("PIH_POSTGRES_IMAGE=%s");
+    expect(deploy).toContain("--format '{{.Id}}'");
+    expect(deploy).toContain('"pih-postgres:$release_sha" \\');
+  });
+
   it("keeps systemd startup, failure alerting, and host confinement explicit", async () => {
     const [application, backup] = await Promise.all([
       readFile(

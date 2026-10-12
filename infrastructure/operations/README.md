@@ -44,10 +44,14 @@ PIH_ROOT=/srv/personal-intelligence-hub \
   ./infrastructure/operations/deploy-release.sh <git-sha>
 ```
 
-The deploy builds SHA-tagged images, generates CycloneDX SBOMs, fails on high
+The deploy builds SHA-tagged API, web and PostgreSQL images, generates a CycloneDX
+SBOM for each, and fails on high
 vulnerabilities, runs migrations through production Compose, waits for health,
 and only then switches `current` atomically. A failed application rollout
 tries to restore the previous image set. It never restores the database.
+The PostgreSQL derivative preserves the vendor entrypoint and data layout while
+installing exact reviewed Alpine library patches. Its generated release setting
+uses the inspected image ID; do not set `PIH_POSTGRES_IMAGE` in the base environment.
 
 Rollback requires an existing release and generated environment:
 

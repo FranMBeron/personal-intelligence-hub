@@ -12,6 +12,7 @@ COPY integrations/hermes/package.json integrations/hermes/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/database/package.json packages/database/package.json
 COPY packages/tooling/package.json packages/tooling/package.json
+COPY patches/ patches/
 RUN pnpm install --frozen-lockfile
 
 COPY . .

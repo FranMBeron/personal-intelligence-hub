@@ -6,6 +6,13 @@ settings:
 
 overrides:
   esbuild@0.18.20: 0.25.12
+  image-size@0.7.5: 2.0.3
+  '@grpc/grpc-js@1.14.4': 1.14.5
+
+patchedDependencies:
+  appdmg@0.6.6:
+    hash: plnneq27jzdzme3qc6blg5ywcq
+    path: patches/appdmg@0.6.6.patch
 
 importers:
 
@@ -677,8 +684,8 @@ packages:
   '@fastify/swagger@9.8.1':
     resolution: {integrity: sha512-VpHMnqZTY8iBZYJE8WWkbKPrXIYWy2rDfIf5qLr6DzZSpQYZ+KxQVcJFiq/AMlvNwI4gCBd66++iUlxXXGT0IQ==}
 
-  '@grpc/grpc-js@1.14.4':
-    resolution: {integrity: sha512-k9Dj3DV/itK9D06Y8f190Qgop7/Ui+D0njFV3LHMPwPT75DpXLQohE9Wmz0QElrJnzsjB7KPWiKJbOl7IPDArQ==}
+  '@grpc/grpc-js@1.14.5':
+    resolution: {integrity: sha512-7VZM+SVdEcUUqSQeNI3zM8Qs/BhQKZndPo2h5VkYkAM8Iz0wJIa8mKV5ekQGqG8UUsnkQ0NMxIxwkIHYvj0qOw==}
     engines: {node: '>=12.10.0'}
 
   '@grpc/proto-loader@0.7.15':
@@ -4177,6 +4184,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  image-size@2.0.3:
+    resolution: {integrity: sha512-9BJAtVCBth+76NwqnEfWr3PiRnYhbquk6K/USuQ1GQajz5NgLzO7tNsnoNjHfO7LuftgkBf+CCH6j28hjMbIYQ==}
+    engines: {node: '>=18'}
+    hasBin: true
+
 snapshots:
 
   '@adobe/css-tools@4.5.0': {}
@@ -4529,7 +4541,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@grpc/grpc-js@1.14.4':
+  '@grpc/grpc-js@1.14.5':
     dependencies:
       '@grpc/proto-loader': 0.8.1
       '@js-sdsl/ordered-map': 4.4.2
@@ -5289,7 +5301,7 @@ snapshots:
   dockerode@5.0.1:
     dependencies:
       '@balena/dockerignore': 1.0.2
-      '@grpc/grpc-js': 1.14.4
+      '@grpc/grpc-js': 1.14.5
       '@grpc/proto-loader': 0.7.15
       docker-modem: 5.0.7
       protobufjs: 7.6.6
@@ -6926,14 +6938,14 @@ snapshots:
     dependencies:
       environment: 1.1.0
 
-  appdmg@0.6.6:
+  appdmg@0.6.6(patch_hash=plnneq27jzdzme3qc6blg5ywcq):
     dependencies:
       async: 1.5.2
       ds-store: 0.1.6
       execa: 1.0.0
       fs-temp: 1.2.1
       fs-xattr: 0.3.1
-      image-size: 0.7.5
+      image-size: 2.0.3
       is-my-json-valid: 2.20.6
       minimist: 1.2.8
       parse-color: 1.0.0
@@ -7012,7 +7024,7 @@ snapshots:
       debug: 4.4.3
       minimist: 1.2.8
     optionalDependencies:
-      appdmg: 0.6.6
+      appdmg: 0.6.6(patch_hash=plnneq27jzdzme3qc6blg5ywcq)
     transitivePeerDependencies:
       - supports-color
     optional: true
@@ -7862,4 +7874,7 @@ snapshots:
     optional: true
 
   '@img/sharp-win32-x64@0.35.5':
+    optional: true
+
+  image-size@2.0.3:
     optional: true

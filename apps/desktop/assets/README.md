@@ -15,3 +15,9 @@ Both images derive only from `apps/web/public/favicon.svg`.
 Rasterization used Sharp. Every PNG contains only `IHDR`, `IDAT`, and `IEND`
 chunks. The ICNS container contains only those PNG representations. No creator,
 filesystem, timestamp, text, or other metadata is retained.
+# Packaging dependency compatibility
+
+The workspace pins the patched image parser used by Forge's DMG tool. The
+small `patches/appdmg@0.6.6.patch` adapter preserves the upstream callback
+contract with `image-size` 2's asynchronous file API, including custom DMG
+backgrounds. Recheck a DMG with a background image when updating that patch.

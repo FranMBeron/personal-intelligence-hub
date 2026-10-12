@@ -66,6 +66,10 @@ describe.each([
 });
 
 describe("production network boundary", () => {
+  it("requires a release-specific PostgreSQL image", async () => {
+    const { services } = await readCompose("infrastructure/docker/compose.production.yaml");
+    expect(services.postgres?.image).toBe("${PIH_POSTGRES_IMAGE:?set PIH_POSTGRES_IMAGE to an immutable image reference}");
+  });
   it("publishes only the web service and binds it to loopback", async () => {
     const { services } = await readCompose(
       "infrastructure/docker/compose.production.yaml",
@@ -78,6 +82,15 @@ describe("production network boundary", () => {
   });
 });
 
+describe("PostgreSQL runtime image", () => {
+  it("patches the pinned vendor image without replacing its startup or data semantics", async () => {
+    const dockerfile = await read("infrastructure/docker/postgres.Dockerfile");
+    expect(dockerfile).toMatch(/FROM postgres:16\.15-alpine3\.24@sha256:[a-f0-9]{64}/);
+    expect(dockerfile).toContain("apk add --no-cache libcrypto3=3.5.9-r0 libssl3=3.5.9-r0 zlib=1.3.2-r1");
+    expect(dockerfile).not.toMatch(/^(ENTRYPOINT|CMD|USER|VOLUME)\s/m);
+  });
+});
+
 describe.each(["api", "web"])("%s runtime image", (application) => {
   it("uses a pinned base, drops privileges and avoids copying the workspace", async () => {
     const dockerfile = await read(`infrastructure/docker/${application}.Dockerfile`);
@@ -87,6 +100,8 @@ describe.each(["api", "web"])("%s runtime image", (application) => {
     );
     expect(dockerfile).toContain("USER node");
     expect(dockerfile).not.toMatch(/COPY --from=build[^\n]*\/workspace\s+\/app/);
+    expect(dockerfile.indexOf("COPY patches/ patches/")).toBeGreaterThan(0);
+    expect(dockerfile.indexOf("COPY patches/ patches/")).toBeLessThan(dockerfile.indexOf("RUN pnpm install --frozen-lockfile"));
   });
 
   it("refreshes vulnerable Alpine runtime libraries with reviewed exact versions", async () => {
