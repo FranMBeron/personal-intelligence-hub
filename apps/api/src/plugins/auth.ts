@@ -9,7 +9,7 @@ import {
   type Principal,
   type Scope,
 } from "@personal-intelligence-hub/contracts";
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 
 import {
   ApplicationError,
@@ -99,7 +99,14 @@ export const installAuthentication = (
     errorResponseBuilder: () => new ApplicationError("too_many_requests"),
   });
 
-  const authenticateRequest = async (request: FastifyRequest): Promise<void> => {
+  // Resolve the decorated limiter after plugin initialization, on requests.
+  // A parent hook must precede auth; automatic route hooks run after it.
+  app.addHook("onRequest", async (request, reply) => {
+    const limitRequest = app.rateLimit();
+    await limitRequest.call(app, request, reply);
+  });
+
+  app.addHook("onRequest", async (request) => {
     if (!protectedPath(request.url)) {
       return;
     }
@@ -188,13 +195,5 @@ export const installAuthentication = (
       ...(expectedVersion === undefined ? {} : { expectedVersion }),
       ...(ifMatch === undefined ? {} : { expectedEtag: ifMatch }),
     };
-  };
-
-  app.after((error) => {
-    if (error) throw error;
-    // Parent hooks run before route hooks, so install the limiter here rather
-    // than relying on the plugin's global onRoute hook after authentication.
-    app.addHook("onRequest", app.rateLimit());
-    app.addHook("onRequest", authenticateRequest);
   });
 };
