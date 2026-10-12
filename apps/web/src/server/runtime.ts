@@ -10,10 +10,14 @@ import {
   type RequestIdentityAdapter,
 } from "./context";
 import { TailscaleRequestIdentity } from "./tailscale-request-identity";
+import { createConnectorsRequestIdentity } from "./connectors-request-identity";
 import { IdentityConcurrencyLimiter } from "./identity-concurrency";
 import { IdentityRateLimiter } from "./identity-rate-limit";
 
 const createIdentity = (): RequestIdentityAdapter => {
+  if (serverConfig.connectors !== undefined) {
+    return createConnectorsRequestIdentity(serverConfig.connectors, serverConfig.internalAuthKey);
+  }
   if (serverConfig.authMode === "oidc") return oidcRequestIdentity;
   if (
     serverConfig.internalAuthKey === undefined ||

@@ -1,10 +1,15 @@
 import "server-only";
 
+import { webcrypto } from "node:crypto";
+
 import { SignJWT } from "jose";
+
+import { UuidSchema } from "@personal-intelligence-hub/contracts";
 
 import type {
   IdentityResolution,
   RequestIdentityAdapter,
+  VerifiedPrincipal,
 } from "./context";
 
 type Options = Readonly<{
@@ -19,6 +24,38 @@ const missingIdentity = (): IdentityResolution => ({
   title: "Authentication required",
   detail: "A Tailscale user identity from the trusted local proxy is required.",
 });
+
+
+export const signTailscalePrincipalAuthorization = async (
+  principal: VerifiedPrincipal,
+  signingKey: string,
+  clock: () => Date = () => new Date(),
+): Promise<string> => {
+  if (
+    principal.actorType !== "human" ||
+    !principal.subject.startsWith("tailscale:") ||
+    !UuidSchema.safeParse(principal.actorId).success ||
+    Buffer.byteLength(signingKey, "utf8") < 32
+  ) {
+    throw new Error("Cannot authorize an unverified Tailscale principal.");
+  }
+  const issuedAt = Math.floor(clock().getTime() / 1_000);
+  const key = await webcrypto.subtle.importKey("raw", Buffer.from(signingKey, "utf8"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const token = await new SignJWT({
+    actor_id: principal.actorId,
+    actor_type: "human",
+    scope: ["second-brain:read", "second-brain:write", "second-brain:compensate"],
+    allowed_sources: ["pih"],
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(principal.subject)
+    .setIssuer("personal-intelligence-hub-web")
+    .setAudience("personal-intelligence-hub-api")
+    .setIssuedAt(issuedAt)
+    .setExpirationTime(issuedAt + 30)
+    .sign(key);
+  return `Bearer ${token}`;
+};
 
 const normalizeLogin = (value: string): string | null => {
   if (
@@ -73,28 +110,20 @@ export class TailscaleRequestIdentity implements RequestIdentityAdapter {
       };
     }
 
-    const issuedAt = Math.floor(this.#clock().getTime() / 1_000);
-    const token = await new SignJWT({
-      actor_id: actorId,
-      actor_type: "human",
-      scope: [
-        "second-brain:read",
-        "second-brain:write",
-        "second-brain:compensate",
-      ],
-      allowed_sources: ["pih"],
-    })
-      .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-      .setSubject(`tailscale:${login}`)
-      .setIssuer("personal-intelligence-hub-web")
-      .setAudience("personal-intelligence-hub-api")
-      .setIssuedAt(issuedAt)
-      .setExpirationTime(issuedAt + 30)
-      .sign(this.#signingKey);
+    const principal: VerifiedPrincipal = {
+      actorId,
+      subject: `tailscale:${login}`,
+      actorType: "human",
+    };
+    const authorization = await signTailscalePrincipalAuthorization(
+      principal,
+      new TextDecoder().decode(this.#signingKey),
+      this.#clock,
+    );
 
     return {
       ok: true,
-      authorization: `Bearer ${token}`,
+      authorization,
       concurrencyKey: `tailscale:${login}`,
     };
   }

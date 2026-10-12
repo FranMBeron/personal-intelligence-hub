@@ -31,6 +31,7 @@ RUN apk add --no-cache libcrypto3=3.5.9-r0 libssl3=3.5.9-r0 zlib=1.3.2-r1 \
 COPY --from=build --chown=node:node /workspace/apps/web/.next/standalone/ ./
 COPY --from=build --chown=node:node /workspace/apps/web/.next/static/ ./apps/web/.next/static/
 COPY --from=build --chown=node:node /workspace/apps/web/public/ ./apps/web/public/
+COPY --chown=node:node apps/web/peer-server.mjs apps/web/peer-http-server.mjs ./apps/web/
 USER node
 EXPOSE 3000
-CMD ["node", "apps/web/server.js"]
+CMD ["node", "apps/web/peer-server.mjs"]

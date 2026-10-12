@@ -5,7 +5,7 @@ import { isAbsolute } from "node:path";
 
 import { z } from "zod";
 
-import { UuidSchema } from "@personal-intelligence-hub/contracts";
+import { DelegatedJwtKeySchema, UuidSchema } from "@personal-intelligence-hub/contracts";
 
 const defaultApiInternalUrl = "http://127.0.0.1:3001";
 const defaultPublicOrigin = "http://127.0.0.1:3000";
@@ -115,7 +115,7 @@ const ConnectorsConfigSchema = z.discriminatedUnion("humanAuthMode", [
   z.object({
     socketPath: privateSocketPath,
     serviceToken: z.string().min(32),
-    delegatedJwtKey: z.string().min(32),
+    delegatedJwtKey: DelegatedJwtKeySchema,
     humanAuthMode: z.literal("oidc"),
     oidc: z.object({
       issuer: httpsUrl,
@@ -126,7 +126,7 @@ const ConnectorsConfigSchema = z.discriminatedUnion("humanAuthMode", [
   z.object({
     socketPath: privateSocketPath,
     serviceToken: z.string().min(32),
-    delegatedJwtKey: z.string().min(32),
+    delegatedJwtKey: DelegatedJwtKeySchema,
     humanAuthMode: z.literal("tailscale-localapi"),
     tailscale: z.object({
       trustedProxyCidr,
@@ -292,7 +292,10 @@ export const loadServerConfig = (
   });
   const connectors = loadConnectorsConfig(environment);
   if (connectors === undefined) return existing;
-  if (connectors.delegatedJwtKey === environment.PIH_INTERNAL_AUTH_KEY) {
+  if (connectors.humanAuthMode === "tailscale-localapi" && existing.internalAuthKey === undefined) {
+    throw new Error("Tailscale connector identity requires PIH_INTERNAL_AUTH_KEY for the existing PIH API authorization.");
+  }
+  if (existing.internalAuthKey !== undefined && Buffer.from(existing.internalAuthKey, "utf8").equals(Buffer.from(connectors.delegatedJwtKey))) {
     throw new Error("The connectors delegated JWT key must be distinct from the Second Brain key.");
   }
   return { ...existing, connectors };

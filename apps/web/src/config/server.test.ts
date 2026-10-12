@@ -94,12 +94,19 @@ describe("private connector configuration", () => {
   const oidcEnvironment = {
     CONNECTORS_ENABLED: "true",
     CONNECTORS_SERVICE_TOKEN: "fictional-connectors-service-token",
-    CONNECTORS_DELEGATED_JWT_KEY: "fictional-connectors-delegated-key-at-least-32-bytes",
+    CONNECTORS_DELEGATED_JWT_KEY: Buffer.alloc(32, 7).toString("base64url"),
     CONNECTORS_HUMAN_AUTH_MODE: "oidc",
     CONNECTORS_OIDC_ISSUER: "https://identity.example.test/",
     CONNECTORS_OIDC_AUDIENCE: "fictional-web-audience",
     CONNECTORS_OIDC_JWKS_URI: "https://identity.example.test/jwks",
   };
+
+  it("requires the Foundation 32-byte base64url delegated key format", () => {
+    const validKey = Buffer.alloc(32, 9).toString("base64url");
+    const tooLongKey = Buffer.alloc(33, 9).toString("base64url");
+    expect(loadServerConfig({ ...oidcEnvironment, CONNECTORS_DELEGATED_JWT_KEY: validKey }).connectors?.delegatedJwtKey).toEqual(new Uint8Array(32).fill(9));
+    expect(() => loadServerConfig({ ...oidcEnvironment, CONNECTORS_DELEGATED_JWT_KEY: tooLongKey })).toThrow();
+  });
 
   it("does not enable connectors or select a default socket unless explicitly enabled", () => {
     expect(loadServerConfig({})).not.toHaveProperty("connectors");
@@ -109,7 +116,7 @@ describe("private connector configuration", () => {
     expect(loadServerConfig(oidcEnvironment).connectors).toEqual({
       socketPath: "/run/pih-connectors/connectors.sock",
       serviceToken: "fictional-connectors-service-token",
-      delegatedJwtKey: "fictional-connectors-delegated-key-at-least-32-bytes",
+      delegatedJwtKey: new Uint8Array(32).fill(7),
       humanAuthMode: "oidc",
       oidc: {
         issuer: "https://identity.example.test/",
@@ -122,8 +129,9 @@ describe("private connector configuration", () => {
   it("loads only the selected Tailscale LocalAPI configuration", () => {
     expect(loadServerConfig({
       CONNECTORS_ENABLED: "true",
+      PIH_INTERNAL_AUTH_KEY: "fictional-second-brain-internal-key-at-least-32-bytes",
       CONNECTORS_SERVICE_TOKEN: "fictional-connectors-service-token",
-      CONNECTORS_DELEGATED_JWT_KEY: "fictional-connectors-delegated-key-at-least-32-bytes",
+      CONNECTORS_DELEGATED_JWT_KEY: Buffer.alloc(32, 7).toString("base64url"),
       CONNECTORS_HUMAN_AUTH_MODE: "tailscale-localapi",
       CONNECTORS_SOCKET_PATH: "/run/pih-connectors/connectors.sock",
       CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR: "172.30.0.0/16",
@@ -149,7 +157,8 @@ describe("private connector configuration", () => {
     { ...oidcEnvironment, CONNECTORS_OIDC_JWKS_URI: "http://identity.example.test/jwks" },
     {
       ...oidcEnvironment,
-      PIH_INTERNAL_AUTH_KEY: "fictional-connectors-delegated-key-at-least-32-bytes",
+      PIH_INTERNAL_AUTH_KEY: "7".repeat(32),
+      CONNECTORS_DELEGATED_JWT_KEY: Buffer.from("7".repeat(32), "utf8").toString("base64url"),
     },
   ])("rejects partial, mixed-mode, or unsafe connector configuration", (environment) => {
     expect(() => loadServerConfig(environment)).toThrow();

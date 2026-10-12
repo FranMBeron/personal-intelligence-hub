@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DelegatedJwtKeySchema,
   MutationSourceSchema,
   PrincipalSchema,
   ScopeSchema,
@@ -15,6 +16,16 @@ const principal = {
 } as const;
 
 describe("authentication contracts", () => {
+  it("shares the canonical 32-byte base64url delegated key format", () => {
+    const encoded = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))
+      .replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
+    expect(DelegatedJwtKeySchema.parse(encoded)).toEqual(new Uint8Array(32).fill(7));
+    const thirtyThreeBytes = btoa(String.fromCharCode(...new Uint8Array(33).fill(7)))
+      .replace(/\+/gu, "-").replace(/\//gu, "_").replace(/=+$/u, "");
+    expect(DelegatedJwtKeySchema.safeParse(thirtyThreeBytes).success).toBe(false);
+    expect(DelegatedJwtKeySchema.safeParse(`${encoded}=`).success).toBe(false);
+  });
+
   it("accepts a trusted principal with the frozen scopes and sources", () => {
     expect(PrincipalSchema.parse(principal)).toEqual(principal);
   });

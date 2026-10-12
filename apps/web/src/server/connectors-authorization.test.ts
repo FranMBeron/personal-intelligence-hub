@@ -11,9 +11,9 @@ const principal: VerifiedPrincipal = {
   actorType: "human",
 };
 const requestId = "99acb7b5-9dbe-44bf-a590-00824cfd2893";
-const delegatedJwtKey = "fictional-connectors-delegated-jwt-key-at-least-32-bytes";
+const delegatedJwtKey = Buffer.alloc(32, 7).toString("base64url");
 const serviceToken = "fictional-connectors-service-token";
-const configuration = { delegatedJwtKey };
+const configuration = { delegatedJwtKey: new Uint8Array(Buffer.from(delegatedJwtKey, "base64url")) };
 const now = new Date("2026-10-12T12:00:00.000Z");
 
 describe("signConnectorsAuthorization", () => {
@@ -26,7 +26,7 @@ describe("signConnectorsAuthorization", () => {
     const authorization = await signConnectorsAuthorization(principal, requestId, scopes, configuration, () => now);
     expect(authorization).toMatch(/^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u);
     const token = authorization.slice("Bearer ".length);
-    const signingKey = await webcrypto.subtle.importKey("raw", Buffer.from(delegatedJwtKey), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+    const signingKey = await webcrypto.subtle.importKey("raw", Buffer.from(delegatedJwtKey, "base64url"), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
     const serviceKey = await webcrypto.subtle.importKey("raw", Buffer.from(serviceToken), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
     const { payload, protectedHeader } = await jwtVerify(
       token,

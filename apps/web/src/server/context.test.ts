@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { deriveRequestContext } from "./context";
+import { withImmediatePeerAddress } from "./peer-address";
 
 const generatedRequestId = "5af093d0-84f1-4759-a92e-bbe2949ab957";
 
@@ -139,5 +140,20 @@ describe("verified connector principal in request context", () => {
         requestId: generatedRequestId,
       },
     });
+  });
+});
+
+
+describe("transport peer context", () => {
+  it("passes only the socket peer captured by the server into identity resolution", async () => {
+    const identity = {
+      resolve: async (_headers: Headers, metadata?: { peerAddress?: string }) => {
+        expect(metadata?.peerAddress).toBe("172.30.0.9");
+        return { ok: true as const, authorization: "Bearer verified", concurrencyKey: "verified" };
+      },
+    };
+    await withImmediatePeerAddress("172.30.0.9", () =>
+      deriveRequestContext(new Headers({ "x-forwarded-for": "100.64.0.42" }), () => generatedRequestId, identity),
+    );
   });
 });

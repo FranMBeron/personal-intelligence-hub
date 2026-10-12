@@ -4,6 +4,8 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { UuidSchema, type ApiProblem } from "@personal-intelligence-hub/contracts";
 
+import { getImmediatePeerAddress } from "./peer-address";
+
 export type VerifiedPrincipal = Readonly<{
   actorId: string;
   subject: string;
@@ -37,8 +39,10 @@ export type IdentityResolution =
     }>
   | IdentityFailure;
 
+export type IdentityRequestMetadata = Readonly<{ peerAddress?: string }>;
+
 export interface RequestIdentityAdapter {
-  resolve(headers: Headers): Promise<IdentityResolution>;
+  resolve(headers: Headers, metadata?: IdentityRequestMetadata): Promise<IdentityResolution>;
 }
 
 export const oidcRequestIdentity: RequestIdentityAdapter = {
@@ -72,7 +76,8 @@ export const deriveRequestContext = (
     const requestId = UuidSchema.safeParse(suppliedRequestId).success
       ? suppliedRequestId!
       : requestIdFactory();
-    const resolution = await identity.resolve(headers);
+    const peerAddress = getImmediatePeerAddress();
+    const resolution = await identity.resolve(headers, peerAddress === undefined ? undefined : { peerAddress });
 
     if (!resolution.ok) {
       return {

@@ -28,7 +28,7 @@ export const signConnectorsAuthorization = async (
     !UuidSchema.safeParse(requestId).success ||
     scopes.length === 0 ||
     scopes.some((scope) => !ConnectorScopeSchema.safeParse(scope).success) ||
-    Buffer.byteLength(configuration.delegatedJwtKey, "utf8") < 32
+    configuration.delegatedJwtKey.byteLength !== 32
   ) {
     throw new Error("Cannot delegate an invalid connector principal or request.");
   }
@@ -36,7 +36,7 @@ export const signConnectorsAuthorization = async (
   const now = Math.floor(clock().getTime() / 1000);
   const signingKey = await webcrypto.subtle.importKey(
     "raw",
-    Buffer.from(configuration.delegatedJwtKey, "utf8"),
+    configuration.delegatedJwtKey,
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],

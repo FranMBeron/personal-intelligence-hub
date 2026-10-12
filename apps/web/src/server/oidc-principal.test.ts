@@ -21,17 +21,19 @@ const createVerifier = async () => {
     getKey: jwks,
     clock: () => now,
   });
-  const token = async (claims: { issuer?: string; audience?: string; actorId?: string; actorType?: string; expiration?: number } = {}) => new SignJWT({
-    actor_id: claims.actorId ?? actorId,
-    actor_type: claims.actorType ?? "human",
-  })
-    .setProtectedHeader({ alg: "RS256", kid: "fictional-key-1" })
-    .setSubject("fictional-oidc-subject")
-    .setIssuer(claims.issuer ?? issuer)
-    .setAudience(claims.audience ?? audience)
-    .setIssuedAt(Math.floor(now.getTime() / 1000))
-    .setExpirationTime(claims.expiration ?? Math.floor(now.getTime() / 1000) + 60)
-    .sign(privateKey);
+  const token = async (claims: { issuer?: string; audience?: string; actorId?: string; actorType?: string; expiration?: number | null; includeIssuedAt?: boolean } = {}) => {
+    let builder = new SignJWT({
+      actor_id: claims.actorId ?? actorId,
+      actor_type: claims.actorType ?? "human",
+    })
+      .setProtectedHeader({ alg: "RS256", kid: "fictional-key-1" })
+      .setSubject("fictional-oidc-subject")
+      .setIssuer(claims.issuer ?? issuer)
+      .setAudience(claims.audience ?? audience);
+    if (claims.includeIssuedAt !== false) builder = builder.setIssuedAt(Math.floor(now.getTime() / 1000));
+    if (claims.expiration !== null) builder = builder.setExpirationTime(claims.expiration ?? Math.floor(now.getTime() / 1000) + 60);
+    return builder.sign(privateKey);
+  };
   return { verifier, token };
 };
 
@@ -61,6 +63,8 @@ describe("OIDC verified principal", () => {
     { issuer: "https://other.example.test/" },
     { audience: "personal-intelligence-hub-api" },
     { expiration: Math.floor(now.getTime() / 1000) - 1 },
+    { expiration: null },
+    { includeIssuedAt: false },
   ])("fails closed for invalid OIDC identity claims", async (claims) => {
     const { verifier, token } = await createVerifier();
     await expect(verifier.resolve(headersFor(await token(claims)))).resolves.toMatchObject({ ok: false });

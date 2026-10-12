@@ -59,6 +59,7 @@ export class OidcPrincipalVerifier {
     try {
       const { payload } = await jwtVerify(match[1], this.getKey, {
         algorithms: ["RS256", "ES256"],
+        requiredClaims: ["exp", "iat"],
         issuer: this.options.issuer,
         audience: this.options.audience,
         currentDate: this.clock(),
