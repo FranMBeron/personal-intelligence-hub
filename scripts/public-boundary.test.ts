@@ -117,11 +117,21 @@ function importedSpecifiers(path: string, content: string): string[] {
       node.moduleSpecifier !== undefined && ts.isStringLiteralLike(node.moduleSpecifier)) {
       specifiers.push(node.moduleSpecifier.text);
     }
-    if (ts.isCallExpression(node) && node.arguments.length === 1 &&
+    if (ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      node.moduleReference.expression !== undefined &&
+      ts.isStringLiteralLike(node.moduleReference.expression)) {
+      specifiers.push(node.moduleReference.expression.text);
+    }
+    if (ts.isCallExpression(node) && node.arguments.length >= 1 &&
       ts.isStringLiteralLike(node.arguments[0]!)) {
       const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
       const requireCall = ts.isIdentifier(node.expression) && node.expression.text === "require";
-      if (dynamicImport || requireCall) specifiers.push(node.arguments[0]!.text);
+      const moduleRequireCall = ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "module" &&
+        node.expression.name.text === "require";
+      if (dynamicImport || requireCall || moduleRequireCall) specifiers.push(node.arguments[0]!.text);
     }
     ts.forEachChild(node, visit);
   };
@@ -395,8 +405,16 @@ describe("public repository boundary", () => {
           'import { sourceStatusFixture } from "@personal-intelligence-hub/contracts/testing/connectors";\n',
         "apps/api/src/dynamic.ts":
           'export const fixture = import("@personal-intelligence-hub/contracts/testing/connectors");\n',
+        "apps/api/src/dynamic-options.ts":
+          'export const fixture = import("@personal-intelligence-hub/contracts/testing/connectors", {});\n',
         "apps/api/src/require.cjs":
           'const fixture = require("@personal-intelligence-hub/contracts/testing/connectors");\n',
+        "apps/api/src/require-extra.cjs":
+          'const fixture = require("@personal-intelligence-hub/contracts/testing/connectors", undefined);\n',
+        "apps/api/src/import-equals.ts":
+          'import fixtures = require("@personal-intelligence-hub/contracts/testing/connectors");\n',
+        "apps/api/src/module-require.cjs":
+          'const fixture = module.require("@personal-intelligence-hub/contracts/testing/connectors");\n',
         "apps/web/src/package-alias.ts":
           'import "@personal-intelligence-hub/contracts/src/testing/connectors.js";\n',
         "apps/web/src/alias.ts":
