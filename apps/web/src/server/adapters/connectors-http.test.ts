@@ -57,7 +57,7 @@ afterEach(async () => {
 
 describe("ConnectorsHttp", () => {
   it("uses separate service and delegated credentials and validates JSON on the fixed Unix socket", async () => {
-    let seen: { url?: string | undefined; service?: string | undefined; authorization?: string | undefined; requestId?: string | undefined; body?: string } = {};
+    let seen: { url?: string | undefined; service?: string | undefined; authorization?: string | undefined; requestId?: string | undefined; idempotencyKey?: string | undefined; body?: string | undefined } = {};
     await listen((request, response) => {
       const chunks: Buffer[] = [];
       request.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -67,6 +67,7 @@ describe("ConnectorsHttp", () => {
           service: singleHeader(request.headers["x-pih-service-token"]),
           authorization: singleHeader(request.headers.authorization),
           requestId: singleHeader(request.headers["x-request-id"]),
+          idempotencyKey: singleHeader(request.headers["idempotency-key"]),
           body: Buffer.concat(chunks).toString("utf8"),
         };
         response.writeHead(200, { "content-type": "application/json" });
@@ -80,11 +81,13 @@ describe("ConnectorsHttp", () => {
       schema: ConversationSelectionSchema,
       body: { conversationId: "conversation-01", expectedVersion: 2 },
       scope: "hermes:conversations:write",
+      idempotencyKey: "retry-safe-key-01",
     })).resolves.toEqual(selected);
     expect(seen).toMatchObject({
       url: "/v1/agents/agent%2Fopaque/conversation-selection",
       service: configuration.serviceToken,
       requestId: context.requestId,
+      idempotencyKey: "retry-safe-key-01",
       body: JSON.stringify({ conversationId: "conversation-01", expectedVersion: 2 }),
     });
     expect(seen.authorization).toMatch(/^Bearer /u);

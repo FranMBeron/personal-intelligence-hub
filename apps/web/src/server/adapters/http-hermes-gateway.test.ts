@@ -24,7 +24,7 @@ describe("HttpHermesGateway", () => {
     }));
     await gateway.resolveMainConversation(context, "agent/a");
     expect(json).toHaveBeenLastCalledWith(context, expect.objectContaining({
-      path: "/v1/agents/agent%2Fa/main-conversation", method: "POST", scope: "hermes:conversations:write",
+      path: "/v1/agents/agent%2Fa/main-conversation", method: "PUT", scope: "hermes:conversations:write",
     }));
   });
 

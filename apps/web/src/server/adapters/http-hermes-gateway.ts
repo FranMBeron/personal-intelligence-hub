@@ -99,7 +99,7 @@ export class HttpHermesGateway implements HermesGateway {
   }
 
   resolveMainConversation(context: RequestContext, agentId: string, signal?: AbortSignal): Promise<Conversation> {
-    return this.http.json(context, { path: "/v1/agents/" + encodeURIComponent(agentId) + "/main-conversation", method: "POST", schema: ConversationSchema, scope: "hermes:conversations:write", signal });
+    return this.http.json(context, { path: "/v1/agents/" + encodeURIComponent(agentId) + "/main-conversation", method: "PUT", schema: ConversationSchema, scope: "hermes:conversations:write", signal });
   }
 
   getConversationSelection(context: RequestContext, agentId: string, signal?: AbortSignal): Promise<ConversationSelection> {

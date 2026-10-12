@@ -32,6 +32,7 @@ import {
 } from "@personal-intelligence-hub/contracts";
 
 import type { RequestContext } from "../context";
+import { GatewayError } from "../problems";
 import type { CalendarGateway } from "../ports/calendar-gateway";
 import type { ConnectorsHttp } from "./connectors-http";
 
@@ -68,11 +69,11 @@ export class HttpCalendarGateway implements CalendarGateway {
   }
 
   calendars(context: RequestContext, signal?: AbortSignal): Promise<CalendarSelection> {
-    return this.http.json(context, { path: "/v1/calendar/calendars", method: "GET", schema: CalendarSelectionSchema, scope: "calendar:read", signal });
+    return this.http.json(context, { path: "/v1/calendar/calendars", method: "GET", schema: CalendarSelectionSchema, scope: "calendar:configure", signal });
   }
 
   selection(context: RequestContext, signal?: AbortSignal): Promise<CalendarSelection> {
-    return this.http.json(context, { path: "/v1/calendar/selection", method: "GET", schema: CalendarSelectionSchema, scope: "calendar:read", signal });
+    return this.http.json(context, { path: "/v1/calendar/selection", method: "GET", schema: CalendarSelectionSchema, scope: "calendar:configure", signal });
   }
 
   updateSelection(context: RequestContext, body: UpdateCalendarSelectionBody, signal?: AbortSignal): Promise<CalendarSelection> {
@@ -93,8 +94,27 @@ export class HttpCalendarGateway implements CalendarGateway {
     return this.http.json(context, { path: "/v1/calendar/events/" + encodeURIComponent(eventRef), method: "GET", schema: CalendarEventDetailSchema, scope: "calendar:read", signal });
   }
 
-  propose(context: RequestContext, body: CreateCalendarChangeProposalBody, signal?: AbortSignal): Promise<CalendarChangeProposal> {
-    return this.http.json(context, { path: "/v1/calendar/change-proposals", method: "POST", schema: CalendarChangeProposalSchema, body: CreateCalendarChangeProposalBodySchema.parse(body), scope: "calendar:propose", signal });
+  propose(context: RequestContext, idempotencyKey: string, body: CreateCalendarChangeProposalBody, signal?: AbortSignal): Promise<CalendarChangeProposal> {
+    if (idempotencyKey.trim() === "" || /[\r\n]/u.test(idempotencyKey)) {
+      throw new GatewayError({
+        type: "about:blank",
+        title: "Invalid idempotency key",
+        status: 400,
+        detail: "A valid idempotency key is required.",
+        instance: "/api/ui/v1",
+        code: "validation_failed",
+        requestId: context.requestId,
+      });
+    }
+    return this.http.json(context, {
+      path: "/v1/calendar/change-proposals",
+      method: "POST",
+      schema: CalendarChangeProposalSchema,
+      body: CreateCalendarChangeProposalBodySchema.parse(body),
+      scope: "calendar:propose",
+      idempotencyKey,
+      ...(signal === undefined ? {} : { signal }),
+    });
   }
 
   proposal(context: RequestContext, id: string, signal?: AbortSignal): Promise<CalendarChangeProposal> {

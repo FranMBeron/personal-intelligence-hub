@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { agendaFixture, calendarStatusFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
+import { agendaFixture, calendarStatusFixture, proposalFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
 
 import type { RequestContext } from "../context";
 import type { ConnectorsHttp } from "./connectors-http";
@@ -34,6 +34,58 @@ describe("HttpCalendarGateway", () => {
     const gateway = new HttpCalendarGateway(http);
     await gateway.event(context, "event/a?b");
     expect(calls[0]).toMatchObject({ path: "/v1/calendar/events/event%2Fa%3Fb", method: "GET", scope: "calendar:read" });
+  });
+
+  it("uses the configure scope for calendar discovery and selection reads", async () => {
+    const json = vi.fn(async () => ({ version: 1, items: [] }));
+    const gateway = new HttpCalendarGateway({ json } as unknown as Pick<ConnectorsHttp, "json">);
+    await gateway.calendars(context);
+    await gateway.selection(context);
+    expect(json).toHaveBeenNthCalledWith(1, context, expect.objectContaining({
+      path: "/v1/calendar/calendars", method: "GET", scope: "calendar:configure",
+    }));
+    expect(json).toHaveBeenNthCalledWith(2, context, expect.objectContaining({
+      path: "/v1/calendar/selection", method: "GET", scope: "calendar:configure",
+    }));
+  });
+
+  it("forwards a mandatory proposal idempotency key consistently for retries", async () => {
+    const json = vi.fn(async () => proposalFixture());
+    const gateway = new HttpCalendarGateway({ json } as unknown as Pick<ConnectorsHttp, "json">);
+    const body = {
+      operation: "create" as const,
+      calendarRef: "fictional-calendar",
+      draft: {
+        title: "Fictional meeting",
+        time: { kind: "all_day" as const, startDate: "2026-10-12", endDateExclusive: "2026-10-13" },
+        attendees: [],
+      },
+      guestNotification: "none" as const,
+    };
+    await gateway.propose(context, "calendar-proposal-key-01", body);
+    await gateway.propose(context, "calendar-proposal-key-01", body);
+    expect(json).toHaveBeenNthCalledWith(1, context, expect.objectContaining({
+      path: "/v1/calendar/change-proposals", method: "POST", scope: "calendar:propose",
+      idempotencyKey: "calendar-proposal-key-01", body,
+    }));
+    expect(json).toHaveBeenNthCalledWith(2, context, expect.objectContaining({
+      idempotencyKey: "calendar-proposal-key-01", body,
+    }));
+  });
+
+  it("rejects an empty proposal idempotency key before issuing a request", () => {
+    const json = vi.fn(async () => proposalFixture());
+    const gateway = new HttpCalendarGateway({ json } as unknown as Pick<ConnectorsHttp, "json">);
+    let failure: unknown;
+    try {
+      gateway.propose(context, "  ", {
+        operation: "cancel", eventRef: "fictional-event", recurrenceScope: "single", guestNotification: "none",
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ problem: { status: 400, code: "validation_failed" } });
+    expect(json).not.toHaveBeenCalled();
   });
 
   it("validates normalized calendar source status", async () => {

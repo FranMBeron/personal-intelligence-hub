@@ -31,7 +31,7 @@ export interface CalendarGateway {
   agenda(context: RequestContext, query: CalendarAgendaQuery, signal?: AbortSignal): Promise<CalendarAgenda>;
   events(context: RequestContext, query: CalendarEventsQuery, signal?: AbortSignal): Promise<CalendarEventList>;
   event(context: RequestContext, eventRef: string, signal?: AbortSignal): Promise<CalendarEventDetail>;
-  propose(context: RequestContext, body: CreateCalendarChangeProposalBody, signal?: AbortSignal): Promise<CalendarChangeProposal>;
+  propose(context: RequestContext, idempotencyKey: string, body: CreateCalendarChangeProposalBody, signal?: AbortSignal): Promise<CalendarChangeProposal>;
   proposal(context: RequestContext, id: string, signal?: AbortSignal): Promise<CalendarChangeProposal>;
   confirm(context: RequestContext, id: string, body: ConfirmCalendarChangeProposalBody, signal?: AbortSignal): Promise<CalendarChangeProposal>;
   reject(context: RequestContext, id: string, body: ConfirmCalendarChangeProposalBody, signal?: AbortSignal): Promise<CalendarChangeProposal>;
