@@ -176,6 +176,7 @@ describe("private connectors host bundle", () => {
     expect(unit).toContain("EnvironmentFile=/etc/pih-connectors/connectors.env");
     expect(unit).toContain("ExecStart=/usr/bin/node /opt/pih-connectors/current/dist/src/main.js");
     expect(unit).toContain("RuntimeDirectory=pih-connectors");
+    expect(unit).toContain("RuntimeDirectoryPreserve=yes");
     expect(unit).toContain("RuntimeDirectoryMode=0750");
     expect(unit).toContain("StateDirectory=pih-connectors");
     expect(unit).toContain("StateDirectoryMode=0700");

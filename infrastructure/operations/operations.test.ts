@@ -73,7 +73,7 @@ describe("host operation scripts", () => {
   });
 
   it("keeps systemd startup, failure alerting, and host confinement explicit", async () => {
-    const [application, backup] = await Promise.all([
+    const [application, backup, connectors] = await Promise.all([
       readFile(
         `${repositoryRoot}/infrastructure/systemd/personal-intelligence-hub.service`,
         "utf8",
@@ -82,12 +82,17 @@ describe("host operation scripts", () => {
         `${repositoryRoot}/infrastructure/systemd/personal-intelligence-hub-backup.service`,
         "utf8",
       ),
+      readFile(
+        `${repositoryRoot}/infrastructure/systemd/personal-intelligence-hub-connectors.service`,
+        "utf8",
+      ),
     ]);
 
     expect(application).toContain("After=network-online.target docker.service tailscaled.service");
     expect(application).toContain("NoNewPrivileges=true");
     expect(application).toContain("ProtectSystem=strict");
     expect(backup).toContain("OnFailure=personal-intelligence-hub-alert@%n.service");
+    expect(connectors).toContain("RuntimeDirectoryPreserve=yes");
     expect(backup).toContain("EnvironmentFile=/srv/personal-intelligence-hub/secrets/restic.env");
   });
 });

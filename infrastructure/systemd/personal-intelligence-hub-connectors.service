@@ -12,6 +12,7 @@ EnvironmentFile=/etc/pih-connectors/connectors.env
 ExecStart=/usr/bin/node /opt/pih-connectors/current/dist/src/main.js
 RuntimeDirectory=pih-connectors
 RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
 StateDirectory=pih-connectors
 StateDirectoryMode=0700
 UMask=0007

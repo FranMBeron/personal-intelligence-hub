@@ -69,6 +69,7 @@ or changing structures. Rollback restores the application and connector runtime 
 never rewinds database data or schema. The migration history compatibility ledger lets
 an older runtime verify its packaged prefix and an intact recorded future suffix; it
 does not make destructive schema changes safe to roll back.
+Deploy’s manifest preflight is only an early compatibility filter; it does not prove the live database state. Runtime startup and backup/restore validation remain authoritative, so incompatible live state may be discovered during candidate restart and trigger rollback.
 
 Rollback requires an existing release and generated environment:
 

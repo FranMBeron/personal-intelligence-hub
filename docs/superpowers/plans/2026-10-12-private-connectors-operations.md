@@ -117,6 +117,7 @@ git commit -m "ops: add connector backup command adapters"
 **Interfaces:**
 - Consumes from Foundation Task 9: the immutable connectors bundle, write-once release metadata, the existing deployment lock, `check-connectors-readiness.mjs`, the `systemd` unit, the runtime symlink, and the authenticated readiness request over host `/run/pih-connectors/web/connectors.sock`.
 - Consumes from Task 1: the compiled backup and restore adapters.
+- Keep `RuntimeDirectoryPreserve=yes` in the connectors systemd unit: stop/start recovery must preserve the runtime-directory inode beneath the existing web bind mount. Startup may remove only a stale owned socket with no active listener.
 - Produces: one pre-activation plaintext snapshot under a `mktemp` directory below `/srv/personal-intelligence-hub/backups/connectors-staging/`, a verified encrypted Restic snapshot carrying the existing active-release tag plus `pre-activation-$release_sha`, root-only release metadata containing only that Restic snapshot ID and manifest checksum, automatic database restoration from transient staging only when candidate activation fails, and an explicit operator-approved manual rollback mode that retrieves the matching SQLite snapshot from Restic.
 
 - [ ] **Step 1: Add failing operations tests**
