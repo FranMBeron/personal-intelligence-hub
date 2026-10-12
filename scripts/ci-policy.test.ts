@@ -228,6 +228,24 @@ describe("desktop CI source-only policy", () => {
     expect(desktopPolicyViolations(workflow, scripts, ["apps/*"])).toEqual([]);
   });
 
+  it("builds and security-scans the connectors release bundle with a pinned base image", async () => {
+    const workflow = parse(await readFile(`${repositoryRoot}/.github/workflows/ci.yml`, "utf8")) as Workflow;
+    const job = workflow.jobs["container-security"] as unknown as {
+      strategy: { matrix: { include: { application: string; dockerfile: string; image: string; build_args?: string; target?: string }[] } };
+      steps: Record<string, unknown>[];
+    };
+    const connector = job.strategy.matrix.include.find((entry) => entry.application === "connectors");
+    expect(connector).toBeDefined();
+    expect(connector).toMatchObject({
+      dockerfile: "connectors-build.Dockerfile",
+      image: "pih-connectors-build",
+      build_args: "--build-arg NODE_IMAGE=node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
+      target: "--target build",
+    });
+    expect(job.steps.some((step) => typeof step.uses === "string" && step.uses.startsWith("anchore/sbom-action@"))).toBe(true);
+    expect(job.steps.some((step) => typeof step.uses === "string" && step.uses.startsWith("anchore/scan-action@"))).toBe(true);
+  });
+
   it("verifies the actual Ubuntu workflow and workspace script coverage", async () => {
     const workflow = parse(await readFile(`${repositoryRoot}/.github/workflows/ci.yml`, "utf8")) as Workflow;
     const manifest = JSON.parse(await readFile(`${repositoryRoot}/package.json`, "utf8")) as { scripts: Record<string, string> };
