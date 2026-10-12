@@ -454,21 +454,25 @@ class NodeConnectorDatabase implements ConnectorDatabase {
   #runMutation<T>(fn: (db: SqliteHandle) => T, transactional: boolean): T {
     this.#mutationActive = true;
     let began = false;
+    let result: T;
     try {
       if (transactional) {
         this.#native.exec("BEGIN IMMEDIATE");
         began = true;
       }
-      const result = this.#runCallback(fn, this.#native, false);
-      if (began) this.#native.exec("COMMIT");
-      secureSidecars(this.#databasePath);
-      return result;
+      result = this.#runCallback(fn, this.#native, false);
+      if (began) {
+        this.#native.exec("COMMIT");
+        began = false;
+      }
     } catch (error) {
       if (began) this.#native.exec("ROLLBACK");
       throw error;
     } finally {
       this.#mutationActive = false;
     }
+    secureSidecars(this.#databasePath);
+    return result;
   }
 }
 

@@ -182,6 +182,34 @@ describe("connector database", () => {
     expect(order).toEqual(["write-one", "read", "write-two"]);
   });
 
+  it("does not roll back after commit when sidecar hardening fails", async () => {
+    const { database, databasePath } = await createDatabase();
+    await insertPreference(database, "018f5f17-5d0a-7c76-aac3-4f0f6ce44f10");
+    const walPath = databasePath + "-wal";
+    await chmod(walPath, 0o000);
+
+    try {
+      await expect(
+        database.transaction((handle) =>
+          handle
+            .prepare(
+              "INSERT INTO user_preferences" +
+                "(actor_id,time_zone,version,created_at,updated_at) " +
+                "VALUES(:actorId,:timeZone,1,:now,:now)",
+            )
+            .run({
+              actorId: "018f5f17-5d0a-7c76-aac3-4f0f6ce44f11",
+              timeZone: "UTC",
+              now: "2026-10-12T12:00:00.000Z",
+            }),
+        ),
+      ).rejects.toThrow(/permission denied|EACCES/u);
+      expect(await countPreferences(database)).toBe(2);
+    } finally {
+      await chmod(walPath, 0o600);
+    }
+  });
+
   it("handles rejected async callback results without unhandled rejections", async () => {
     const { database } = await createDatabase();
     const unhandled: unknown[] = [];
