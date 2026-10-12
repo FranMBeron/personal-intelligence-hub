@@ -2,7 +2,7 @@ import type {
   ApiProblem,
   ApiProblemCode,
 } from "@personal-intelligence-hub/contracts";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomUUID } from "node:crypto";
 
 type FoundationProblemCode = Extract<
@@ -11,6 +11,7 @@ type FoundationProblemCode = Extract<
   | "forbidden"
   | "rate_limit_exceeded"
   | "validation_failed"
+  | "payload_too_large"
   | "version_conflict"
   | "internal_error"
 >;
@@ -24,6 +25,10 @@ const definitions: Readonly<Record<FoundationProblemCode, ProblemDefinition>> = 
   validation_failed: {
     title: "Validation failed",
     detail: "The request body is invalid.",
+  },
+  payload_too_large: {
+    title: "Payload too large",
+    detail: "The request body exceeds the allowed size.",
   },
   version_conflict: {
     title: "Version conflict",
@@ -49,11 +54,11 @@ const definitions: Readonly<Record<FoundationProblemCode, ProblemDefinition>> = 
 
 export class ConnectorProblem extends Error {
   readonly code: Exclude<FoundationProblemCode, "internal_error">;
-  readonly status: 400 | 401 | 403 | 409 | 429;
+  readonly status: 400 | 401 | 403 | 409 | 413 | 429;
 
   constructor(
     code: Exclude<FoundationProblemCode, "internal_error">,
-    status: 400 | 401 | 403 | 409 | 429,
+    status: 400 | 401 | 403 | 409 | 413 | 429,
     message: string = code,
   ) {
     super(message);
@@ -69,19 +74,27 @@ const isInvalidJsonBodyError = (error: unknown): boolean =>
   (error.code === "FST_ERR_CTP_INVALID_JSON_BODY" ||
     error.code === "FST_ERR_CTP_EMPTY_JSON_BODY");
 
+const isOversizedBodyError = (error: unknown): boolean =>
+  error instanceof Error &&
+  "code" in error &&
+  error.code === "FST_ERR_CTP_BODY_TOO_LARGE";
+
 export const toConnectorProblem = (
   error: unknown,
   requestId: string,
   instance: string,
 ): ApiProblem => {
   const invalidJsonBody = isInvalidJsonBodyError(error);
+  const oversizedBody = isOversizedBodyError(error);
   const code: FoundationProblemCode =
     error instanceof ConnectorProblem
       ? error.code
-      : invalidJsonBody
-        ? "validation_failed"
-        : "internal_error";
-  const status = error instanceof ConnectorProblem ? error.status : invalidJsonBody ? 400 : 500;
+      : oversizedBody
+        ? "payload_too_large"
+        : invalidJsonBody
+          ? "validation_failed"
+          : "internal_error";
+  const status = error instanceof ConnectorProblem ? error.status : oversizedBody ? 413 : invalidJsonBody ? 400 : 500;
   const definition = definitions[code];
   return {
     type: `https://pih.example/problems/${code.replaceAll("_", "-")}`,
@@ -96,10 +109,10 @@ export const toConnectorProblem = (
 
 export const installConnectorProblemHandler = (
   app: FastifyInstance,
-  requestIdFactory: () => string = randomUUID,
+  requestIdFactory: (request: FastifyRequest) => string = () => randomUUID(),
 ): void => {
   app.setErrorHandler((error, request, reply) => {
-    const requestId = requestIdFactory();
+    const requestId = requestIdFactory(request);
     const instance = request.routeOptions.url ?? "/unmatched";
     const problem = toConnectorProblem(error, requestId, instance);
     if (problem.status >= 500) {

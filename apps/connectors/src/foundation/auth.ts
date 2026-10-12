@@ -30,6 +30,7 @@ export type ConnectorAuthenticationOptions = Readonly<{
     timeWindowMs?: number;
     credentialBucketCapacity?: number;
   }>;
+  requestIdFactory?: (request: FastifyRequest) => string;
 }>;
 
 declare module "fastify" {
@@ -362,7 +363,11 @@ export const installConnectorAuthentication = (
 
   app.decorateRequest("authenticatedService");
   app.decorateRequest("delegatedPrincipal");
-  installConnectorProblemHandler(app);
+  if (options.requestIdFactory === undefined) {
+    installConnectorProblemHandler(app);
+  } else {
+    installConnectorProblemHandler(app, options.requestIdFactory);
+  }
 
   app.addHook("onClose", async () => {
     hmacKey.fill(0);
