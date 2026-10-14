@@ -50,7 +50,7 @@ export type SystemView = Readonly<{
   telemetry: readonly TelemetryView[];
 }>;
 
-const stateLabels: Record<SourceState, string> = {
+export const stateLabels: Record<SourceState, string> = {
   available: "Disponible",
   degraded: "Degradado",
   requires_reauthorization: "Requiere volver a autorizar",
@@ -86,7 +86,7 @@ const calendarReasonFallback: Partial<Record<SourceState, string>> = {
   requires_reauthorization: "Hay que autorizar de nuevo el acceso desde el navegador.",
 };
 
-const reasonLabel = (code: string | undefined): string | null =>
+export const reasonLabel = (code: string | undefined): string | null =>
   code === undefined ? null : reasonLabels[code] ?? `Motivo informado por el servicio: ${code}`;
 
 export const ageLabel = (checkedAt: string, now: Date): string => {

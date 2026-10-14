@@ -15,3 +15,14 @@ export const isValidTimeZone = (timeZone: string): boolean => {
     return false;
   }
 };
+
+/** Adds whole days to a calendar date (YYYY-MM-DD) without passing through any local or instant time. */
+export const addDays = (date: string, days: number): string => {
+  const [year, month, day] = date.split("-").map(Number) as [number, number, number];
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+};
+
+/** Formats a calendar date (YYYY-MM-DD) as a date, never as an instant shifted by a zone. */
+export const formatCalendarDate = (date: string): string =>
+  new Intl.DateTimeFormat("es", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
+    .format(new Date(`${date}T00:00:00.000Z`));
