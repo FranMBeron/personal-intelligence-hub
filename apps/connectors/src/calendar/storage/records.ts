@@ -66,8 +66,6 @@ export type ProposalRecord = Readonly<{
   expiresAt: string;
   completedAt?: string;
   safeReasonCode?: CalendarChangeProposal["safeReasonCode"];
-  /** When set, the transition applies only while expires_at > this instant (fails with calendar_proposal_expired). */
-  unexpiredAt?: string;
 }>;
 
 export type SanitizedCalendarAuditRecord = Readonly<{
@@ -102,4 +100,6 @@ export type ProposalTransition = Readonly<{
   eventRef?: string;
   completedAt?: string;
   safeReasonCode?: CalendarChangeProposal["safeReasonCode"];
+  /** When set, the transition applies only while expires_at > this instant (fails with calendar_proposal_expired). */
+  unexpiredAt?: string;
 }>;
