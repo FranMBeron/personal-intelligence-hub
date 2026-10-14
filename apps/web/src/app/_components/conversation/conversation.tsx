@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  type Conversation, type HermesCapabilities, type MessagePart,
+  type Conversation, type HermesCapabilities, type MessageHistory, type MessagePart,
 } from "@personal-intelligence-hub/contracts";
 import { useCallback, useEffect, useId, useReducer, useRef, useState } from "react";
 
@@ -92,17 +92,43 @@ export function Conversation({
     if (conversationId === null || capabilities === null) return;
     const currentGeneration = generation.current;
     const controller = new AbortController();
-    void client.history(conversationId, { limit: 50 }, controller.signal).then((history) => {
-      dispatch({ type: "history.loaded", conversationId, generation: currentGeneration, history });
-    }).catch(() => {
-      if (!controller.signal.aborted) setOperationError("No se pudo cargar el historial de esta conversación.");
-    });
-    void subscribeToConversationEvents({
-      conversationId,
-      signal: controller.signal,
-      onEvent: (event) => dispatch({ type: "event.received", event, conversationId, generation: currentGeneration }),
-      onUnavailable: () => setOperationError("La actualización en tiempo real está intentando reconectar."),
-    });
+    const { signal } = controller;
+    // Hydrate first, then stream from the snapshot's atomic cursor; a 410 means the cursor expired, so re-snapshot once and resubscribe.
+    const run = async () => {
+      let rebaseCursor = false;
+      let expiriesWithoutProgress = 0;
+      while (!signal.aborted) {
+        let history: MessageHistory;
+        try {
+          history = await client.history(conversationId, { limit: 50 }, signal);
+        } catch {
+          if (!signal.aborted) setOperationError("No se pudo cargar el historial de esta conversación.");
+          return;
+        }
+        if (signal.aborted) return;
+        dispatch({ type: "history.loaded", conversationId, generation: currentGeneration, history, rebaseCursor });
+        let expired = false;
+        await subscribeToConversationEvents({
+          conversationId,
+          signal,
+          initialCursor: history.streamCursor,
+          onEvent: (event) => {
+            expiriesWithoutProgress = 0;
+            dispatch({ type: "event.received", event, conversationId, generation: currentGeneration });
+          },
+          onCursorExpired: () => { expired = true; },
+          onUnavailable: () => setOperationError("La actualización en tiempo real está intentando reconectar."),
+        });
+        if (!expired || signal.aborted) return;
+        expiriesWithoutProgress += 1;
+        if (expiriesWithoutProgress > 1) {
+          setOperationError("La actualización en tiempo real se detuvo. Recarga la página para continuar.");
+          return;
+        }
+        rebaseCursor = true;
+      }
+    };
+    void run();
     return () => controller.abort();
   }, [capabilities, client, conversationId]);
 
