@@ -148,10 +148,16 @@ export const validateMigrationHistory = (
   if (recorded.some((row, index) => index > 0 && recorded[index - 1]!.name >= row.name)) {
     throw new MigrationError("migration_history_invalid", "order");
   }
+  const packagedNames = new Set(ordered.map(({ name }) => name));
   for (let index = 0; index < Math.min(recorded.length, ordered.length); index += 1) {
     const actual = recorded[index]!;
     const expected = ordered[index]!;
     if (actual.name !== expected.name) {
+      // An unknown record inside the known prefix is tampered or foreign
+      // history; a packaged migration skipped by later history is a gap.
+      if (!packagedNames.has(actual.name) && actual.name < expected.name) {
+        throw new MigrationError("migration_history_invalid", actual.name);
+      }
       throw new MigrationError("migration_missing", expected.name);
     }
     if (actual.sha256 !== expected.sha256) {

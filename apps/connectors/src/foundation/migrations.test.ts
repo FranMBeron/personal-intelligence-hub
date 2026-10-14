@@ -11,6 +11,7 @@ import {
   applyMigrations,
   loadMigrations,
   migrations,
+  validateMigrationHistory,
 } from "./migrations.js";
 
 const databases: ConnectorDatabase[] = [];
@@ -48,6 +49,15 @@ const migrationNames = (
       .all<{ name: string }>()
       .map(({ name }) => name),
   );
+
+const captureFailure = (run: () => unknown): unknown => {
+  try {
+    run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected validation to fail");
+};
 
 const packagedNames = (): string[] => loadMigrations().map(({ name }) => name);
 
@@ -259,6 +269,30 @@ describe("connector migrations", () => {
     databases.push(reopened);
     await expect(reopened.read(() => undefined))
       .rejects.toMatchObject({ code: "migration_history_invalid" });
+  });
+
+  it("reports an unknown record sorting before the expected packaged migration as invalid history", () => {
+    const available = migrations({
+      "0000_base": "CREATE TABLE base(id TEXT PRIMARY KEY);",
+      "0100_provider": "CREATE TABLE provider(id TEXT PRIMARY KEY);",
+    });
+    const [base, provider] = available.map(({ name, sha256 }) => ({ name, sha256 }));
+    const recorded = [base!, { name: "0050_unknown", sha256: "a".repeat(64) }, provider!];
+
+    expect(captureFailure(() => validateMigrationHistory(recorded, {}, available)))
+      .toMatchObject({ code: "migration_history_invalid", migrationName: "0050_unknown" });
+  });
+
+  it("still reports a packaged migration skipped by later history as missing", () => {
+    const available = migrations({
+      "0000_base": "CREATE TABLE base(id TEXT PRIMARY KEY);",
+      "0100_provider": "CREATE TABLE provider(id TEXT PRIMARY KEY);",
+      "0200_later": "CREATE TABLE later(id TEXT PRIMARY KEY);",
+    });
+    const [base, , later] = available.map(({ name, sha256 }) => ({ name, sha256 }));
+
+    expect(captureFailure(() => validateMigrationHistory([base!, later!], {}, available)))
+      .toMatchObject({ code: "migration_missing", migrationName: "0100_provider" });
   });
 
   it("rejects an unsupported migration history compatibility format", async () => {
