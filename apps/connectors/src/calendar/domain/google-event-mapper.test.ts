@@ -107,6 +107,18 @@ describe("Google event mapper", () => {
     expect(sanitizeExternalText("a\u0000b‮c", 10)).toBe("abc");
   });
 
+  it("strips the Arabic letter mark and zero-width characters, keeping ZWJ only inside emoji sequences", () => {
+    expect(sanitizeExternalText("pay\u061Cment", 50)).toBe("payment");
+    expect(sanitizeExternalText("ad\u200Bmin \u200Cro\u200Dot", 50)).toBe("admin root");
+    expect(sanitizeExternalText("\u200Dleading and trailing\u200D", 50)).toBe("leading and trailing");
+    // ZWJ joins pictographs into one emoji (family, woman running); between letters it is stripped.
+    expect(sanitizeExternalText("\u{1F468}\u200D\u{1F469}\u200D\u{1F467}", 50)).toBe("\u{1F468}\u200D\u{1F469}\u200D\u{1F467}");
+    expect(sanitizeExternalText("\u{1F3C3}\u{1F3FD}\u200D\u2640\uFE0F", 50)).toBe("\u{1F3C3}\u{1F3FD}\u200D\u2640\uFE0F");
+    expect(sanitizeExternalText("a\u200D\u{1F642}", 50)).toBe("a\u{1F642}");
+    expect(sanitizeExternalText("\u{1F642}\u200Db", 50)).toBe("\u{1F642}b");
+    expect(sanitizeExternalText("\u{1F642}\u200D\u202E\u{1F642}", 50)).toBe("\u{1F642}\u200D\u{1F642}");
+  });
+
   it("derives the organizer relationship and attendee details without the provider identifiers", () => {
     const owned = mapGoogleEvent(event({ organizer: { self: true } }), context)!;
     expect(owned.organizerRelationship).toBe("self");

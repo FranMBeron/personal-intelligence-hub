@@ -69,11 +69,22 @@ const truncate = (value: string, max: number): string => {
   return points.length <= max ? value : points.slice(0, max).join("");
 };
 
-/** Removes markup, control and bidirectional-override characters, then bounds the text length. */
+/**
+ * C0/C1 controls (except tab/newline), DEL, the Arabic letter mark (U+061C), zero-width space and
+ * non-joiner (U+200B, U+200C), LRM/RLM, bidi embeddings/overrides (U+202A-U+202E), isolates
+ * (U+2066-U+2069) and BOM. None changes legitimate meaning; all can hide or reorder text.
+ */
+const INVISIBLE_OR_BIDI = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b\u200c\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/gu;
+/**
+ * Zero-width joiner (U+200D) is kept only where it joins two pictographs into one emoji (for
+ * example family or gendered-activity sequences; a skin-tone modifier or VS16 may precede it).
+ * Anywhere else it is invisible and stripped, so it cannot split or disguise words.
+ */
+const STRAY_ZWJ = /(?<!\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}\uFE0F]?)\u200d|\u200d(?!\p{Extended_Pictographic})/gu;
+
+/** Removes markup, control, zero-width and bidirectional-override characters, then bounds the text length. */
 export const sanitizeExternalText = (value: string, max: number, multiline = false): string => {
-  const stripped = neutralizeBrackets(stripTags(value))
-    // C0/C1 controls (except tab/newline), DEL, bidi embeddings/overrides/isolates and BOM.
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩﻿]/gu, "");
+  const stripped = neutralizeBrackets(stripTags(value)).replace(INVISIBLE_OR_BIDI, "").replace(STRAY_ZWJ, "");
   const normalized = multiline
     ? stripped.replace(/[ \t ]+/gu, " ").replace(/ *\n */gu, "\n").replace(/\n{3,}/gu, "\n\n").trim()
     : stripped.replace(/\s+/gu, " ").trim();
