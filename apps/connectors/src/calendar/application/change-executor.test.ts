@@ -148,6 +148,30 @@ describe("Calendar change executor", () => {
     expect(world.google.mutations).toHaveLength(0);
   });
 
+  it("re-checks organizer ownership before updating", async () => {
+    const world = await createProposalWorld();
+    const proposal = await world.proposals.create(centralPrincipal(), "exec-key-0016", update(world.eventRefs["Owned planning"]!));
+    // Same ETag but the provider now reports somebody else as organizer: never update for them.
+    world.google.put(PRIMARY, { ...ownedEvent, organizer: { self: false } });
+    await expect(world.proposals.confirm(humanPrincipal(), proposal.id, { expectedVersion: 1 }))
+      .resolves.toMatchObject({ status: "conflict", safeReasonCode: "provider_state_changed" });
+    expect(world.google.mutations).toHaveLength(0);
+  });
+
+  it("refuses an invitation response once the actor's own attendee entry disappeared", async () => {
+    const world = await createProposalWorld();
+    const proposal = await world.proposals.create(centralPrincipal(), "exec-key-0017", {
+      operation: "respond_invitation", eventRef: world.eventRefs["Invited review"]!, recurrenceScope: "single", response: "accepted", guestNotification: "all",
+    });
+    // Same ETag, but the self attendee is gone (and another entry reuses the email without `self`).
+    world.google.put(PRIMARY, { ...invitation, attendees: [
+      { email: "organizer@example.test", responseStatus: "accepted" }, { email: SELF_EMAIL, responseStatus: "needsAction" },
+    ] });
+    await expect(world.proposals.confirm(humanPrincipal(), proposal.id, { expectedVersion: 1 }))
+      .resolves.toMatchObject({ status: "conflict", safeReasonCode: "provider_state_changed" });
+    expect(world.google.mutations).toHaveLength(0);
+  });
+
   it("completes an invitation response for a non-organizer", async () => {
     const world = await createProposalWorld();
     const proposal = await world.proposals.create(centralPrincipal(), "exec-key-0009", {
