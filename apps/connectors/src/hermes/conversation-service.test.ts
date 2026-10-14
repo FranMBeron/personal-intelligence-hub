@@ -480,6 +480,44 @@ describe("Hermes ConversationService", () => {
     expect(String((upstream as Error).message)).not.toContain("fictional-secret-token");
   });
 
+  it("hides raw SQLite errors behind closed codes on every public method", async () => {
+    const { service, database } = await createHarness();
+    const conversation = await service.create(principal(), { agentId: "fitness" });
+    const sqliteError = () => Promise.reject(new Error("SQLITE_IOERR /secret"));
+    const calls = {
+      list: () => service.list(principal(), { limit: 50 }),
+      create: () => service.create(principal(), { agentId: "fitness", title: "Fresh" }),
+      ensureMain: () => service.ensureMain(principal(), "fitness"),
+      get: () => service.get(principal(), conversation.id),
+      patch: () => service.patch(principal(), conversation.id, { title: "Renamed", expectedVersion: 1 }),
+      messages: () => service.messages(principal(), conversation.id, { limit: 50 }),
+      selection: () => service.selection(principal(), "fitness"),
+      putSelection: () => service.putSelection(principal(), "fitness", { conversationId: conversation.id, expectedVersion: 0 }),
+    } as const;
+    const cases: ReadonlyArray<readonly [keyof typeof calls, "read" | "transaction", string]> = [
+      ["list", "read", "hermes_conversation_unavailable"],
+      ["ensureMain", "read", "hermes_conversation_unavailable"],
+      ["get", "read", "hermes_conversation_unavailable"],
+      ["patch", "read", "hermes_conversation_unavailable"],
+      ["messages", "read", "hermes_conversation_unavailable"],
+      ["selection", "read", "hermes_conversation_unavailable"],
+      ["putSelection", "read", "hermes_conversation_unavailable"],
+      ["create", "transaction", "hermes_conversation_unavailable"],
+      ["ensureMain", "transaction", "hermes_conversation_unavailable"],
+      ["patch", "transaction", "hermes_conversation_update_failed"],
+      ["putSelection", "transaction", "hermes_selection_update_failed"],
+    ];
+    for (const [method, operation, code] of cases) {
+      const spy = vi.spyOn(database, operation).mockImplementation(sqliteError);
+      const error = await calls[method]().then(() => null, (reason: unknown) => reason);
+      spy.mockRestore();
+      expect.soft({ method, operation, error }).toMatchObject({
+        method, operation, error: { name: "HermesConversationError", code },
+      });
+      expect.soft(String((error as Error).message)).not.toContain("/secret");
+    }
+  });
+
   it("maps message history only after checking actor-owned conversation", async () => {
     const { service, native } = await createHarness();
     const conversation = await service.create(principal(), { agentId: "fitness" });

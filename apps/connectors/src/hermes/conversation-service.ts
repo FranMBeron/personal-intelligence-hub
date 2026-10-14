@@ -289,21 +289,17 @@ export class ConversationService {
     await this.#getReady(principal.actorId, conversationId);
     const parsed = MessagePageQuerySchema.safeParse(query);
     if (!parsed.success) return fail("hermes_message_query_invalid");
-    try {
-      return await this.#database.read((db) => this.#messages.snapshot(db, {
-        actorId: principal.actorId,
-        conversationId,
-        query: parsed.data,
-      }));
-    } catch (error) {
-      throw localError(error, "hermes_conversation_unavailable");
-    }
+    return this.#read((db) => this.#messages.snapshot(db, {
+      actorId: principal.actorId,
+      conversationId,
+      query: parsed.data,
+    }));
   }
 
   async selection(principal: DelegatedPrincipal, agentId: string): Promise<ConversationSelection> {
     this.#requireScope(principal, "hermes:conversations:read");
     this.#requireDirectProfile(agentId);
-    const row = await this.#database.read((db) => selectionFromDatabase(db, principal.actorId, agentId));
+    const row = await this.#read((db) => selectionFromDatabase(db, principal.actorId, agentId));
     if (row === undefined) {
       return ConversationSelectionSchema.parse({
         agentId,
@@ -329,7 +325,7 @@ export class ConversationService {
     this.#requireDirectProfile(agentId);
     const parsed = PutConversationSelectionBodySchema.safeParse(body);
     if (!parsed.success) return fail("hermes_selection_request_invalid");
-    const candidate = await this.#database.read((db) => this.#conversations.getOwned(
+    const candidate = await this.#read((db) => this.#conversations.getOwned(
       db,
       principal.actorId,
       parsed.data.conversationId,
@@ -377,7 +373,7 @@ export class ConversationService {
   }
 
   async #ensureMain(actorId: string, agentId: string): Promise<Conversation> {
-    const existing = await this.#database.read((db) => {
+    const existing = await this.#read((db) => {
       const row = db.prepare(
         "SELECT id FROM hermes_conversations WHERE actor_id = :actorId AND agent_id = :agentId AND is_main = 1",
       ).get<{ id: string }>({ actorId, agentId });
@@ -406,7 +402,7 @@ export class ConversationService {
           });
         });
       } catch {
-        const raced = await this.#database.read((db) => {
+        const raced = await this.#read((db) => {
           const row = db.prepare(
             "SELECT id FROM hermes_conversations WHERE actor_id = :actorId AND agent_id = :agentId AND is_main = 1",
           ).get<{ id: string }>({ actorId, agentId });
@@ -465,10 +461,19 @@ export class ConversationService {
   }
 
   async #getReady(actorId: string, conversationId: string): Promise<StoredConversation> {
-    const conversation = await this.#database.read((db) => this.#conversations.getOwned(db, actorId, conversationId));
+    const conversation = await this.#read((db) => this.#conversations.getOwned(db, actorId, conversationId));
     if (conversation === null || conversation.provisionState !== "ready") return fail("not_found");
     this.#requireDirectProfile(conversation.agentId);
     return conversation;
+  }
+
+  /** Every local read goes through here so raw SQLite errors never leave the service. */
+  async #read<T>(fn: (db: SqliteHandle) => T): Promise<T> {
+    try {
+      return await this.#database.read(fn);
+    } catch (error) {
+      throw localError(error, "hermes_conversation_unavailable");
+    }
   }
 
   #isSelectedInDatabase(database: SqliteHandle, actorId: string, agentId: string, conversationId: string): boolean {
