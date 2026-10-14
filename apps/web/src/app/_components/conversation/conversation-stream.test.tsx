@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { HermesCapabilities } from "@personal-intelligence-hub/contracts";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Conversation } from "./conversation";
@@ -19,7 +19,7 @@ const pendingUntilAbort = (init?: RequestInit) => new Promise<Response>((_resolv
 });
 const unused = async () => { throw new Error("unused"); };
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("Conversation event stream", () => {
   it("hydrates history before opening the stream at the snapshot cursor", async () => {
@@ -71,6 +71,65 @@ describe("Conversation event stream", () => {
     expect(historyCalls).toBe(2);
     expect(eventCalls).toBe(2);
     expect(screen.queryByText(/intentando reconectar/u)).toBeNull();
+  });
+
+  it("retries a failed history load with backoff and then opens the stream", async () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    let historyCalls = 0;
+    const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const path = String(input);
+      if (path.includes("/messages?limit=50")) {
+        historyCalls += 1;
+        order.push("history");
+        return Promise.resolve(historyCalls === 1
+          ? Response.json({ detail: "unavailable" }, { status: 503 })
+          : Response.json({ items: [], pageInfo, streamCursor: "9" }));
+      }
+      if (path.endsWith("/events")) {
+        order.push(`events:${new Headers(init?.headers).get("last-event-id") ?? "none"}`);
+        return pendingUntilAbort(init);
+      }
+      return Promise.reject(new Error(`Unexpected request ${path}`));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<Conversation conversationId="thread-1" capabilities={capabilities} onResolveMain={unused} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(order).toEqual(["history"]);
+    expect(screen.getByText("No se pudo cargar el historial de esta conversación.")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(order).toEqual(["history", "history", "events:9"]);
+    expect(screen.queryByText("No se pudo cargar el historial de esta conversación.")).toBeNull();
+  });
+
+  it("gives up on history after a bounded number of attempts", async () => {
+    vi.useFakeTimers();
+    let historyCalls = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL): Promise<Response> => {
+      if (String(input).includes("/messages?limit=50")) { historyCalls += 1; return Promise.resolve(Response.json({ detail: "x" }, { status: 503 })); }
+      return Promise.reject(new Error("Unexpected request"));
+    }));
+    render(<Conversation conversationId="thread-1" capabilities={capabilities} onResolveMain={unused} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(600_000); });
+    expect(historyCalls).toBe(5);
+    expect(screen.getByText(/Recarga la página para intentarlo de nuevo/u)).toBeTruthy();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops retrying history after unmount", async () => {
+    vi.useFakeTimers();
+    let historyCalls = 0;
+    const fetcher = vi.fn((input: RequestInfo | URL): Promise<Response> => {
+      if (String(input).includes("/messages?limit=50")) { historyCalls += 1; return Promise.resolve(Response.json({ detail: "x" }, { status: 503 })); }
+      return Promise.reject(new Error("Unexpected request"));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<Conversation conversationId="thread-1" capabilities={capabilities} onResolveMain={unused} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    view.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(historyCalls).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("shows a stopped state without reconnecting when the stream is denied", async () => {

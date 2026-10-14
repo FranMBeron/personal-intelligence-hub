@@ -7,7 +7,7 @@ import { useCallback, useEffect, useId, useReducer, useRef, useState } from "rea
 
 import { SourceState } from "../source-state";
 import { Composer } from "./composer";
-import { subscribeToConversationEvents } from "./event-stream";
+import { reconnectDelay, subscribeToConversationEvents, waitForReconnect } from "./event-stream";
 import { ConversationClient, ConversationClientError } from "./conversation-client";
 import { conversationReducer, initialConversationState, type ConversationMessage } from "./state";
 import { UserFacingError } from "./user-facing-error";
@@ -25,6 +25,10 @@ const sendErrorMessage = (error: unknown): string => {
   }
   return "No se pudo enviar el mensaje. Revisa tu conexión e inténtalo de nuevo.";
 };
+
+const historyErrorMessage = "No se pudo cargar el historial de esta conversación.";
+const historyStoppedMessage = "No se pudo cargar el historial de esta conversación. Recarga la página para intentarlo de nuevo.";
+const maxHistoryAttempts = 5;
 
 type PendingSend = {
   readonly idempotencyKey: string;
@@ -130,14 +134,21 @@ export function Conversation({
       let rebaseCursor = false;
       let expiriesWithoutProgress = 0;
       while (!signal.aborted) {
-        let history: MessageHistory;
-        try {
-          history = await client.history(conversationId, { limit: 50 }, signal);
-        } catch {
-          if (!signal.aborted) setOperationError("No se pudo cargar el historial de esta conversación.");
-          return;
+        let history: MessageHistory | undefined;
+        // Bounded backoff keeps the error visible while retrying; aborting (unmount or thread switch) ends the wait at once.
+        for (let attempt = 0; history === undefined; attempt += 1) {
+          try {
+            history = await client.history(conversationId, { limit: 50 }, signal);
+          } catch {
+            if (signal.aborted) return;
+            if (attempt + 1 >= maxHistoryAttempts) { setOperationError(historyStoppedMessage); return; }
+            setOperationError(historyErrorMessage);
+            await waitForReconnect(signal, reconnectDelay(attempt));
+            if (signal.aborted) return;
+          }
         }
         if (signal.aborted) return;
+        setOperationError((current) => current === historyErrorMessage ? null : current);
         dispatch({ type: "history.loaded", conversationId, generation: currentGeneration, history, rebaseCursor });
         let expired = false;
         await subscribeToConversationEvents({

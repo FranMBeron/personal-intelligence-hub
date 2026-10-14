@@ -12,10 +12,10 @@ type Options = Readonly<{
   fetcher?: typeof fetch;
 }>;
 
-const reconnectDelay = (attempt: number): number =>
+export const reconnectDelay = (attempt: number): number =>
   Math.min(1_000 * 2 ** Math.min(attempt, 5), 30_000);
 
-const waitForReconnect = (signal: AbortSignal, delay: number): Promise<void> =>
+export const waitForReconnect = (signal: AbortSignal, delay: number): Promise<void> =>
   new Promise((resolve) => {
     if (signal.aborted) {
       resolve();
