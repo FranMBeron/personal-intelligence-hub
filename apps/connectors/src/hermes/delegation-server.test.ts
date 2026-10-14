@@ -1,8 +1,8 @@
 import { request } from "node:http";
 import { createServer } from "node:net";
-import { lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Delegation } from "@personal-intelligence-hub/contracts";
@@ -35,11 +35,12 @@ const setup = async (options: { start?: (...args: unknown[]) => Promise<Delegati
   const peers = loadDelegationPeerConfig(delegationEnvironment({ HERMES_DELEGATION_SOCKET_PATH: socketPath }), harness.profiles).peers;
   const service = { start: vi.fn(options.start ?? (async () => delegation)) };
   const chown = vi.fn(async (_path: string, _gid: number) => undefined);
+  const audit = vi.fn((_event: unknown) => undefined);
   const server = new HermesDelegationServer({
-    socketPath, socketGroupId: 1234, peers, service: service as never, maximumBodyBytes: 32 * 1024, chown,
+    socketPath, socketGroupId: 1234, peers, service: service as never, maximumBodyBytes: 32 * 1024, chown, onAuthenticationRejected: audit,
   });
   servers.push(server);
-  return { server, service, socketPath, chown, directory };
+  return { server, service, socketPath, chown, audit, directory };
 };
 
 type Sent = { status: number; body: string; headers: Record<string, string | string[] | undefined> };
@@ -74,7 +75,7 @@ describe("HermesDelegationServer", () => {
     const status = await lstat(socketPath);
     expect(status.isSocket()).toBe(true);
     expect(status.mode & 0o777).toBe(0o660);
-    expect(chown).toHaveBeenCalledWith(socketPath, 1234);
+    expect(chown).toHaveBeenCalledWith(expect.any(String), 1234);
     const response = await send(socketPath, { body: JSON.stringify({ targetAgentId: specialistAId, message: "Revisá esto.", sourceSessionId: "pih_conversation-01" }) });
     expect(response.status).toBe(201);
     expect(JSON.parse(response.body)).toEqual(delegation);
@@ -162,5 +163,44 @@ describe("HermesDelegationServer", () => {
     await own.server.stop();
     await expect(lstat(own.socketPath)).rejects.toThrow();
     await own.server.stop();
+  });
+
+  it("sets mode and group in a private staging directory before the socket appears at its final path", async () => {
+    const { server, socketPath, chown, directory } = await setup();
+    const observed: unknown[] = [];
+    chown.mockImplementation(async (path: string) => {
+      observed.push({
+        finalPathExists: await lstat(socketPath).then(() => true, () => false),
+        mode: (await lstat(path)).mode & 0o777,
+        stagingMode: (await lstat(dirname(path))).mode & 0o777,
+      });
+    });
+    await server.start();
+    expect(observed).toEqual([{ finalPathExists: false, mode: 0o660, stagingMode: 0o700 }]);
+    expect((await lstat(socketPath)).mode & 0o777).toBe(0o660);
+    expect(await readdir(directory)).toEqual(["hermes-delegation.sock"]);
+    expect((await send(socketPath)).status).toBe(201);
+  });
+
+  it("leaves neither a socket nor a staging directory behind when securing the socket fails", async () => {
+    const { server, chown, directory } = await setup();
+    chown.mockRejectedValue(new Error("EPERM fictional"));
+    await expect(server.start()).rejects.toThrow("hermes_delegation_socket_unsafe");
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("records a content-free audit event for each rejected peer authentication", async () => {
+    const { server, service, socketPath, audit } = await setup();
+    await server.start();
+    expect((await send(socketPath, { headers: { authorization: "" } })).status).toBe(401);
+    expect((await send(socketPath, { headers: { authorization: "Bearer fictional-unknown-peer-token-32-bytes" } })).status).toBe(401);
+    expect((await send(socketPath)).status).toBe(201);
+    expect(audit.mock.calls).toEqual([
+      [{ event: "hermes_delegation_authentication_rejected", reason: "missing_credential" }],
+      [{ event: "hermes_delegation_authentication_rejected", reason: "unknown_credential" }],
+    ]);
+    expect(JSON.stringify(audit.mock.calls)).not.toContain("fictional-unknown-peer-token");
+    expect(server.rejectedAuthentications).toBe(2);
+    expect(service.start).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,6 +1,7 @@
-import { chmod, chown as chownPath, lstat, unlink } from "node:fs/promises";
+import { chmod, chown as chownPath, link, lstat, mkdtemp, rm, unlink } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect } from "node:net";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import { DelegationSchema } from "@personal-intelligence-hub/contracts";
@@ -37,6 +38,16 @@ type Options = Readonly<{
   maximumBodyBytes: number;
   /** Group ownership change; injected only by tests that cannot chown. */
   chown?: (path: string, groupId: number) => Promise<void>;
+  /**
+   * Content-free audit hook for each rejected peer authentication. The event
+   * carries only a closed reason, never the presented credential, headers, or body.
+   */
+  onAuthenticationRejected?: (event: AuthenticationRejected) => void;
+}>;
+
+export type AuthenticationRejected = Readonly<{
+  event: "hermes_delegation_authentication_rejected";
+  reason: "missing_credential" | "unknown_credential";
 }>;
 
 class BodyTooLarge extends Error {}
@@ -80,6 +91,7 @@ export class HermesDelegationServer {
   readonly #chown: (path: string, groupId: number) => Promise<void>;
   #server: Server | undefined;
   #inode: Readonly<{ dev: number; ino: number }> | undefined;
+  #rejectedAuthentications = 0;
 
   constructor(options: Options) {
     if (!Number.isInteger(options.maximumBodyBytes) || options.maximumBodyBytes < 1 || options.maximumBodyBytes > MAX_BODY_CEILING) {
@@ -89,6 +101,18 @@ export class HermesDelegationServer {
     this.#chown = options.chown ?? ((path, groupId) => chownPath(path, -1, groupId));
   }
 
+  /** Rejected peer authentications since start (content-free; for health and audit counters). */
+  get rejectedAuthentications(): number {
+    return this.#rejectedAuthentications;
+  }
+
+  /**
+   * Bind without any permissive window: listen inside a fresh 0700 staging
+   * directory next to the final path, set mode 0660 and the agent group there,
+   * then hard-link the secured inode into place (never replacing an existing
+   * entry) and remove the staging name. The socket is never reachable at its
+   * final path with default permissions, and no process umask is touched.
+   */
   async start(): Promise<void> {
     if (this.#server !== undefined) throw new Error("hermes_delegation_server_started");
     await this.#clearStaleSocket();
@@ -97,20 +121,30 @@ export class HermesDelegationServer {
         if (!response.headersSent) this.#respond(response, 500, { code: "internal_error" });
       });
     });
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(this.#options.socketPath, () => { server.off("error", reject); resolve(); });
-    });
-    this.#server = server;
+    const staging = await mkdtemp(join(dirname(this.#options.socketPath), ".d-"));
+    const stagingSocket = join(staging, "s");
+    let staged: Readonly<{ dev: number; ino: number }> | undefined;
     try {
-      await chmod(this.#options.socketPath, 0o660);
-      await this.#chown(this.#options.socketPath, this.#options.socketGroupId);
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(stagingSocket, () => { server.off("error", reject); resolve(); });
+      });
+      this.#server = server;
+      await chmod(stagingSocket, 0o660);
+      await this.#chown(stagingSocket, this.#options.socketGroupId);
+      const secured = await lstat(stagingSocket);
+      if (!secured.isSocket()) throw new Error("not a socket");
+      staged = { dev: secured.dev, ino: secured.ino };
+      await link(stagingSocket, this.#options.socketPath);
+      this.#inode = staged;
       const status = await lstat(this.#options.socketPath);
-      if (!status.isSocket()) throw new Error("not a socket");
-      this.#inode = { dev: status.dev, ino: status.ino };
+      if (!status.isSocket() || status.dev !== staged.dev || status.ino !== staged.ino) throw new Error("replaced");
     } catch {
+      // stop() removes the final path only if it is still this process's inode.
       await this.stop();
       throw new Error("hermes_delegation_socket_unsafe");
+    } finally {
+      await rm(staging, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
@@ -161,7 +195,10 @@ export class HermesDelegationServer {
     if (headerCount(request, "authorization") > 1) return this.#reject(request, response, 400, "validation_failed");
     const credential = BEARER.exec(request.headers.authorization ?? "")?.[1];
     const peer = credential === undefined ? null : this.#options.peers.authenticate(credential);
-    if (peer === null) return this.#reject(request, response, 401, "authentication_required");
+    if (peer === null) {
+      this.#auditRejected(credential === undefined ? "missing_credential" : "unknown_credential");
+      return this.#reject(request, response, 401, "authentication_required");
+    }
     const mediaType = (request.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase();
     if (mediaType !== "application/json") return this.#reject(request, response, 415, "unsupported_media_type");
     const idempotencyKey = request.headers["idempotency-key"];
@@ -195,6 +232,15 @@ export class HermesDelegationServer {
     } catch (error) {
       if (error instanceof HermesDelegationError) return this.#respond(response, statusFor[error.code], { code: error.code });
       this.#respond(response, 500, { code: "internal_error" });
+    }
+  }
+
+  #auditRejected(reason: AuthenticationRejected["reason"]): void {
+    this.#rejectedAuthentications += 1;
+    try {
+      this.#options.onAuthenticationRejected?.({ event: "hermes_delegation_authentication_rejected", reason });
+    } catch {
+      // Auditing never changes the response.
     }
   }
 
