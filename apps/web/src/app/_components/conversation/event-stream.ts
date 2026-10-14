@@ -8,6 +8,8 @@ type Options = Readonly<{
   /** 401/403: the stream stops permanently; falls back to onUnavailable when omitted. */
   onAccessDenied?: () => void;
   onCursorExpired?: () => void | Promise<void>;
+  /** The stream closed twice in a row without advancing the cursor; reconnecting stops permanently. */
+  onStalled?: () => void;
   initialCursor?: string | null;
   fetcher?: typeof fetch;
 }>;
@@ -84,12 +86,18 @@ export const subscribeToConversationEvents = async ({
   onUnavailable,
   onAccessDenied,
   onCursorExpired,
+  onStalled,
   initialCursor,
   fetcher = fetch,
 }: Options): Promise<void> => {
   let lastEventId = initialCursor ?? undefined;
   let failures = 0;
+  // Mirrors the double-410 rule: an opened stream that ends twice in a row without a new event id
+  // (for example a poisoned event replayed after the same cursor) stops instead of looping forever.
+  let closesWithoutProgress = 0;
   while (!signal.aborted) {
+    let opened = false;
+    let progressed = false;
     try {
       const headers = new Headers({ accept: "text/event-stream" });
       if (lastEventId !== undefined) headers.set("last-event-id", lastEventId);
@@ -110,18 +118,28 @@ export const subscribeToConversationEvents = async ({
         return;
       }
       if (!response.ok) throw new Error("Conversation event stream unavailable.");
+      opened = true;
       await readEvents(response, onEvent, (cursor) => {
+        if (cursor === lastEventId) return;
         lastEventId = cursor;
+        progressed = true;
+        closesWithoutProgress = 0;
         failures = 0;
       }, signal);
       if (signal.aborted) return;
       failures += 1;
-      onUnavailable?.();
     } catch {
       if (signal.aborted) return;
       failures += 1;
-      onUnavailable?.();
     }
+    if (opened && !progressed) {
+      closesWithoutProgress += 1;
+      if (closesWithoutProgress >= 2) {
+        (onStalled ?? onUnavailable)?.();
+        return;
+      }
+    }
+    onUnavailable?.();
     await waitForReconnect(signal, reconnectDelay(failures - 1));
   }
 };

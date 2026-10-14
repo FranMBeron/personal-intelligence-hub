@@ -129,5 +129,67 @@ describe("subscribeToConversationEvents", () => {
     const abortRemoves = remove.mock.calls.filter(([type]) => type === "abort").length;
     expect(abortRemoves).toBeGreaterThanOrEqual(abortAdds);
   });
-});
 
+  describe("no-progress closes", () => {
+    const malformedKnown = `id: e2\ndata: ${JSON.stringify({ id: "e2", type: "heartbeat" })}\n\n`;
+    const sse = (text: string) => new Response(text, { headers: { "content-type": "text/event-stream" } });
+
+    it("stops after two closes in a row at the same cursor, reports it, and never fetches again", async () => {
+      vi.useFakeTimers();
+      try {
+        const controller = new AbortController();
+        const fetcher = vi.fn(async () => sse(`id: e1\ndata: ${event("e1")}\n\n${malformedKnown}`));
+        const onStalled = vi.fn();
+        const received: string[] = [];
+        let settled = false;
+        const task = subscribeToConversationEvents({
+          conversationId: "conversation-1",
+          initialCursor: "e0",
+          signal: controller.signal,
+          fetcher,
+          onEvent: (value) => received.push(value.id),
+          onStalled,
+          onUnavailable: vi.fn(),
+        }).then(() => { settled = true; });
+        await vi.advanceTimersByTimeAsync(600_000);
+        expect(settled).toBe(true);
+        await task;
+        // 1st: e1 advances the cursor; 2nd and 3rd replay only e1 and then fail at the same cursor.
+        expect(fetcher).toHaveBeenCalledTimes(3);
+        expect(onStalled).toHaveBeenCalledTimes(1);
+        expect(received.filter((id) => id !== "e1")).toEqual([]);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("resets the no-progress counter whenever an event advances the cursor", async () => {
+      vi.useFakeTimers();
+      try {
+        const responses = [
+          malformedKnown,
+          `id: e1\ndata: ${event("e1")}\n\n${malformedKnown}`,
+          `id: e1\ndata: ${event("e1")}\n\n${malformedKnown}`,
+          "",
+        ];
+        const fetcher = vi.fn(async () => sse(responses.shift() ?? ""));
+        const onStalled = vi.fn();
+        const task = subscribeToConversationEvents({
+          conversationId: "conversation-1",
+          initialCursor: "e0",
+          signal: new AbortController().signal,
+          fetcher,
+          onEvent: vi.fn(),
+          onStalled,
+        });
+        await vi.advanceTimersByTimeAsync(600_000);
+        await task;
+        expect(fetcher).toHaveBeenCalledTimes(4);
+        expect(onStalled).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+});
