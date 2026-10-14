@@ -103,6 +103,8 @@ const mapProposal = (row: ProposalRow | undefined): ProposalRecord | null => row
   ...optional({}, "safeReasonCode", row.safe_reason_code),
 });
 
+const TERMINAL_PROPOSAL_STATUSES: ReadonlySet<CalendarProposalStatus> = new Set(["completed", "rejected", "expired", "conflict", "failed"]);
+
 const requireOwnedEventReference = (database: SqliteHandle, actorId: string, eventRef: string | undefined): void => {
   if (eventRef === undefined) return;
   const row = database.prepare("SELECT 1 AS found FROM calendar_event_refs WHERE actor_id = :actorId AND event_ref = :eventRef")
@@ -360,12 +362,20 @@ export const createCalendarRepository = (): CalendarRepository => ({
       .all<ProposalRow>({ limit }).map((row) => mapProposal(row)!);
   },
   transitionProposal(database, input) {
-    requireOwnedEventReference(database, input.actorId, input.eventRef);
     if (input.from.length === 0) fail("calendar_proposal_transition_invalid");
+    const current = selectProposal(database, input.actorId, input.proposalId);
+    if (current === undefined || current.version !== input.expectedVersion || !input.from.includes(current.status)) {
+      fail("calendar_proposal_transition_conflict");
+    }
+    // A detached proposal may still be settled in a terminal state that names its own historical
+    // reference; that reference is neither required to be live nor re-attached.
+    const settlesDetached = input.eventRef !== undefined && TERMINAL_PROPOSAL_STATUSES.has(input.to) &&
+      current?.event_ref === null && current.retained_event_ref === input.eventRef;
+    if (!settlesDetached) requireOwnedEventReference(database, input.actorId, input.eventRef);
     const placeholders = input.from.map((_, index) => `:from${index}`).join(", ");
     const parameters: Record<string, string | number | null> = {
       actorId: input.actorId, proposalId: input.proposalId, expectedVersion: input.expectedVersion,
-      to: input.to, eventRef: input.eventRef ?? null, completedAt: input.completedAt ?? null,
+      to: input.to, eventRef: settlesDetached ? null : input.eventRef ?? null, completedAt: input.completedAt ?? null,
       safeReasonCode: input.safeReasonCode ?? null,
     };
     input.from.forEach((status, index) => { parameters[`from${index}`] = status; });

@@ -685,6 +685,64 @@ describe("proposal foreign event ownership", () => {
   });
 });
 
+describe("terminal transitions of detached proposals", () => {
+  const seedExecuting = async (database: ConnectorDatabase) => {
+    await seedConnection(database);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.upsertEventReference(db, eventReference());
+      repository.insertProposal(db, proposal({ id: "proposal-detached", status: "executing", operation: "update", eventRef: "event-ref-01" }), "idem-detached", "hash-detached");
+    });
+  };
+
+  it("lets an in-flight proposal whose reference was detached reach a terminal state without re-attaching it", async () => {
+    const { database } = await createDatabase();
+    await seedExecuting(database);
+    // An in-flight row detached without leaving `executing` (defense in depth:
+    // the 0210 trigger moves live rows to a terminal state itself).
+    await database.write((db) => {
+      db.prepare("UPDATE calendar_change_proposals SET retained_event_ref = event_ref, event_ref = NULL WHERE id = 'proposal-detached'").run();
+      db.prepare("DELETE FROM calendar_event_refs WHERE event_ref = 'event-ref-01'").run();
+    });
+
+    const failed = await database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-detached", expectedVersion: 1, from: ["executing"], to: "failed",
+      eventRef: "event-ref-01", completedAt: later, safeReasonCode: "provider_state_changed",
+    }));
+    expect(failed).toMatchObject({ status: "failed", version: 2, retainedEventRef: "event-ref-01", completedAt: later });
+    expect(failed.eventRef).toBeUndefined();
+  });
+
+  it("reports a stale executor snapshot as a transition conflict, not a missing reference", async () => {
+    const { database } = await createDatabase();
+    await seedExecuting(database);
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [calendar({ calendarRef: "calendar-ref-02", providerCalendarBlindIndex: "blind-calendar-02" })], authorizationIdOf(db)));
+
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-detached", expectedVersion: 1, from: ["executing"], to: "failed", eventRef: "event-ref-01",
+    }))).rejects.toThrow("calendar_proposal_transition_conflict");
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-detached"))).resolves.toMatchObject({ status: "conflict", version: 2 });
+  });
+
+  it("still rejects a non-terminal transition onto a detached reference", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.upsertEventReference(db, eventReference());
+      repository.insertProposal(db, proposal({ id: "proposal-pending-detached", eventRef: "event-ref-01" }), "idem-pending-detached", "hash-pending-detached");
+    });
+    await database.write((db) => {
+      db.prepare("UPDATE calendar_change_proposals SET retained_event_ref = event_ref, event_ref = NULL WHERE id = 'proposal-pending-detached'").run();
+      db.prepare("DELETE FROM calendar_event_refs WHERE event_ref = 'event-ref-01'").run();
+    });
+
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-pending-detached", expectedVersion: 1, from: ["pending"], to: "executing", eventRef: "event-ref-01",
+    }))).rejects.toThrow("calendar_event_reference_not_found");
+  });
+});
+
 describe("proposal replay after event cleanup", () => {
   it("replays an existing idempotent proposal after its event reference expires", async () => {
     const { database } = await createDatabase();
