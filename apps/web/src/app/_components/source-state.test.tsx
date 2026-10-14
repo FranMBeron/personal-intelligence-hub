@@ -20,6 +20,24 @@ describe("SourceState", () => {
     expect(screen.getByRole("status").textContent).toContain(title);
   });
 
+  it.each([
+    ["degraded", "Servicio degradado"],
+    ["requires_reauthorization", "Autorización vencida"],
+  ] as const)("renders the %s state distinctly", (state, title) => {
+    render(<SourceState state={state} title={title} />);
+    const status = screen.getByRole("status");
+    expect(status.getAttribute("data-state")).toBe(state);
+    expect(status.textContent).toContain(title);
+  });
+
+  it("shows when the source was checked and whether data is stale", () => {
+    render(<SourceState state="unavailable" title="Agenda no disponible" checkedAt="2026-10-12T11:55:00.000Z" checkedLabel="12 oct, 11:55" stale />);
+    const status = screen.getByRole("status");
+    expect(status.querySelector("time")?.getAttribute("dateTime")).toBe("2026-10-12T11:55:00.000Z");
+    expect(status.textContent).toContain("Comprobado: 12 oct, 11:55");
+    expect(status.textContent).toContain("Datos sin actualizar");
+  });
+
   it("labels status in text instead of relying on color", () => {
     render(<StatusBadge tone="positive">Disponible</StatusBadge>);
     expect(screen.getByText("Disponible").textContent).toBe("Disponible");
