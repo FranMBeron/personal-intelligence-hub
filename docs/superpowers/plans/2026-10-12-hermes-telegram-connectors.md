@@ -1172,6 +1172,8 @@ For each `admitted` record, poll `runStatus`. For `completed`, use `status.outpu
 
 Limit each accepted delta to 16 KiB and the authoritative terminal output to 100 KiB of valid UTF-8; exceeding either limit terminalizes the assistant message with safe reason `provider_output_too_large` rather than truncating into a misleading answer. Unknown or malformed run states remain retryable provider degradation and never become a success. `waiting_for_approval` remains nonterminal and contributes an attention signal to the agent roster without exposing the underlying approval payload.
 
+Every nonterminal outcome is age-capped from admission so no reply stays open forever: an unreadable status, `queued`, `running`, `stopping`, an unknown state, or a conversation that no longer resolves is failed as retryable `provider_result_ambiguous` after 6 hours; `waiting_for_approval` has its own 24-hour cap (an approval may wait overnight, and 24 hours equals the minimum idempotency retention) and then fails as retryable `provider_approval_expired`. The delegation reconciler applies the same caps (`delegation_result_ambiguous`, `delegation_approval_expired`). Both reconcilers page with an in-memory rotating keyset cursor that continues after the previous pass's last row and wraps to the oldest, so long-lived open rows at the head never starve newer ones; no schema column is needed. Maintenance purges only expired *terminal* idempotency records and only expired, unclaimed or consumed uploads.
+
 - [ ] **Step 5: Implement database-backed downstream SSE**
 
 ```ts
@@ -1225,7 +1227,7 @@ git commit -m "feat(connectors): reconcile Hermes runs and events"
 
 **Interfaces:**
 - Consumes: `ConnectorDatabase`, profile registry, native client, delegation repository, canonical hashing, and a private source-to-target peer credential map.
-- Produces: an agent-only Unix-socket server exposing fixed `POST /internal/v1/hermes/delegations`, `DelegationService`, `ConnectorsDelegationClient`, and `createDelegateAgentTool`.
+- Produces: an agent-only Unix-socket server exposing fixed `POST /internal/v1/hermes/delegations`, `DelegationService`, `ConnectorsDelegationClient`, and the Central-only `createCentralDelegationTool`.
 
 - [ ] **Step 1: Write failing credential and target tests**
 
@@ -1248,7 +1250,7 @@ Configure one fictional peer credential per source/target pair:
 ]
 ```
 
-The private environment uses `HERMES_DELEGATION_SOCKET_PATH=/run/pih-connectors/hermes-delegation.sock`, numeric `HERMES_DELEGATION_SOCKET_GROUP_ID`, strict `HERMES_DELEGATION_PEERS_JSON`, and one token variable named by each peer's `tokenEnvironment`. `loadDelegationPeerConfig(environment)` validates the complete JSON before reading token variables, hashes tokens with SHA-256 at startup, rejects duplicate source/target pairs, a token reused across pairs, missing/short tokens, an empty peer set, an unsafe socket path, unknown fields, a source or target profile absent from `HermesProfileRegistry`, and a target without `delegationTarget:true`, then discards token variable names and raw tokens. Serialization and inspection return only `[REDACTED]` credential markers.
+The private environment uses `HERMES_DELEGATION_ORCHESTRATOR_ID` (the single Central/orchestrator profile allowed to delegate), `HERMES_DELEGATION_SOCKET_PATH=/run/pih-connectors/hermes-delegation.sock`, numeric `HERMES_DELEGATION_SOCKET_GROUP_ID`, strict `HERMES_DELEGATION_PEERS_JSON`, and one token variable named by each peer's `tokenEnvironment`. `loadDelegationPeerConfig(environment)` validates the complete JSON before reading token variables, hashes tokens with SHA-256 at startup, rejects a missing, unknown, or `delegationTarget:true` orchestrator designation, any peer whose source is not exactly the designated orchestrator, duplicate source/target pairs, a token reused across pairs, missing/short tokens, an empty peer set, an unsafe socket path, unknown fields, a source or target profile absent from `HermesProfileRegistry`, and a target without `delegationTarget:true`, then discards token variable names and raw tokens. `DelegationService` also receives `orchestratorAgentId` and refuses (403 `forbidden`) any authenticated peer whose source is not the designated orchestrator, before any upstream call. Serialization and inspection return only `[REDACTED]` credential markers.
 
 Assert constant-time token hash comparison, no token in logs/errors, unknown peer denial, malformed owner actor ID denial, self-target denial, target mismatch denial, one peer token cannot call the other specialist, different-body idempotency conflict, and no acceptance of BFF service tokens or delegated human authorization on the agent-only socket. Also assert the main BFF-facing Fastify socket does not register the internal POST route.
 
@@ -1318,12 +1320,12 @@ export class HermesDelegationServer {
 }
 ```
 
-It accepts only `POST /internal/v1/hermes/delegations`, authenticates the presented token to exactly one `DelegationPeer`, rejects a body target different from that peer's bound target, and rejects query strings, redirects, chunked bodies beyond 32 KiB, duplicate authorization headers, unsupported content types, and every other method/path. After bind it sets mode `0660` and the configured `hermes-agents` group. The production socket is `/run/pih-connectors/hermes-delegation.sock`; it is never mounted into the web container. Starting refuses to unlink a live socket or a non-socket entry. Stopping closes active requests and removes only the inode created by this process. This separate socket avoids any bypass or special case in Foundation's mandatory BFF service-token plus delegated-principal middleware.
+It accepts only `POST /internal/v1/hermes/delegations`, authenticates the presented token to exactly one `DelegationPeer`, rejects a body target different from that peer's bound target, and rejects query strings, redirects, chunked bodies beyond 32 KiB, duplicate authorization headers, unsupported content types, and every other method/path. Every rejected peer authentication increments a counter and calls an optional content-free audit hook (`{event, reason}` with a closed reason; never the credential, headers, or body). It listens inside a fresh `0700` staging directory beside the final path, sets mode `0660` and the configured `hermes-agents` group there, then hard-links the secured inode to the final path (never replacing an existing entry) and removes the staging name, so the socket is never reachable with default permissions and no process umask is changed. The production socket is `/run/pih-connectors/hermes-delegation.sock`; it is never mounted into the web container. Starting refuses to unlink a live socket or a non-socket entry. Stopping closes active requests and removes only the inode created by this process. This separate socket avoids any bypass or special case in Foundation's mandatory BFF service-token plus delegated-principal middleware.
 
 - [ ] **Step 4: Write failing integration-package tool tests**
 
 ```ts
-const tool = createDelegateAgentTool(client);
+const tool = createCentralDelegationTool(client);
 await tool.execute({
   targetAgentId: "fitness",
   message: "Revisá la tendencia semanal.",
@@ -1339,7 +1341,7 @@ expect(transport.postJson).toHaveBeenCalledWith(expect.objectContaining({
 }));
 ```
 
-Assert the client accepts only the configured absolute agent-only Unix socket path and fixed `/internal/v1/hermes/delegations` request path, requires exactly one distinct credential for every configured target, refuses duplicate credential values across targets, reads optional `HERMES_SESSION_ID` only as `sourceSessionId`, selects credentials only by the schema-validated target ID, and cannot issue arbitrary network origins, HTTP methods, or paths. The production transport must use `node:http.request({ socketPath, path, method: "POST" })`; native `fetch`, the BFF-facing host socket `/run/pih-connectors/web/connectors.sock`, and a TCP fallback are forbidden.
+Assert the client accepts only the configured absolute agent-only Unix socket path and fixed `/internal/v1/hermes/delegations` request path, requires exactly one distinct credential for every configured target, refuses duplicate credential values across targets, reads the source session only as `sourceSessionId` (from the tool call context when the runtime provides it, otherwise optional `HERMES_SESSION_ID` read on every call), derives a deterministic idempotency key so two identical `execute` calls send the same key and a server-side replay returns the same delegation, selects credentials only by the schema-validated target ID, and cannot issue arbitrary network origins, HTTP methods, or paths. Also assert `createHermesTools` never includes the delegation tool. The production transport must use `node:http.request({ socketPath, path, method: "POST" })`; native `fetch`, any socket under the BFF-facing host directory `/run/pih-connectors/web/` (the same prefix rule the server enforces), the in-container `/run/pih-connectors/connectors.sock`, and a TCP fallback are forbidden.
 
 - [ ] **Step 5: Implement the narrow client and tool**
 
@@ -1349,31 +1351,34 @@ export class ConnectorsDelegationClient {
     socketPath: string;
     credentialsByTarget: ReadonlyMap<string, string>;
     transport?: UnixHttpTransport;
-    idempotencyKeyFactory: () => string;
   }>);
-  start(input: Readonly<{
-    targetAgentId: string;
-    message: string;
-    sourceSessionId?: string;
-  }>): Promise<Delegation>;
+  start(
+    input: Readonly<{ targetAgentId: string; message: string; sourceSessionId?: string }>,
+    context?: Readonly<{ toolCallId?: string }>,
+  ): Promise<Delegation>;
 }
 
-export const createDelegateAgentTool = (client: ConnectorsDelegationClient) => ({
+/** Central-only: register exclusively in the Central (orchestrator) profile's gateway. */
+export const createCentralDelegationTool = (client: ConnectorsDelegationClient) => ({
   inputSchema: z.object({
     targetAgentId: z.string().min(1).max(64),
     message: z.string().min(1).max(20_000),
   }).strict(),
-  execute: (input: { targetAgentId: string; message: string }) =>
-    client.start({
-      ...input,
-      ...(process.env.HERMES_SESSION_ID === undefined
-        ? {}
-        : { sourceSessionId: process.env.HERMES_SESSION_ID }),
-    }),
+  execute: (
+    input: { targetAgentId: string; message: string },
+    context?: Readonly<{ toolCallId?: string; sessionId?: string }>,
+  ) => client.start(
+    { ...input, sourceSessionId: context?.sessionId ?? process.env.HERMES_SESSION_ID },
+    { toolCallId: context?.toolCallId },
+  ),
 });
 ```
 
-`ConnectorsDelegationClient.start` looks up the credential only after validating `targetAgentId`, sends it in the authorization header, and never includes it in the body or returned object. An unknown target fails locally before opening the socket. `UnixHttpTransport` must reject relative socket paths, non-socket filesystem entries, responses over 1 MiB, redirects, non-JSON success bodies, and responses that do not match `DelegationSchema`. It must set a finite connect/request timeout and must not log headers or bodies. Runtime configuration passes `/run/pih-connectors/hermes-delegation.sock`; no `CONNECTORS_URL` variable exists.
+The idempotency key is deterministic across tool retries: SHA-256 over (session, target, Hermes tool-call id) when the runtime supplies a tool-call id, otherwise SHA-256 over (session, target, message). Identical repeated delegations (same session, target, and message, without a tool-call id) therefore dedupe to the first one for as long as the server retains that delegation's idempotency record. The transport's default deadline is 30 seconds, above the server's worst-case path (three sequential 5-second upstream calls) and its 15-second request timeout, so a client never abandons a request the server may still complete; a retry after a timeout replays rather than duplicates.
+
+**Registration boundary.** `createCentralDelegationTool` is registered only in the Central (orchestrator) profile's gateway tool set. It is never part of `createHermesTools` and never registered for a specialist profile. Peer tokens (`HERMES_*_PEER_TOKEN`) exist only in Central's environment and in the connectors service environment that verifies them; no specialist profile, specialist gateway, or shared tool registry receives them.
+
+`ConnectorsDelegationClient.start` looks up the credential only after validating `targetAgentId`, sends it in the authorization header, and never includes it in the body or returned object. The tool reads `HERMES_SESSION_ID` on every call rather than caching it, and prefers a session supplied by the Hermes call context when one exists. An unknown target fails locally before opening the socket. `UnixHttpTransport` must reject relative socket paths, non-socket filesystem entries, responses over 1 MiB, redirects, non-JSON success bodies, and responses that do not match `DelegationSchema`. It must set a finite connect/request timeout and must not log headers or bodies. Runtime configuration passes `/run/pih-connectors/hermes-delegation.sock`; no `CONNECTORS_URL` variable exists.
 
 - [ ] **Step 6: Run both packages and checks**
 
@@ -1505,7 +1510,7 @@ export const createHermesModule = (
 
 `HermesModuleOptions` is exactly `{config: HermesConfig; delegation: DelegationPeerConfig; fetch?:typeof fetch; fileSystem?:HermesFileSystem}`. `createHermesRuntime` receives the frozen `ConnectorModuleDependencies`, so repositories use `dependencies.database`, timestamps use `dependencies.clock`, and identifiers use `dependencies.idGenerator`. Before routes accept traffic, it calls `ProfileRepository.replaceConfigured` in a database transaction. `probeHermesStatus` authenticates each enabled profile independently, never reuses results between profile IDs, reports `available` only when every required profile proves authenticated capabilities, reports `degraded` for partial profile failure, and returns safe reason codes without an origin, key, response body, or private diagnostic. The module must be constructible in a test without Calendar, register no Calendar route, expose `status(dependencies)`, and contain no `migrations` property because the foundation migration runner owns `0100_hermes.sql`.
 
-`HermesMaintenance` exposes `start(signal)`, `runOnce()`, and `stop()`. Every minute it uses the injected clock to purge expired unclaimed uploads, update event floors before deleting expired events, and delete only expired terminal idempotency rows; it never removes a `reserved` or `admitted` row. Fake-timer tests prove overlapping runs collapse into one, abort stops the timer, and a failed purge is logged only with request-safe counters and retried on the next tick.
+`HermesMaintenance` exposes `start(signal)`, `runOnce()`, and `stop()`. Every minute it uses the injected clock to purge expired unclaimed uploads, update event floors before deleting expired events, and delete only expired terminal idempotency rows; it never removes a `reserved` or `admitted` row. Each tick also calls the bounded `MessageService.resumeReserved(limit)` sweep, so a reservation created at runtime whose upstream admission was ambiguous is resumed periodically, not only at `onReady`; past the one-hour resume window the sweep replays the deterministic upstream key once and fails it as `hermes_admission_expired` only if Hermes still does not accept it. Fake-timer tests prove overlapping runs collapse into one, abort stops the timer, and a failed purge is logged only with request-safe counters and retried on the next tick.
 
 `HermesMaintenance.start` resolves after arming its timer. The module test starts Fastify with fake reconciler and maintenance implementations and proves `onReady` resolves, each start method is called exactly once, and `onClose` drains them in reverse order without leaving a timer or socket.
 
@@ -1601,7 +1606,7 @@ Document this sequence without private values:
 8. Verify DM routes to the default profile and each group routes to its specialist.
 9. Verify an unknown group and unauthorized sender produce no agent turn.
 10. Verify specialist profile API capabilities with the profile's private key without printing it.
-11. Query `/p/{profile}/v1/toolsets` for every served profile and compare it with the intended toolset fixture. If a profile observes another profile's MCP/tool registry, stop rollout and either make the affected MCP sets identical or run the affected profile in a separate gateway process.
+11. Query `/p/{profile}/v1/toolsets` for every served profile and compare it with the intended toolset fixture. The Central-only delegation tool and the peer tokens must appear only in Central's tool set and environment. If a profile observes another profile's MCP/tool registry, stop rollout. Never resolve this by making a specialist's MCP/tool set identical to Central's when that would expose the delegation tool or peer tokens to the specialist; if registries are shared within one gateway process, run the affected specialist profiles in a separate gateway process whose tool set and environment exclude delegation.
 
 Use these safe commands:
 
