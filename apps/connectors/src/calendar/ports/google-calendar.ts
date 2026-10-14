@@ -27,6 +27,8 @@ export type GoogleEventRecord = Readonly<{
   attendees?: readonly Readonly<{
     email?: string;
     displayName?: string;
+    /** True for the attendee entry that represents the authorized account. */
+    self?: boolean;
     responseStatus?: "needsAction" | "declined" | "tentative" | "accepted";
   }>[];
   recurringEventId?: string;
@@ -75,6 +77,8 @@ export type GoogleInvitationResponseRequest = Readonly<{
   eventId: string;
   expectedEtag: string;
   response: "accepted" | "declined" | "tentative" | "removed";
+  /** Email of the authorized account's own attendee entry (the one Google marks `self`). */
+  attendeeEmail: string;
   sendUpdates: "all" | "externalOnly" | "none";
 }>;
 
