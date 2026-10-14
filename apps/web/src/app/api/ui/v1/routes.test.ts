@@ -566,6 +566,7 @@ describe("Hermes BFF handlers", () => {
 
   it.each([
     ["missing conversation", [["conversationId", ""]]],
+    ["duplicate conversation", [["conversationId", "conversation-02"]]],
     ["voice kind", [["kind", "voice"]]],
     ["document kind", [["kind", "document"]]],
     ["repeated kind", [["kind", "attachment"], ["kind", "attachment"]]],
@@ -611,6 +612,60 @@ describe("Hermes BFF handlers", () => {
     );
     expect(response.status).toBe(413);
     expect(pulls).toBeLessThan(64);
+    expect(gateway.uploads).toHaveLength(0);
+  });
+
+  const lazyUploadBody = () => {
+    const encoder = new TextEncoder();
+    const state = { pulls: 0 };
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        state.pulls += 1;
+        controller.enqueue(encoder.encode("x".repeat(1024)));
+      },
+    }, { highWaterMark: 0 });
+    const request = new Request("https://pih.example/api/ui/v1/hermes/uploads", {
+      method: "POST",
+      headers: authenticatedHeaders({ "content-type": "multipart/form-data; boundary=fictional" }),
+      body,
+      duplex: "half",
+    } as RequestInit);
+    return { request, state };
+  };
+
+  it("rejects a rate-limited upload before reading any of its body", async () => {
+    const gateway = new FakeHermesGateway();
+    const handler = createUploadHandler(gateway, { ...requestPolicy, agentRateLimit: new IdentityRateLimiter({ maximum: 1 }) });
+    expect((await handler(uploadRequest(imageForm()))).status).toBe(201);
+    const { request, state } = lazyUploadBody();
+    const response = await handler(request);
+    expect(response.status).toBe(429);
+    expect(state.pulls).toBe(0);
+    expect(gateway.uploads).toHaveLength(1);
+  });
+
+  it("rejects an upload above the per-identity concurrency limit before reading its body", async () => {
+    const gateway = new FakeHermesGateway();
+    const handler = createUploadHandler(gateway, { ...requestPolicy, agentConcurrency: new IdentityConcurrencyLimiter(1) });
+    let releaseFirst!: () => void;
+    const firstBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        releaseFirst = () => controller.close();
+      },
+    });
+    const first = handler(new Request("https://pih.example/api/ui/v1/hermes/uploads", {
+      method: "POST",
+      headers: authenticatedHeaders({ "content-type": "multipart/form-data; boundary=fictional" }),
+      body: firstBody,
+      duplex: "half",
+    } as RequestInit));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const { request, state } = lazyUploadBody();
+    const response = await handler(request);
+    expect(response.status).toBe(429);
+    expect(state.pulls).toBe(0);
+    releaseFirst();
+    expect((await first).status).toBe(422);
     expect(gateway.uploads).toHaveLength(0);
   });
 

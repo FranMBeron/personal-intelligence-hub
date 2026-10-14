@@ -225,39 +225,47 @@ export const createUploadHandler = (
     const availableGateway = requireGateway(request, authenticated.context, gateway, "Hermes");
     if (availableGateway instanceof Response) return availableGateway;
     try {
-      const bytes = await readBoundedBody(request, policy.maxUploadBodyBytes);
-      if (bytes === null) {
-        return problemResponse(problem(
-          request, authenticated.context, 413, "payload_too_large", "Payload too large",
-          "The upload request exceeds the configured byte limit.",
-        ));
-      }
-      const { conversationId, media } = await parseUploadForm(request, bytes);
-      const capabilities = HermesCapabilitiesSchema.parse(
-        await availableGateway.capabilities(authenticated.context, request.signal),
-      );
-      const mimeType = ImageMimeTypeSchema.safeParse(media.type);
-      if (!capabilities.attachments.enabled || !mimeType.success || !capabilities.attachments.acceptedMimeTypes.includes(mimeType.data)) {
-        return problemResponse(problem(
-          request, authenticated.context, 415, "validation_failed", "Unsupported media type",
-          "The selected image type is not enabled by Hermes.",
-        ));
-      }
-      if (media.size > capabilities.attachments.maxBytes) {
-        return problemResponse(problem(
-          request, authenticated.context, 413, "payload_too_large", "Media too large",
-          "The selected media exceeds the negotiated byte limit.",
-        ));
-      }
-      const value = await runAgentOperation(authenticated.context, policy, () =>
-        availableGateway.upload(authenticated.context, media, "attachment", conversationId, request.signal),
-      );
-      return jsonResponse(UploadedMediaSchema.parse(value), authenticated.context.requestId, 201);
+      // Take the per-identity rate-limit and concurrency slot before buffering the body, so
+      // over-limit callers are rejected without any of their upload being read into memory.
+      return await runAgentOperation(authenticated.context, policy, async () => {
+        const bytes = await readBoundedBody(request, policy.maxUploadBodyBytes);
+        if (bytes === null) {
+          return problemResponse(problem(
+            request, authenticated.context, 413, "payload_too_large", "Payload too large",
+            "The upload request exceeds the configured byte limit.",
+          ));
+        }
+        const { conversationId, media } = await parseUploadForm(request, bytes);
+        const capabilities = HermesCapabilitiesSchema.parse(
+          await availableGateway.capabilities(authenticated.context, request.signal),
+        );
+        const mimeType = ImageMimeTypeSchema.safeParse(media.type);
+        if (!capabilities.attachments.enabled || !mimeType.success || !capabilities.attachments.acceptedMimeTypes.includes(mimeType.data)) {
+          return problemResponse(problem(
+            request, authenticated.context, 415, "validation_failed", "Unsupported media type",
+            "The selected image type is not enabled by Hermes.",
+          ));
+        }
+        if (media.size > capabilities.attachments.maxBytes) {
+          return problemResponse(problem(
+            request, authenticated.context, 413, "payload_too_large", "Media too large",
+            "The selected media exceeds the negotiated byte limit.",
+          ));
+        }
+        const value = await availableGateway.upload(authenticated.context, media, "attachment", conversationId, request.signal);
+        return jsonResponse(UploadedMediaSchema.parse(value), authenticated.context.requestId, 201);
+      });
     } catch (error) {
       return failureResponse(request, authenticated.context, error);
     }
   };
 
+/**
+ * Known risk (accepted for now): event streams are long-lived and are not counted against the
+ * per-identity rate limit or concurrency slots, so one authenticated identity can hold many open
+ * SSE connections (each holding an upstream socket and up to MAX_SSE_BLOCK_CHARS of buffer).
+ * Bounding them needs a dedicated stream budget; no default is imposed here.
+ */
 export const createEventsHandler = (
   gateway: HermesGateway | null,
   policy: RequestPolicy,
