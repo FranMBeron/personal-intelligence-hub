@@ -144,3 +144,21 @@ export const imageFixtures = {
     return bytes;
   },
 };
+
+/** Fictional delegation peer configuration: one token per orchestrator-to-specialist pair. */
+export const ownerActorId = "018f5f17-5d0a-7c76-aac3-4f0f6ce44f10";
+export const peerTokenA = "fictional-specialist-a-peer-token-32-bytes";
+export const peerTokenB = "fictional-specialist-b-peer-token-32-bytes";
+
+export const delegationEnvironment = (overrides: Readonly<Record<string, string | undefined>> = {}) => ({
+  HERMES_DELEGATION_SOCKET_PATH: "/run/pih-connectors/hermes-delegation.sock",
+  HERMES_DELEGATION_SOCKET_GROUP_ID: "1234",
+  HERMES_DELEGATION_PEERS_JSON: JSON.stringify([
+    { sourceAgentId: orchestratorId, ownerActorId, targetAgentId: specialistAId, tokenEnvironment: "HERMES_ORCHESTRATOR_TO_SPECIALIST_A_PEER_TOKEN" },
+    { sourceAgentId: orchestratorId, ownerActorId, targetAgentId: specialistBId, tokenEnvironment: "HERMES_ORCHESTRATOR_TO_SPECIALIST_B_PEER_TOKEN" },
+  ]),
+  HERMES_ORCHESTRATOR_TO_SPECIALIST_A_PEER_TOKEN: peerTokenA,
+  HERMES_ORCHESTRATOR_TO_SPECIALIST_B_PEER_TOKEN: peerTokenB,
+  ...overrides,
+});
+
