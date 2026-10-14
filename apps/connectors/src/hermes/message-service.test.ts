@@ -294,4 +294,44 @@ describe("MessageService.resumeReserved", () => {
     expect(state.idempotency.map(({ state: value }) => value).sort()).toEqual(["admitted", "admitted", "admitted", "terminal"]);
     expect(JSON.parse(state.events.at(-1)!.payload_json)).toMatchObject({ type: "message.failed", code: "hermes_admission_expired", retryable: true });
   });
+  it("replays the deterministic upstream key once before declaring an old reservation expired", async () => {
+    const createRun = vi.fn<CreateRun>()
+      .mockRejectedValueOnce(new Error("hermes_request_timeout"))
+      .mockResolvedValue({ ...accepted(), replayed: true });
+    const { harness, native, service, rows } = await setup({ createRun });
+    await expect(service.send(principalFor(), "conversation-01", "client-key-0001", text("Hola")))
+      .rejects.toMatchObject({ code: "hermes_upstream_unavailable" });
+    harness.clock.advance(61 * 60_000);
+    expect(await service.resumeReserved(10)).toBe(1);
+    expect(native.createRun).toHaveBeenCalledTimes(2);
+    expect(native.createRun.mock.calls[1]?.[1].idempotencyKey).toBe(native.createRun.mock.calls[0]?.[1].idempotencyKey);
+    expect((await rows()).idempotency).toEqual([{ state: "admitted", run_id: "run_fictional_01" }]);
+  });
+
+  it("replays at most once: a still-ambiguous old reservation is then expired and never retried", async () => {
+    const createRun = vi.fn<CreateRun>().mockRejectedValue(new Error("hermes_request_timeout"));
+    const { harness, native, service, rows } = await setup({ createRun });
+    await expect(service.send(principalFor(), "conversation-01", "client-key-0001", text("Hola"))).rejects.toBeDefined();
+    harness.clock.advance(61 * 60_000);
+    expect(await service.resumeReserved(10)).toBe(1);
+    expect(await service.resumeReserved(10)).toBe(0);
+    expect(native.createRun).toHaveBeenCalledTimes(2);
+    const state = await rows();
+    expect(state.idempotency.map(({ state: value }) => value)).toEqual(["terminal"]);
+    expect(JSON.parse(state.events.at(-1)!.payload_json)).toMatchObject({ type: "message.failed", code: "hermes_admission_expired" });
+  });
+
+  it("keeps a live reserved or admitted record through the idempotency purge", async () => {
+    const createRun = vi.fn<CreateRun>()
+      .mockRejectedValueOnce(new Error("hermes_request_timeout"))
+      .mockResolvedValue(accepted());
+    const { harness, service } = await setup({ createRun });
+    const idempotency = new IdempotencyRepository();
+    await expect(service.send(principalFor(), "conversation-01", "client-key-0001", text("uno"))).rejects.toBeDefined();
+    await service.send(principalFor(), "conversation-01", "client-key-0002", text("dos"));
+    harness.clock.advance(25 * 3_600_000);
+    await expect(harness.database.transaction((db) => idempotency.deleteExpired(db, harness.clock.now().toISOString()))).resolves.toBe(0);
+    await expect(harness.database.read((db) => idempotency.listByState(db, "reserved", 10))).resolves.toHaveLength(1);
+    await expect(harness.database.read((db) => idempotency.listByState(db, "admitted", 10))).resolves.toHaveLength(1);
+  });
 });

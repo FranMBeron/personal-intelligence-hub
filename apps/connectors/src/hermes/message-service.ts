@@ -76,7 +76,7 @@ type FailureCode = keyof typeof failureDetails;
 /** Contract messages need at least one part; an in-progress assistant reply shows this marker until it completes. */
 export const ASSISTANT_PLACEHOLDER_PARTS: readonly MessagePart[] = Object.freeze([{ kind: "text", text: "…" }]);
 const MAX_TEXT_PARTS = 10;
-/** Reserved admissions older than this are failed instead of resumed (bounded upstream retries). */
+/** Reserved admissions older than this get one final replay, then are failed instead of resumed (bounded upstream retries). */
 const RESUME_WINDOW_MS = 60 * 60 * 1_000;
 /** Upstream errors that prove Hermes did not and will not accept this run. Everything else is ambiguous. */
 const DEFINITIVE_UPSTREAM_FAILURES: ReadonlySet<string> = new Set(["hermes_request_failed", "hermes_request_invalid"]);
@@ -162,7 +162,15 @@ export class MessageService {
     }
   }
 
-  /** Retry reserved admissions (oldest first). Returns how many left the reserved state. */
+  /**
+   * Bounded resume sweep for reserved admissions (oldest first); returns how many
+   * left the reserved state. Safe to call at startup and periodically (the module
+   * maintenance loop owns the cadence), so a reservation created at runtime whose
+   * upstream call was ambiguous is retried with the same deterministic upstream
+   * key. Past the resume window it is replayed exactly once more before being
+   * failed as `hermes_admission_expired`: if Hermes already accepted (or now
+   * accepts) the run, the admission continues normally instead.
+   */
   async resumeReserved(limit: number): Promise<number> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) return fail("validation_failed");
     let records: readonly StoredIdempotency[];
@@ -177,7 +185,7 @@ export class MessageService {
         const admission = await this.#database.read((db) => this.#loadAdmission(db, record));
         if (admission === null) continue;
         if (this.#now().getTime() - Date.parse(record.createdAt) > RESUME_WINDOW_MS) {
-          await this.#terminalize(admission, "hermes_admission_expired", true);
+          await this.#replayOnceThenExpire(admission);
         } else {
           await this.#admit(admission);
         }
@@ -297,6 +305,15 @@ export class MessageService {
     }
     await this.#uploadService.removeStoredFiles(settled.consumed.map(({ storagePath }) => storagePath));
     return settled.message;
+  }
+
+  /** Final replay with the same upstream key; any outcome other than acceptance or a definitive rejection expires it. */
+  async #replayOnceThenExpire(admission: Admission): Promise<Message> {
+    try {
+      return await this.#admit(admission);
+    } catch {
+      return this.#terminalize(admission, "hermes_admission_expired", true);
+    }
   }
 
   async #terminalize(admission: Admission, code: FailureCode, retryable: boolean): Promise<Message> {
