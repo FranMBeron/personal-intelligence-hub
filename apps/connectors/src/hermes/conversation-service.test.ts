@@ -302,6 +302,53 @@ describe("Hermes ConversationService", () => {
       .resolves.toMatchObject({ title: "Again" });
   });
 
+  it("filters list pages in SQL to ready conversations without short pages", async () => {
+    const { service, database, repository } = await createHarness();
+    const ready = await service.create(principal(), { agentId: "fitness" });
+    await database.transaction((db) => {
+      for (const suffix of ["000000000101", "000000000102"]) {
+        repository.reserve(db, {
+          id: `33333333-3333-4333-8333-${suffix}`, actorId, agentId: "fitness", title: "Fitness Coach",
+          isMain: false, upstreamSessionId: `pih_33333333-3333-4333-8333-${suffix}`,
+          createdAt: "2026-10-12T13:00:00.000Z", updatedAt: "2026-10-12T13:00:00.000Z",
+        });
+      }
+    });
+    await expect(service.list(principal(), { limit: 1 })).resolves.toEqual({
+      items: [expect.objectContaining({ id: ready.id })],
+      pageInfo: { hasNextPage: false, nextCursor: null },
+    });
+  });
+
+  it("lists only conversations of configured profiles with direct conversations enabled", async () => {
+    const { service, database, repository } = await createHarness({ directConversations: false });
+    await database.transaction((db) => {
+      new ProfileRepository().replaceConfigured(db, [
+        { id: "fitness", displayName: "Fitness Coach", enabled: true },
+        { id: "gateway", displayName: "Gateway", enabled: true },
+        { id: "retired", displayName: "Retired", enabled: false },
+      ], now.toISOString());
+      const rows = [
+        ["gateway", "000000000201", "2026-10-12T12:00:00.000Z"],
+        ["fitness", "000000000202", "2026-10-12T13:00:00.000Z"],
+        ["retired", "000000000203", "2026-10-12T14:00:00.000Z"],
+      ] as const;
+      for (const [agentId, suffix, at] of rows) {
+        const id = `33333333-3333-4333-8333-${suffix}`;
+        repository.reserve(db, {
+          id, actorId, agentId, title: "Thread", isMain: false,
+          upstreamSessionId: `pih_${id}`, createdAt: at, updatedAt: at,
+        });
+        repository.markReady(db, actorId, id);
+      }
+    });
+    await expect(service.list(principal(), { limit: 1 })).resolves.toEqual({
+      items: [expect.objectContaining({ id: "33333333-3333-4333-8333-000000000201", agentId: "gateway" })],
+      pageInfo: { hasNextPage: false, nextCursor: null },
+    });
+    await expect(service.list(principal(), { limit: 50, agentId: "fitness" })).resolves.toMatchObject({ items: [] });
+  });
+
   it("raises typed, content-free error codes from a closed set", async () => {
     const { service } = await createHarness();
     const own = await service.create(principal(), { agentId: "fitness", title: "Private title" });

@@ -71,6 +71,13 @@ export type StoredConversation = Conversation & Readonly<{
 export type ConversationList = ContractConversationList;
 export type ConversationListQuery = ContractConversationListQuery;
 
+export interface ConversationListFilter {
+  /** Only include rows whose upstream session finished provisioning. */
+  readonly readyOnly?: boolean;
+  /** Restrict to these agent IDs; an empty list matches nothing. */
+  readonly agentIds?: readonly string[];
+}
+
 export interface PatchOwnedConversation {
   readonly actorId: string;
   readonly id: string;
@@ -136,11 +143,27 @@ export class ConversationRepository {
     return row === undefined ? null : mapConversation(row);
   }
 
-  listOwned(connection: SqliteHandle, actorId: string, query: ConversationListQuery): ConversationList {
+  listOwned(
+    connection: SqliteHandle,
+    actorId: string,
+    query: ConversationListQuery,
+    filter: ConversationListFilter = {},
+  ): ConversationList {
     const cursor = query.cursor === undefined ? undefined : fromCursor(query.cursor);
+    if (filter.agentIds !== undefined && filter.agentIds.length === 0) {
+      return ConversationListSchema.parse({ items: [], pageInfo: { hasNextPage: false, nextCursor: null } }) as ConversationList;
+    }
     const where = ["actor_id = :actorId"];
     const params: Record<string, string | number> = { actorId, limit: query.limit + 1 };
     if (query.agentId !== undefined) { where.push("agent_id = :agentId"); params.agentId = query.agentId; }
+    if (filter.readyOnly === true) where.push("provision_state = 'ready'");
+    if (filter.agentIds !== undefined) {
+      const names = filter.agentIds.map((agentId, index) => {
+        params["filterAgent" + index] = agentId;
+        return ":filterAgent" + index;
+      });
+      where.push("agent_id IN (" + names.join(", ") + ")");
+    }
     if (query.archived !== undefined) { where.push("archived = :archived"); params.archived = query.archived ? 1 : 0; }
     if (cursor !== undefined) {
       where.push("(updated_at < :cursorAt OR (updated_at = :cursorAt AND id < :cursorId))");

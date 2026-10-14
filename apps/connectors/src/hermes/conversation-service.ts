@@ -140,14 +140,17 @@ export class ConversationService {
     if (!parsed.success) return fail("hermes_conversation_query_invalid");
     let page: ConversationList;
     try {
-      page = await this.#database.read((db) => this.#conversations.listOwned(db, principal.actorId, parsed.data));
+      const agentIds = this.#profiles.list()
+        .filter(({ capabilities }) => capabilities.directConversations)
+        .map(({ id }) => id);
+      page = await this.#database.read((db) => this.#conversations.listOwned(db, principal.actorId, parsed.data, {
+        readyOnly: true,
+        agentIds,
+      }));
     } catch (error) {
       throw localError(error, "hermes_conversation_unavailable");
     }
-    const readyIds = await this.#database.read((db) => new Set(page.items
-      .filter((item) => this.#conversations.getOwned(db, principal.actorId, item.id)?.provisionState === "ready")
-      .map((item) => item.id)));
-    return { ...page, items: page.items.filter((item) => readyIds.has(item.id)) };
+    return page;
   }
 
   async create(principal: DelegatedPrincipal, body: CreateConversationBody): Promise<Conversation> {
