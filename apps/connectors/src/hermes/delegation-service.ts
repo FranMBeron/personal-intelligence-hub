@@ -20,6 +20,8 @@ type Options = Readonly<{
   delegations: DelegationRepository;
   clock: Clock;
   idGenerator: IdGenerator;
+  /** The designated orchestrator (`DelegationPeerConfig.orchestratorAgentId`); any other peer source is refused. */
+  orchestratorAgentId: string;
 }>;
 
 export const hermesDelegationErrorCodes = [
@@ -79,6 +81,7 @@ export class DelegationService {
   readonly #delegations: DelegationRepository;
   readonly #clock: Clock;
   readonly #ids: IdGenerator;
+  readonly #orchestratorAgentId: string;
   readonly #botChatReady = new Set<string>();
   readonly #botChatProvisioning = new Map<string, Promise<void>>();
 
@@ -89,6 +92,7 @@ export class DelegationService {
     this.#delegations = options.delegations;
     this.#clock = options.clock;
     this.#ids = options.idGenerator;
+    this.#orchestratorAgentId = options.orchestratorAgentId;
   }
 
   /**
@@ -100,7 +104,7 @@ export class DelegationService {
     if (!IdempotencyKeySchema.safeParse(idempotencyKey).success) return fail("idempotency_key_required");
     const parsed = StartInputSchema.safeParse(input);
     if (!parsed.success) return fail("validation_failed");
-    if (parsed.data.targetAgentId !== peer.targetAgentId) return fail("forbidden");
+    if (parsed.data.targetAgentId !== peer.targetAgentId || peer.sourceAgentId !== this.#orchestratorAgentId) return fail("forbidden");
     this.#requireBinding(peer);
     const requestHash = canonicalHash(parsed.data);
     const timestamp = this.#now();

@@ -151,6 +151,7 @@ export const peerTokenA = "fictional-specialist-a-peer-token-32-bytes";
 export const peerTokenB = "fictional-specialist-b-peer-token-32-bytes";
 
 export const delegationEnvironment = (overrides: Readonly<Record<string, string | undefined>> = {}) => ({
+  HERMES_DELEGATION_ORCHESTRATOR_ID: orchestratorId,
   HERMES_DELEGATION_SOCKET_PATH: "/run/pih-connectors/hermes-delegation.sock",
   HERMES_DELEGATION_SOCKET_GROUP_ID: "1234",
   HERMES_DELEGATION_PEERS_JSON: JSON.stringify([
@@ -162,3 +163,16 @@ export const delegationEnvironment = (overrides: Readonly<Record<string, string 
   ...overrides,
 });
 
+
+/** A second non-target profile ("assistant"): neither the orchestrator nor a specialist. */
+export const assistantId = "assistant";
+export const withAssistantProfile = (): Readonly<Record<string, string>> => {
+  const base = JSON.parse(profileEnvironment("/unused").HERMES_PROFILES_JSON) as unknown[];
+  return {
+    HERMES_PROFILES_JSON: JSON.stringify([...base, {
+      id: assistantId, displayName: "Assistant", keyEnvironment: "HERMES_ASSISTANT_API_KEY",
+      enabled: true, capabilities: { directConversations: true, images: false, delegationTarget: false },
+    }]),
+    HERMES_ASSISTANT_API_KEY: "fictional-assistant-key",
+  };
+};

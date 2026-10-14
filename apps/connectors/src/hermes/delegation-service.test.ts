@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assistantId,
   createHermesHarness,
   delegationEnvironment,
   disposeHermesHarnesses,
@@ -11,14 +12,15 @@ import {
   peerTokenB,
   specialistAId,
   specialistBId,
+  withAssistantProfile,
 } from "../../test/hermes/harness.js";
 import { loadDelegationPeerConfig } from "./delegation-auth.js";
 import { botChatSessionId, DelegationService } from "./delegation-service.js";
 import { DelegationRepository } from "./storage/delegation-repository.js";
 
 type Session = { id: string; source: string; title?: string | null };
-const setup = async () => {
-  const harness = await createHermesHarness();
+const setup = async (environment: Readonly<Record<string, string>> = {}) => {
+  const harness = await createHermesHarness(environment);
   const peers = loadDelegationPeerConfig(delegationEnvironment(), harness.profiles).peers;
   const native = {
     createSession: vi.fn(async (_profile: string, input: { id: string; title: string; source: string }): Promise<Session> => ({
@@ -31,7 +33,7 @@ const setup = async () => {
   };
   const service = new DelegationService({
     database: harness.database, profiles: harness.profiles, nativeClient: native, delegations: new DelegationRepository(),
-    clock: harness.clock, idGenerator: harness.ids,
+    clock: harness.clock, idGenerator: harness.ids, orchestratorAgentId: orchestratorId,
   });
   const rows = () => harness.database.read((db) => db.prepare(
     "SELECT actor_id, source_agent_id, target_agent_id, source_conversation_id, upstream_session_id, upstream_run_id, state, safe_summary FROM hermes_delegations ORDER BY created_at, id",
@@ -157,5 +159,23 @@ describe("DelegationService.start", () => {
     await service.start(peerA, "delegation-key-0016", input());
     expect(JSON.stringify(native.createRun.mock.calls)).not.toContain(peerTokenA);
     expect(JSON.stringify(native.createSession.mock.calls)).not.toContain(peerTokenA);
+  });
+});
+
+describe("DelegationService source binding", () => {
+  it("refuses a peer whose source is not the designated orchestrator, before any upstream call", async () => {
+    const { harness, native, service, rows } = await setup(withAssistantProfile());
+    // A peer registry that (mis)designates a non-orchestrator, non-target profile as its source.
+    const foreign = loadDelegationPeerConfig(delegationEnvironment({
+      HERMES_DELEGATION_ORCHESTRATOR_ID: assistantId,
+      HERMES_DELEGATION_PEERS_JSON: JSON.stringify([{
+        sourceAgentId: assistantId, ownerActorId, targetAgentId: specialistAId, tokenEnvironment: "HERMES_ORCHESTRATOR_TO_SPECIALIST_A_PEER_TOKEN",
+      }]),
+    }), harness.profiles).peers.authenticate(peerTokenA)!;
+    expect(foreign.sourceAgentId).toBe(assistantId);
+    await expect(service.start(foreign, "delegation-key-0001", input())).rejects.toMatchObject({ code: "forbidden" });
+    expect(native.createRun).not.toHaveBeenCalled();
+    expect(native.createSession).not.toHaveBeenCalled();
+    expect(await rows()).toEqual([]);
   });
 });

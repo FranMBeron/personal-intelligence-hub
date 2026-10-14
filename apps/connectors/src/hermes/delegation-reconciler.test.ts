@@ -4,6 +4,7 @@ import {
   createHermesHarness,
   delegationEnvironment,
   disposeHermesHarnesses,
+  orchestratorId,
   peerTokenA,
   specialistAId,
 } from "../../test/hermes/harness.js";
@@ -24,6 +25,7 @@ const setup = async () => {
   const repository = new DelegationRepository();
   const service = new DelegationService({
     database: harness.database, profiles: harness.profiles, delegations: repository, clock: harness.clock, idGenerator: harness.ids,
+    orchestratorAgentId: orchestratorId,
     nativeClient: {
       createSession: async (_profile, value) => ({ id: value.id, source: value.source, title: value.title }),
       getSession: async (_profile, id) => ({ id, source: "bot_peer_dm", title: "Bot Chat" }),

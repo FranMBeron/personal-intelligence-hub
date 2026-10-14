@@ -2,6 +2,7 @@ import { inspect } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  assistantId,
   createHermesHarness,
   delegationEnvironment,
   disposeHermesHarnesses,
@@ -11,6 +12,7 @@ import {
   peerTokenB,
   specialistAId,
   specialistBId,
+  withAssistantProfile,
 } from "../../test/hermes/harness.js";
 import { loadDelegationPeerConfig } from "./delegation-auth.js";
 
@@ -62,6 +64,9 @@ describe("loadDelegationPeerConfig", () => {
     ["self target", { HERMES_DELEGATION_PEERS_JSON: peers([entry({ sourceAgentId: specialistAId })]) }],
     ["target that is not a delegation target", { HERMES_DELEGATION_PEERS_JSON: peers([entry({ sourceAgentId: specialistAId, targetAgentId: orchestratorId })]) }],
     ["specialist as a source", { HERMES_DELEGATION_PEERS_JSON: peers([entry({ sourceAgentId: specialistBId })]) }],
+    ["missing orchestrator designation", { HERMES_DELEGATION_ORCHESTRATOR_ID: undefined }],
+    ["unknown orchestrator", { HERMES_DELEGATION_ORCHESTRATOR_ID: "unknown-agent" }],
+    ["a delegation target as the orchestrator", { HERMES_DELEGATION_ORCHESTRATOR_ID: specialistAId }],
     ["unsafe token variable name", { HERMES_DELEGATION_PEERS_JSON: peers([entry({ tokenEnvironment: "PATH" })]) }],
     ["relative socket path", { HERMES_DELEGATION_SOCKET_PATH: "run/hermes-delegation.sock" }],
     ["traversing socket path", { HERMES_DELEGATION_SOCKET_PATH: "/run/pih-connectors/../tmp/hermes-delegation.sock" }],
@@ -80,5 +85,18 @@ describe("loadDelegationPeerConfig", () => {
     expect(caught).toBeInstanceOf(Error);
     expect(String((caught as Error).message)).not.toContain(peerTokenA);
     expect(String((caught as Error).message)).not.toContain("fictional-specialist-a-key");
+  });
+
+  it("accepts a peer source only when it is the designated orchestrator", async () => {
+    const { profiles } = await createHermesHarness(withAssistantProfile());
+    const config = loadDelegationPeerConfig(delegationEnvironment(), profiles);
+    expect(config.orchestratorAgentId).toBe(orchestratorId);
+    // "assistant" is neither the orchestrator nor a delegation target: it can never delegate.
+    expect(() => loadDelegationPeerConfig(delegationEnvironment({
+      HERMES_DELEGATION_PEERS_JSON: peers([entry({ sourceAgentId: assistantId })]),
+    }), profiles)).toThrow("Hermes delegation peer configuration is invalid");
+    expect(() => loadDelegationPeerConfig(delegationEnvironment({
+      HERMES_DELEGATION_PEERS_JSON: peers([entry(), entry({ sourceAgentId: assistantId, tokenEnvironment: "HERMES_ORCHESTRATOR_TO_SPECIALIST_B_PEER_TOKEN" })]),
+    }), profiles)).toThrow("Hermes delegation peer configuration is invalid");
   });
 });

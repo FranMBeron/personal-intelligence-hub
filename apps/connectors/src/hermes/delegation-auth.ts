@@ -28,6 +28,8 @@ export type DelegationPeer = Readonly<{
 }>;
 
 export type DelegationPeerConfig = Readonly<{
+  /** The single profile allowed to delegate (Central/orchestrator); every peer's source equals it. */
+  orchestratorAgentId: string;
   socketPath: string;
   socketGroupId: number;
   peers: DelegationPeerRegistry;
@@ -109,6 +111,15 @@ export const loadDelegationPeerConfig = (
   if (!/^[1-9][0-9]{0,9}$/u.test(groupText) || Number(groupText) > 2_147_483_647) return invalid();
   const socketGroupId = Number(groupText);
 
+  // Closed designation: exactly one configured, non-target profile may delegate.
+  const orchestratorAgentId = environment.HERMES_DELEGATION_ORCHESTRATOR_ID ?? "";
+  if (!ProfileIdSchema.safeParse(orchestratorAgentId).success) return invalid();
+  try {
+    if (profiles.require(orchestratorAgentId).capabilities.delegationTarget) return invalid();
+  } catch {
+    return invalid();
+  }
+
   let inputs: z.infer<typeof PeerListSchema>;
   try {
     inputs = PeerListSchema.parse(JSON.parse(environment.HERMES_DELEGATION_PEERS_JSON ?? "") as unknown);
@@ -122,7 +133,7 @@ export const loadDelegationPeerConfig = (
     if (pairs.has(pair) || variables.has(input.tokenEnvironment)) return invalid();
     pairs.add(pair);
     variables.add(input.tokenEnvironment);
-    if (input.sourceAgentId === input.targetAgentId) return invalid();
+    if (input.sourceAgentId === input.targetAgentId || input.sourceAgentId !== orchestratorAgentId) return invalid();
     let source;
     let target;
     try {
@@ -131,7 +142,7 @@ export const loadDelegationPeerConfig = (
     } catch {
       return invalid();
     }
-    // Specialists (delegation targets) can never delegate, and only declared targets can receive.
+    // Only the designated orchestrator delegates, specialists (targets) never do, and only declared targets receive.
     if (source.capabilities.delegationTarget || !target.capabilities.delegationTarget) return invalid();
   }
 
@@ -145,9 +156,9 @@ export const loadDelegationPeerConfig = (
     return createPeer(input, hashToken(token));
   });
   const registry = new DelegationPeerRegistry(peers);
-  const config = { socketPath, socketGroupId, peers: registry };
+  const config = { orchestratorAgentId, socketPath, socketGroupId, peers: registry };
   Object.defineProperty(config, inspect.custom, {
-    value: () => `DelegationPeerConfig ${JSON.stringify({ socketPath, socketGroupId, peers: registry.toJSON() })}`,
+    value: () => `DelegationPeerConfig ${JSON.stringify({ orchestratorAgentId, socketPath, socketGroupId, peers: registry.toJSON() })}`,
     enumerable: false,
   });
   return Object.freeze(config);
