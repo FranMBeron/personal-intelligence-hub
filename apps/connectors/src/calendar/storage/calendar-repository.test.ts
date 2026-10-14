@@ -547,7 +547,8 @@ describe("Calendar repository", () => {
     const directory = await mkdtemp(join(tmpdir(), "pih-calendar-upgrade-"));
     directories.push(directory);
     const databasePath = join(directory, "connectors.sqlite");
-    const oldMigrations = loadMigrations().filter(({ name }) => name === "0000_foundation" || name === "0200_calendar");
+    // A 0200-era database holds the exact packaged prefix up to and including 0200_calendar.
+    const oldMigrations = loadMigrations().filter(({ name }) => name <= "0200_calendar");
     const oldDatabase = openConnectorDatabase(databasePath, oldMigrations);
     databases.push(oldDatabase);
     await oldDatabase.transaction((db) => {
