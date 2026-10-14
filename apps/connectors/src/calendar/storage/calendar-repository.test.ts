@@ -336,6 +336,25 @@ describe("Calendar repository", () => {
     await expect(count(database, "calendar_idempotency")).resolves.toBe(1);
   });
 
+  it("preserves proposals and idempotency when their calendar is deselected", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    const primary = calendar();
+    const secondary = calendar({ calendarRef: "calendar-ref-02", providerCalendarBlindIndex: "blind-calendar-02", isPrimary: false });
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [primary, secondary], authorizationIdOf(db));
+      repository.upsertEventReference(db, eventReference({ calendarRef: "calendar-ref-02" }));
+      repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idempotency-deselect", "request-deselect");
+    });
+
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [primary], authorizationIdOf(db)));
+
+    await expect(database.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.toBeNull();
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "pending", eventRef: "event-ref-01" });
+    await expect(count(database, "calendar_idempotency")).resolves.toBe(1);
+    await expect(database.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
+  });
+
   it("purges stale event references and aged idempotency rows at cutoffs", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
@@ -444,6 +463,55 @@ describe("Calendar repository", () => {
     const legacyInsert = await upgraded.read((db) => repository.getConnection(db, otherActor));
     expect(legacyInsert?.authorizationId).toMatch(/^[0-9a-f]{32}$/u);
     expect(legacyInsert?.authorizationId).not.toBe(migrated?.authorizationId);
+  });
+
+  it("lets an older runtime write, deselect and purge against the migrated schema without losing proposals", async () => {
+    const { database } = await createDatabase();
+    // Only SQL an older calendar runtime issues: 0200 column lists, no
+    // authorization_id, no retained_event_ref.
+    await database.transaction((db) => {
+      db.prepare(
+        "INSERT INTO calendar_connections(actor_id, state, refresh_token_ciphertext, granted_scopes_json, selection_version, created_at, updated_at) " +
+        "VALUES(:actorId, 'available', 'legacy-ciphertext', '[]', 1, :now, :now)",
+      ).run({ actorId, now });
+      const insertCalendar = db.prepare(
+        "INSERT INTO calendar_allowlist(actor_id, calendar_ref, provider_calendar_id_ciphertext, provider_calendar_blind_index, display_name_ciphertext, provider_access_role, read_enabled, write_enabled, is_primary, last_verified_at) " +
+        "VALUES(:actorId, :calendarRef, 'legacy-id', :blind, 'legacy-name', 'writer', 1, 1, :isPrimary, :now)",
+      );
+      insertCalendar.run({ actorId, calendarRef: "calendar-ref-01", blind: "blind-calendar-01", isPrimary: 1, now });
+      insertCalendar.run({ actorId, calendarRef: "calendar-ref-02", blind: "blind-calendar-02", isPrimary: 0, now });
+      const insertEvent = db.prepare(
+        "INSERT INTO calendar_event_refs(actor_id, event_ref, calendar_ref, provider_event_id_ciphertext, provider_event_blind_index, last_observed_at) " +
+        "VALUES(:actorId, :eventRef, :calendarRef, 'legacy-event', :blind, :observed)",
+      );
+      insertEvent.run({ actorId, eventRef: "event-ref-01", calendarRef: "calendar-ref-01", blind: "blind-event-01", observed: "2026-10-01T00:00:00.000Z" });
+      insertEvent.run({ actorId, eventRef: "event-ref-02", calendarRef: "calendar-ref-02", blind: "blind-event-02", observed: now });
+      const insertProposal = db.prepare(
+        "INSERT INTO calendar_change_proposals(actor_id, id, version, status, operation, event_ref, encrypted_payload, payload_purged_at, provider_etag_ciphertext, created_by_actor_type, created_at, expires_at, completed_at, safe_reason_code) " +
+        "VALUES(:actorId, :id, 1, 'pending', 'update', :eventRef, 'legacy-payload', NULL, NULL, 'human', :now, :expires, NULL, NULL)",
+      );
+      const insertKey = db.prepare(
+        "INSERT INTO calendar_idempotency(actor_id, idempotency_key_hash, request_hash, proposal_id, created_at) VALUES(:actorId, :key, 'request-hash', :id, :now)",
+      );
+      for (const [id, eventRef] of [["proposal-01", "event-ref-01"], ["proposal-02", "event-ref-02"]] as const) {
+        insertProposal.run({ actorId, id, eventRef, now, expires: "2026-10-12T13:00:00.000Z" });
+        insertKey.run({ actorId, key: `key-${id}`, id, now });
+      }
+    });
+
+    await expect(database.write((db) => db.prepare("DELETE FROM calendar_event_refs WHERE last_observed_at < :olderThan")
+      .run({ olderThan: "2026-10-10T00:00:00.000Z" }).changes)).resolves.toBe(1);
+    await database.write((db) => db.prepare("DELETE FROM calendar_allowlist WHERE actor_id = :actorId AND calendar_ref = 'calendar-ref-02'").run({ actorId }));
+
+    await expect(count(database, "calendar_event_refs")).resolves.toBe(0);
+    await expect(count(database, "calendar_change_proposals")).resolves.toBe(2);
+    await expect(count(database, "calendar_idempotency")).resolves.toBe(2);
+    await expect(database.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
+    await expect(database.transaction((db) => db.prepare(
+      "UPDATE calendar_change_proposals SET status = 'rejected', version = version + 1 WHERE actor_id = :actorId AND id = 'proposal-01' AND version = 1",
+    ).run({ actorId }).changes)).resolves.toBe(1);
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ eventRef: "event-ref-01", status: "rejected" });
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-02"))).resolves.toMatchObject({ eventRef: "event-ref-02", status: "pending" });
   });
 
   it("assigns a fresh authorization id on every replacement, even with identical metadata", async () => {
