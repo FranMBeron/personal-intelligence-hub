@@ -388,7 +388,12 @@ export const createCalendarRepository = (): CalendarRepository => ({
     return database.prepare("DELETE FROM calendar_oauth_transactions WHERE expires_at <= :olderThan").run({ olderThan }).changes;
   },
   purgeStaleEventReferences(database, olderThan) {
-    return database.prepare("DELETE FROM calendar_event_refs WHERE last_observed_at < :olderThan").run({ olderThan }).changes;
+    // Live proposals (pending/executing per the proposal state machine) still need their reference.
+    return database.prepare(
+      "DELETE FROM calendar_event_refs WHERE last_observed_at < :olderThan AND NOT EXISTS (" +
+      "SELECT 1 FROM calendar_change_proposals AS proposal WHERE proposal.actor_id = calendar_event_refs.actor_id " +
+      "AND proposal.event_ref = calendar_event_refs.event_ref AND proposal.status IN ('pending', 'executing'))",
+    ).run({ olderThan }).changes;
   },
   purgeTerminalProposalPayloads(database, olderThan) {
     return database.prepare("UPDATE calendar_change_proposals SET encrypted_payload = NULL, payload_purged_at = :olderThan WHERE status IN ('completed', 'rejected', 'expired', 'conflict', 'failed') AND encrypted_payload IS NOT NULL AND COALESCE(completed_at, expires_at) <= :olderThan")

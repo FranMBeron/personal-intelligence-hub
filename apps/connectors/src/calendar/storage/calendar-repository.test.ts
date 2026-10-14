@@ -321,18 +321,18 @@ describe("Calendar repository", () => {
     await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toMatchObject({ selectionVersion: 3 });
   });
 
-  it("preserves active proposals and idempotency when stale event references are purged", async () => {
+  it("preserves terminal proposals and idempotency when stale event references are purged", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
       repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
       repository.upsertEventReference(db, eventReference({ lastObservedAt: "2026-10-01T00:00:00.000Z" }));
-      repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idempotency-stale-event", "request-stale-event");
+      repository.insertProposal(db, proposal({ eventRef: "event-ref-01", status: "completed", completedAt: now }), "idempotency-stale-event", "request-stale-event");
     });
 
     await expect(database.write((db) => repository.purgeStaleEventReferences(db, "2026-10-10T00:00:00.000Z"))).resolves.toBe(1);
     await expect(database.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.toBeNull();
-    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "pending", eventRef: "event-ref-01" });
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "completed", eventRef: "event-ref-01" });
     await expect(count(database, "calendar_idempotency")).resolves.toBe(1);
   });
 
@@ -353,6 +353,22 @@ describe("Calendar repository", () => {
     await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "pending", eventRef: "event-ref-01" });
     await expect(count(database, "calendar_idempotency")).resolves.toBe(1);
     await expect(database.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
+  });
+
+  it("keeps stale event references that a live (pending or executing) proposal still uses", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.upsertEventReference(db, eventReference({ lastObservedAt: "2026-01-01T00:00:00.000Z" }));
+      repository.insertProposal(db, proposal({ id: "proposal-live-pending", eventRef: "event-ref-01" }), "idem-live-pending", "hash-live-pending");
+      repository.insertProposal(db, proposal({ id: "proposal-live-executing", status: "executing", eventRef: "event-ref-01" }), "idem-live-executing", "hash-live-executing");
+    });
+
+    await expect(database.write((db) => repository.purgeStaleEventReferences(db, "2026-10-10T00:00:00.000Z"))).resolves.toBe(0);
+    await expect(database.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.not.toBeNull();
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-live-pending"))).resolves.toMatchObject({ status: "pending", eventRef: "event-ref-01" });
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-live-executing"))).resolves.toMatchObject({ status: "executing", eventRef: "event-ref-01" });
   });
 
   it("purges stale event references and aged idempotency rows at cutoffs", async () => {
@@ -454,9 +470,13 @@ describe("Calendar repository", () => {
     await expect(upgraded.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.not.toBeNull();
     await expect(count(upgraded, "calendar_idempotency")).resolves.toBe(1);
     await expect(upgraded.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
+    await expect(upgraded.write((db) => repository.purgeStaleEventReferences(db, "2026-10-13T00:00:00.000Z"))).resolves.toBe(0);
+    await upgraded.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-01", expectedVersion: 1, from: ["pending"], to: "rejected",
+    }));
     await expect(upgraded.write((db) => repository.purgeStaleEventReferences(db, "2026-10-13T00:00:00.000Z"))).resolves.toBe(1);
     await expect(upgraded.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({
-      eventRef: "event-ref-01", status: "pending",
+      eventRef: "event-ref-01", status: "rejected",
     });
     await expect(count(upgraded, "calendar_idempotency")).resolves.toBe(1);
     const migrated = await upgraded.read((db) => repository.getConnection(db, actorId));
