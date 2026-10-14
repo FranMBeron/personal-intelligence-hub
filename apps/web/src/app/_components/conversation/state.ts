@@ -213,9 +213,11 @@ export const conversationReducer = (
         pageInfo: action.history.pageInfo,
       };
     case "message.submitted":
+      // A resend of the same draft reuses its idempotency key; the new optimistic bubble replaces the failed one.
       return {
         ...state,
-        messages: mergeMessages(state.messages, [
+        messages: mergeMessages(state.messages.filter((message) =>
+          message.deliveryState !== "failed" || message.idempotencyKey !== action.idempotencyKey), [
           { ...action.message, idempotencyKey: action.idempotencyKey },
         ]),
       };

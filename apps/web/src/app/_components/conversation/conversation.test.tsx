@@ -168,6 +168,34 @@ describe("Conversation", () => {
     expect(screen.queryByText(/could not be completed/u)).toBeNull();
   });
 
+  it("replaces the failed bubble when the same draft is resent with the same idempotency key", async () => {
+    const keys: string[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/messages?limit=50")) return Response.json({ items: [], pageInfo: { nextCursor: null, hasNextPage: false }, streamCursor: "0" });
+      if (init?.method === "POST") {
+        keys.push(new Headers(init.headers).get("idempotency-key") ?? "missing");
+        if (keys.length === 1) return Response.json({ detail: "boom" }, { status: 500 });
+        return Response.json({
+          id: "message-delivered", conversationId: "conversation-01", role: "user",
+          parts: [{ kind: "text", text: "Hola" }], deliveryState: "accepted", createdAt: timestamp,
+        });
+      }
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const { container } = render(<Conversation conversationId="conversation-01" agentName="Research" capabilities={capabilities} onResolveMain={async () => { throw new Error("unused"); }} />);
+    fireEvent.change(screen.getByLabelText("Mensaje para Research"), { target: { value: "Hola" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Conversación con Research" }));
+    await screen.findByRole("button", { name: "Reintentar" });
+    await waitFor(() => expect((screen.getByRole("button", { name: /Enviar/u }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.submit(screen.getByRole("form", { name: "Conversación con Research" }));
+    await waitFor(() => expect(keys).toHaveLength(2));
+    await waitFor(() => expect(container.querySelector('article[data-role="user"] .message__state')?.textContent).toBe("accepted"));
+    expect(keys[1]).toBe(keys[0]);
+    expect(container.querySelectorAll('article[data-role="user"]')).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
+  });
+
   it("retains the draft when validation or send fails", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ detail: "conflict" }, { status: 409 }));
     vi.stubGlobal("fetch", fetcher);
