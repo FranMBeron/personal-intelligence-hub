@@ -35,3 +35,13 @@ BEGIN
       safe_reason_code = CASE WHEN status IN ('pending', 'executing') THEN 'provider_state_changed' ELSE safe_reason_code END
   WHERE actor_id = OLD.actor_id AND event_ref = OLD.event_ref;
 END;
+
+-- Hazard: never write calendar_event_refs with a REPLACE conflict resolution
+-- (INSERT OR REPLACE, REPLACE INTO, UPDATE OR REPLACE). REPLACE deletes the
+-- conflicting row without firing the trigger above while recursive_triggers
+-- is off (the SQLite default, and how the connector database runs), so the
+-- 0200 ON DELETE CASCADE deletes the referencing proposals and, through them,
+-- their idempotency rows. Use INSERT ... ON CONFLICT DO UPDATE instead. A
+-- BEFORE INSERT guard cannot tell REPLACE from an ON CONFLICT DO UPDATE upsert
+-- (both fire it before conflict resolution), so the repository tests enforce
+-- this rule instead.

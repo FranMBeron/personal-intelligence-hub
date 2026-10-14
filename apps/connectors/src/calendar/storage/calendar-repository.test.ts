@@ -1,6 +1,8 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openCalendarValue, sealCalendarValue, type CalendarKeyring } from "../crypto/envelope.js";
@@ -740,6 +742,50 @@ describe("terminal transitions of detached proposals", () => {
     await expect(database.transaction((db) => repository.transitionProposal(db, {
       actorId, proposalId: "proposal-pending-detached", expectedVersion: 1, from: ["pending"], to: "executing", eventRef: "event-ref-01",
     }))).rejects.toThrow("calendar_event_reference_not_found");
+  });
+});
+
+describe("event reference REPLACE hazard", () => {
+  // REPLACE deletes the conflicting row without firing the BEFORE DELETE
+  // detach trigger (recursive_triggers is off), so the ON DELETE CASCADE from
+  // 0200 silently deletes proposals and their idempotency rows.
+  const replaceOnEventRefs = /\b(?:(?:INSERT|UPDATE)\s+OR\s+REPLACE(?:\s+INTO)?|REPLACE\s+INTO)\s+calendar_event_refs\b/iu;
+  const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
+  const sourceFiles = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    return /\.(?:ts|sql)$/u.test(entry.name) && !entry.name.endsWith(".test.ts") ? [path] : [];
+  });
+
+  it("never REPLACEs rows in calendar_event_refs from source or migrations", () => {
+    const files = sourceFiles(sourceRoot);
+    expect(files.some((file) => file.endsWith("calendar-repository.ts"))).toBe(true);
+    expect(files.some((file) => file.endsWith("0210_calendar_preserve_proposals.sql"))).toBe(true);
+    const offenders = files.filter((file) => {
+      const text = readFileSync(file, "utf8");
+      const code = file.endsWith(".sql") ? text.replace(/--[^\n]*/gu, "") : text;
+      return replaceOnEventRefs.test(code);
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it("documents why: REPLACE bypasses the detach trigger and cascades proposals away", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.upsertEventReference(db, eventReference());
+      repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idem-replace", "hash-replace");
+    });
+
+    await database.write((db) => repository.upsertEventReference(db, eventReference({ lastObservedAt: later })));
+    await expect(count(database, "calendar_change_proposals")).resolves.toBe(1);
+
+    await database.write((db) => db.prepare(
+      "INSERT OR REPLACE INTO calendar_event_refs(actor_id, event_ref, calendar_ref, provider_event_id_ciphertext, provider_event_blind_index, last_observed_at) " +
+      "VALUES(:actorId, 'event-ref-01', 'calendar-ref-01', 'fixture', 'blind-event-01', :later)",
+    ).run({ actorId, later }));
+    await expect(count(database, "calendar_change_proposals")).resolves.toBe(0);
   });
 });
 
