@@ -35,7 +35,8 @@ const crashAfterExecutingCas = async (world: ProposalWorld, proposal: CalendarCh
 const restart = async (world: ProposalWorld) => {
   await world.close();
   const db = await reopenTestDatabase(world.path);
-  return { db, ...buildServices(db, world.google, new TestClock(world.clock.now().toISOString())) };
+  const clock = new TestClock(world.clock.now().toISOString());
+  return { db, clock, ...buildServices(db, world.google, clock) };
 };
 const propose = (world: ProposalWorld, key: string, body: CreateCalendarChangeProposalBody) =>
   world.proposals.create(centralPrincipal(), key, body);
@@ -171,7 +172,7 @@ describe("Calendar execution reconciler", () => {
     await crashAfterExecutingCas(world, second);
     const restarted = await restart(world);
     world.google.failures.set("getEvent", { code: "google_calendar_temporarily_unavailable" });
-    await expect(restarted.reconciler.reconcileOutstanding({ limit: 1 })).resolves.toEqual({ processed: 1, remaining: true });
+    await expect(restarted.reconciler.reconcileOutstanding({ limit: 1, maxBatches: 1 })).resolves.toEqual({ processed: 1, remaining: true });
     expect(await status(restarted.db, first.id)).toBe("executing");
     world.google.failures.delete("getEvent");
     const confirmed = await restarted.proposals.confirm(humanPrincipal(), first.id, { expectedVersion: 1 });
@@ -218,5 +219,64 @@ describe("Calendar execution reconciler", () => {
     expect(world.google.mutations).toHaveLength(0);
     const after = await world.db.read((handle) => repository.getProposal(handle, actorId, proposal.id));
     expect(after?.eventRef).toBeUndefined();
+  });
+  describe("draining stuck proposals", () => {
+    /** Seeds `count` create proposals stuck executing and records which ones the reconciler reads. */
+    const stuck = async (count: number) => {
+      const world = await createProposalWorld();
+      const proposals: CalendarChangeProposal[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const proposal = await propose(world, `recon-drain-${String(index).padStart(4, "0")}`, {
+          operation: "create", calendarRef: world.refs[PRIMARY]!, draft: { ...draft, title: `Stuck ${index}` }, guestNotification: "all",
+        });
+        await crashAfterExecutingCas(world, proposal);
+        proposals.push(proposal);
+      }
+      const restarted = await restart(world);
+      const attempted: string[] = [];
+      const getEvent = world.google.getEvent.bind(world.google);
+      world.google.getEvent = async (token, calendarId, eventId) => { attempted.push(eventId); return getEvent(token, calendarId, eventId); };
+      world.google.failures.set("getEvent", { code: "google_calendar_temporarily_unavailable" });
+      const ids = proposals.map((proposal) => providerEventIdForProposal(proposal.id));
+      return { world, restarted, attempted, ids };
+    };
+
+    it("pages past proposals that stay executing so the newest is attempted", async () => {
+      const { restarted, attempted, ids } = await stuck(3);
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 2, maxBatches: 1 })).resolves.toEqual({ processed: 2, remaining: true });
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 2, maxBatches: 1 })).resolves.toEqual({ processed: 1, remaining: false });
+      expect(attempted).toEqual(ids);
+    });
+
+    it("reports nothing remaining when exactly limit proposals were settled", async () => {
+      const { world, restarted } = await stuck(2);
+      world.google.failures.delete("getEvent");
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 2, maxBatches: 1 })).resolves.toEqual({ processed: 2, remaining: false });
+    });
+
+    it("backs off a proposal that stayed executing until its next attempt is due", async () => {
+      const { restarted, attempted, ids } = await stuck(2);
+      await restarted.reconciler.reconcileOutstanding({ limit: 10 });
+      expect(attempted).toEqual(ids);
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 10 })).resolves.toEqual({ processed: 0, remaining: false });
+      expect(attempted).toHaveLength(2);
+      restarted.clock.advance(30_000);
+      await restarted.reconciler.reconcileOutstanding({ limit: 10 });
+      expect(attempted).toEqual([...ids, ...ids]);
+      // The second consecutive unsettled attempt doubles the delay.
+      restarted.clock.advance(30_000);
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 10 })).resolves.toEqual({ processed: 0, remaining: false });
+      restarted.clock.advance(30_000);
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 10 })).resolves.toEqual({ processed: 2, remaining: false });
+    });
+
+    it("bounds one drain call by its batch budget", async () => {
+      const { restarted, attempted, ids } = await stuck(5);
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 1, maxBatches: 3 })).resolves.toEqual({ processed: 3, remaining: true });
+      expect(attempted).toEqual(ids.slice(0, 3));
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 1, maxBatches: 3 })).resolves.toEqual({ processed: 2, remaining: false });
+      expect(attempted).toEqual(ids);
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 1, maxBatches: 0 })).rejects.toThrow("calendar_reconcile_batches_invalid");
+    });
   });
 });

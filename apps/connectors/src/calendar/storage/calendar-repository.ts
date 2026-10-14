@@ -172,6 +172,9 @@ const selectProposal = (database: SqliteHandle, actorId: string, proposalId: str
   database.prepare("SELECT * FROM calendar_change_proposals WHERE actor_id = :actorId AND id = :proposalId")
     .get<ProposalRow>({ actorId, proposalId });
 
+/** Position of a proposal in the executing-proposal scan order. */
+export type ProposalKeyset = Readonly<{ createdAt: string; id: string; actorId: string }>;
+
 export interface CalendarRepository {
   createOAuthTransaction(database: SqliteHandle, input: NewOAuthTransaction): void;
   consumeOAuthTransaction(database: SqliteHandle, stateHash: string, actorId: string, now: string): OAuthTransaction | null;
@@ -206,7 +209,8 @@ export interface CalendarRepository {
   findProposalByIdempotencyKey(
     database: SqliteHandle, actorId: string, idempotencyKeyHash: string,
   ): Readonly<{ requestHash: string; proposal: ProposalRecord }> | null;
-  listExecutingProposals(database: SqliteHandle, limit: number): readonly ProposalRecord[];
+  /** Executing proposals in (created_at, id, actor_id) order, strictly after an optional keyset position. */
+  listExecutingProposals(database: SqliteHandle, limit: number, after?: ProposalKeyset): readonly ProposalRecord[];
   transitionProposal(database: SqliteHandle, input: ProposalTransition): ProposalRecord;
   appendAudit(database: SqliteHandle, record: SanitizedCalendarAuditRecord): void;
   expirePendingProposals(database: SqliteHandle, now: string): number;
@@ -403,10 +407,16 @@ export const createCalendarRepository = (): CalendarRepository => ({
     const proposal = mapProposal(selectProposal(database, actorId, row.proposal_id));
     return proposal === null ? null : { requestHash: row.request_hash, proposal };
   },
-  listExecutingProposals(database, limit) {
+  listExecutingProposals(database, limit, after) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail("calendar_proposal_limit_invalid");
-    return database.prepare("SELECT * FROM calendar_change_proposals WHERE status = 'executing' ORDER BY created_at, id LIMIT :limit")
-      .all<ProposalRow>({ limit }).map((row) => mapProposal(row)!);
+    if (after === undefined) {
+      return database.prepare("SELECT * FROM calendar_change_proposals WHERE status = 'executing' ORDER BY created_at, id, actor_id LIMIT :limit")
+        .all<ProposalRow>({ limit }).map((row) => mapProposal(row)!);
+    }
+    return database.prepare(
+      "SELECT * FROM calendar_change_proposals WHERE status = 'executing' AND (created_at, id, actor_id) > (:createdAt, :id, :actorId) " +
+      "ORDER BY created_at, id, actor_id LIMIT :limit",
+    ).all<ProposalRow>({ limit, createdAt: after.createdAt, id: after.id, actorId: after.actorId }).map((row) => mapProposal(row)!);
   },
   transitionProposal(database, input) {
     if (input.from.length === 0) fail("calendar_proposal_transition_invalid");

@@ -283,6 +283,10 @@ describe("Calendar repository", () => {
     await expect(database.read((db) => repository.listExecutingProposals(db, 2))).resolves.toMatchObject([
       { id: "proposal-a" }, { id: "proposal-c" },
     ]);
+    await expect(database.read((db) => repository.listExecutingProposals(db, 2, { createdAt: now, id: "proposal-a", actorId })))
+      .resolves.toMatchObject([{ id: "proposal-c" }, { id: "proposal-b" }]);
+    await expect(database.read((db) => repository.listExecutingProposals(db, 2, { createdAt: later, id: "proposal-b", actorId })))
+      .resolves.toEqual([]);
     await expect(database.read((db) => repository.listExecutingProposals(db, 0))).rejects.toThrow();
     await expect(database.read((db) => repository.listExecutingProposals(db, 101))).rejects.toThrow();
   });
