@@ -46,13 +46,16 @@ export function DelegationLedger({
   client: suppliedClient,
   sourceThreadHref = defaultSourceThreadHref,
   limit = 50,
+  headingLevel = 2,
 }: Readonly<{
   agentId: string;
   agentNames?: Readonly<Record<string, string>>;
   client?: DelegationReader;
   sourceThreadHref?: (delegation: Delegation) => string;
   limit?: number;
+  headingLevel?: 2 | 3;
 }>) {
+  const Heading = headingLevel === 3 ? "h3" : "h2";
   const fallbackClient = useRef<DelegationReader | null>(null);
   const client = suppliedClient ?? (fallbackClient.current ??= new DelegationClient());
   const titleId = useId();
@@ -189,7 +192,7 @@ export function DelegationLedger({
   return (
     <section className="delegation-ledger" aria-labelledby={titleId}>
       <header className="delegation-ledger__header">
-        <h2 id={titleId}>Delegaciones</h2>
+        <Heading id={titleId}>Delegaciones</Heading>
         <p>Encargos entre agentes. Solo lectura: no forman parte de tus conversaciones directas.</p>
       </header>
       {body}
