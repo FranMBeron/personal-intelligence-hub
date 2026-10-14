@@ -159,7 +159,7 @@ export interface CalendarRepository {
     actorId: string,
     expectedVersion: number,
     calendars: readonly CalendarRecord[],
-    expectedAuthorizationId?: string,
+    expectedAuthorizationId: string,
   ): number;
   resolveCalendar(database: SqliteHandle, actorId: string, calendarRef: string): CalendarRecord | null;
   resolveEvent(database: SqliteHandle, actorId: string, eventRef: string): EventReferenceRecord | null;
@@ -261,8 +261,7 @@ export const createCalendarRepository = (): CalendarRepository => ({
       fail("calendar_selection_actor_mismatch");
     }
     const connectionRow = selectConnection(database, actorId);
-    if (expectedAuthorizationId !== undefined &&
-        (connectionRow === undefined || connectionRow.authorization_id !== expectedAuthorizationId)) {
+    if (connectionRow === undefined || connectionRow.authorization_id !== expectedAuthorizationId) {
       fail("calendar_connection_changed");
     }
     if (connectionRow === undefined || connectionRow.selection_version !== expectedVersion) fail("calendar_selection_version_conflict");
@@ -271,13 +270,10 @@ export const createCalendarRepository = (): CalendarRepository => ({
         selected.some((item) => item.isPrimary && !item.readEnabled && !item.writeEnabled)) {
       fail("calendar_selection_primary_required");
     }
-    const update = expectedAuthorizationId === undefined
-      ? database.prepare("UPDATE calendar_connections SET selection_version = selection_version + 1 WHERE actor_id = :actorId AND selection_version = :expectedVersion")
-        .run({ actorId, expectedVersion })
-      : database.prepare(
-        "UPDATE calendar_connections SET selection_version = selection_version + 1 WHERE actor_id = :actorId AND selection_version = :expectedVersion " +
-        "AND authorization_id = :expectedAuthorizationId",
-      ).run({ actorId, expectedVersion, expectedAuthorizationId });
+    const update = database.prepare(
+      "UPDATE calendar_connections SET selection_version = selection_version + 1 WHERE actor_id = :actorId AND selection_version = :expectedVersion " +
+      "AND authorization_id = :expectedAuthorizationId",
+    ).run({ actorId, expectedVersion, expectedAuthorizationId });
     requireChanges(update.changes, "calendar_selection_version_conflict");
 
     const selectedRefs = new Set(selected.map((item) => item.calendarRef));

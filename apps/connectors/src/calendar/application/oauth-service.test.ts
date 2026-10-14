@@ -9,7 +9,7 @@ import { openCalendarValue, sealCalendarValue, type CalendarKeyring } from "../c
 import type { GoogleOAuthPort, GoogleTokenGrant } from "../ports/google-oauth.js";
 import { createCalendarRepository, type CalendarRepository } from "../storage/calendar-repository.js";
 import type { CalendarConnectionInput, CalendarConnectionRecord, CalendarRecord } from "../storage/records.js";
-import { openConnectorDatabase, type ConnectorDatabase } from "../../foundation/database.js";
+import { openConnectorDatabase, type ConnectorDatabase, type SqliteHandle } from "../../foundation/database.js";
 import type { CalendarSourceStatus, DelegatedPrincipal } from "@personal-intelligence-hub/contracts";
 import { CalendarOAuthServiceImpl, type CalendarPrimaryBootstrap } from "./oauth-service.js";
 import type { GoogleAccessTokenProvider } from "./google-access-token-provider.js";
@@ -50,6 +50,11 @@ const directories: string[] = [];
 let currentTime: Date;
 const clock = () => new Date(currentTime);
 const repository = createCalendarRepository();
+const authorizationIdOf = (db: SqliteHandle, actor = actorId): string => {
+  const current = repository.getConnection(db, actor);
+  if (current === null) throw new Error("fixture_connection_missing");
+  return current.authorizationId;
+};
 
 const createDatabase = async () => {
   const directory = await mkdtemp(join(tmpdir(), "pih-calendar-oauth-service-"));
@@ -190,7 +195,7 @@ describe("Calendar OAuth service", () => {
       primaryCalendarBindingCiphertext: sealCalendarValue("primary-id-fictional", `calendar_connections:${actorId}:primary-calendar`, keyring),
       selectionVersion: 1,
     }));
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [makeCalendar()]));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [makeCalendar()], authorizationIdOf(db)));
     await expect(service.status(principal())).resolves.toMatchObject({
       state: "available", canRead: true, canProposeChanges: true, primaryCalendarConfigured: true,
       additionalCalendarCount: 0,
@@ -211,7 +216,7 @@ describe("Calendar OAuth service", () => {
     currentTime = now;
     const database = await createDatabase();
     await database.write((db) => repository.saveConnection(db, oldConnection()));
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 4, [makeCalendar()]));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 4, [makeCalendar()], authorizationIdOf(db)));
     let bootstrapCount = 0;
     const { service, oauth } = makeService(database, {
       bootstrap: {
@@ -227,7 +232,7 @@ describe("Calendar OAuth service", () => {
               safeReasonCode: undefined,
               updatedAt: now.toISOString(),
             });
-            repository.replaceCalendarSelection(db, actorId, 1, [makeCalendar()]);
+            repository.replaceCalendarSelection(db, actorId, 1, [makeCalendar()], authorizationIdOf(db));
           });
           return { state: "available", checkedAt: now.toISOString(), stale: false, canRead: true, canProposeChanges: true, primaryCalendarConfigured: true, additionalCalendarCount: 0 };
         },
@@ -259,7 +264,7 @@ describe("Calendar OAuth service", () => {
       providerEventBlindIndex: "event-blind-fictional", lastObservedAt: now.toISOString(),
     };
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 4, [makeCalendar()]);
+      repository.replaceCalendarSelection(db, actorId, 4, [makeCalendar()], authorizationIdOf(db));
       repository.upsertEventReference(db, event);
       repository.insertProposal(db, {
         actorId, id: "proposal-to-clear", version: 1, status: "pending", operation: "update",

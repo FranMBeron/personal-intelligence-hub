@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { openCalendarValue, sealCalendarValue, type CalendarKeyring } from "../crypto/envelope.js";
-import { openConnectorDatabase, type ConnectorDatabase } from "../../foundation/database.js";
+import { openConnectorDatabase, type ConnectorDatabase, type SqliteHandle } from "../../foundation/database.js";
 import { applyMigrations, loadMigrations } from "../../foundation/migrations.js";
 import { createCalendarRepository } from "./calendar-repository.js";
 import type {
@@ -27,6 +27,11 @@ const ring: CalendarKeyring = {
   blindIndexKey: new Uint8Array(32).fill(9),
 };
 const repository = createCalendarRepository();
+const authorizationIdOf = (db: SqliteHandle, actor = actorId): string => {
+  const current = repository.getConnection(db, actor);
+  if (current === null) throw new Error("fixture_connection_missing");
+  return current.authorizationId;
+};
 
 const createDatabase = async () => {
   const directory = await mkdtemp(join(tmpdir(), "pih-calendar-repository-"));
@@ -142,12 +147,12 @@ describe("Calendar repository", () => {
   it("rejects duplicate provider calendar identities by actor-scoped blind index", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()]));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db)));
     await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toMatchObject({ selectionVersion: 2 });
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [
       calendar({ calendarRef: "calendar-ref-02" }),
       calendar({ calendarRef: "calendar-ref-03" }),
-    ]))).rejects.toThrow();
+    ], authorizationIdOf(db)))).rejects.toThrow();
     await expect(count(database, "calendar_allowlist")).resolves.toBe(1);
   });
 
@@ -155,11 +160,11 @@ describe("Calendar repository", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.write((db) => repository.saveConnection(db, connection({ actorId: otherActor })));
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()]));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db)));
 
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [
       calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" }),
-    ]))).rejects.toThrow();
+    ], authorizationIdOf(db)))).rejects.toThrow();
 
     await expect(database.read((db) => repository.listCalendars(db, actorId))).resolves.toMatchObject([
       { actorId, calendarRef: "calendar-ref-01" },
@@ -171,8 +176,8 @@ describe("Calendar repository", () => {
   it("rejects selection version conflicts without changing the saved selection", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()]));
-    await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, []))).rejects.toThrow();
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db)));
+    await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [], authorizationIdOf(db)))).rejects.toThrow();
     await expect(database.read((db) => repository.listCalendars(db, actorId))).resolves.toHaveLength(1);
   });
 
@@ -182,10 +187,10 @@ describe("Calendar repository", () => {
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [
       calendar({ calendarRef: "calendar-ref-01", isPrimary: true }),
       calendar({ calendarRef: "calendar-ref-02", isPrimary: true, providerCalendarBlindIndex: "blind-calendar-02" }),
-    ]))).rejects.toThrow();
+    ], authorizationIdOf(db)))).rejects.toThrow();
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [
       calendar({ readEnabled: false, writeEnabled: false, isPrimary: true }),
-    ]))).rejects.toThrow();
+    ], authorizationIdOf(db)))).rejects.toThrow();
   });
 
   it("enforces write-role and boolean constraints in SQLite", async () => {
@@ -194,13 +199,13 @@ describe("Calendar repository", () => {
 
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [
       calendar({ providerAccessRole: "reader", writeEnabled: true }),
-    ]))).rejects.toThrow();
+    ], authorizationIdOf(db)))).rejects.toThrow();
     await expect(database.read((db) => repository.listCalendars(db, actorId))).resolves.toEqual([]);
     await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toMatchObject({ selectionVersion: 1 });
 
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [
       calendar({ readEnabled: 2 as unknown as boolean }),
-    ]))).rejects.toThrow();
+    ], authorizationIdOf(db)))).rejects.toThrow();
     await expect(database.read((db) => repository.listCalendars(db, actorId))).resolves.toEqual([]);
   });
 
@@ -219,7 +224,7 @@ describe("Calendar repository", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
       repository.upsertEventReference(db, eventReference());
     });
 
@@ -303,12 +308,12 @@ describe("Calendar repository", () => {
     await seedConnection(database);
     const selectedCalendar = calendar();
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [selectedCalendar]);
+      repository.replaceCalendarSelection(db, actorId, 1, [selectedCalendar], authorizationIdOf(db));
       repository.upsertEventReference(db, eventReference());
       repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idempotency-resave", "request-resave");
     });
 
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [selectedCalendar]));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [selectedCalendar], authorizationIdOf(db)));
 
     await expect(database.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.not.toBeNull();
     await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "pending", eventRef: "event-ref-01" });
@@ -320,7 +325,7 @@ describe("Calendar repository", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
       repository.upsertEventReference(db, eventReference({ lastObservedAt: "2026-10-01T00:00:00.000Z" }));
       repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idempotency-stale-event", "request-stale-event");
     });
@@ -335,7 +340,7 @@ describe("Calendar repository", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
       repository.upsertEventReference(db, eventReference({ lastObservedAt: "2026-10-01T00:00:00.000Z" }));
     });
     await database.transaction((db) => repository.insertProposal(db, proposal({ id: "proposal-idem-purge", createdAt: "2026-10-01T00:00:00.000Z" }), "idempotency-aged", "request-aged"));
@@ -368,7 +373,7 @@ describe("Calendar repository", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
       repository.upsertEventReference(db, eventReference());
       repository.appendAudit(db, auditRecord());
     });
@@ -405,7 +410,17 @@ describe("Calendar repository", () => {
         grantedScopesJson: JSON.stringify(legacy.grantedScopes), selectionVersion: legacy.selectionVersion,
         createdAt: legacy.createdAt, updatedAt: legacy.updatedAt,
       });
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      const selected = calendar();
+      db.prepare(
+        "INSERT INTO calendar_allowlist(actor_id, calendar_ref, provider_calendar_id_ciphertext, provider_calendar_blind_index, display_name_ciphertext, provider_access_role, read_enabled, write_enabled, is_primary, last_verified_at) " +
+        "VALUES(:actorId, :calendarRef, :providerCalendarIdCiphertext, :providerCalendarBlindIndex, :displayNameCiphertext, :providerAccessRole, 1, 1, 1, :lastVerifiedAt)",
+      ).run({
+        actorId: selected.actorId, calendarRef: selected.calendarRef,
+        providerCalendarIdCiphertext: selected.providerCalendarIdCiphertext,
+        providerCalendarBlindIndex: selected.providerCalendarBlindIndex,
+        displayNameCiphertext: selected.displayNameCiphertext,
+        providerAccessRole: selected.providerAccessRole, lastVerifiedAt: selected.lastVerifiedAt,
+      });
       repository.upsertEventReference(db, eventReference());
       repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idempotency-migration", "request-migration");
     });
@@ -452,6 +467,17 @@ describe("Calendar repository", () => {
       .resolves.toBe(2);
   });
 
+  it("always enforces the authorization binding when replacing a selection", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await expect(database.transaction((db) =>
+      // @ts-expect-error expectedAuthorizationId is required; omitting it must not bypass the binding.
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()])))
+      .rejects.toThrow("calendar_connection_changed");
+    await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toMatchObject({ selectionVersion: 1 });
+    await expect(database.read((db) => repository.listCalendars(db, actorId))).resolves.toEqual([]);
+  });
+
   it("reopens the same file without reapplying migrations", async () => {
     const { database, databasePath } = await createDatabase();
     await applyMigrations(database, loadMigrations());
@@ -471,8 +497,8 @@ describe("proposal event ownership", () => {
     await seedConnection(database);
     await seedConnection(database, otherActor);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
-      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })]);
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor));
       repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
     });
 
@@ -486,8 +512,8 @@ describe("proposal event ownership", () => {
     await seedConnection(database);
     await seedConnection(database, otherActor);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
-      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })]);
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor));
       repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
       repository.insertProposal(db, proposal({ id: "proposal-transition-ref" }), "idem-transition-ref", "hash-transition-ref");
     });
@@ -508,8 +534,8 @@ describe("proposal foreign event ownership", () => {
     await seedConnection(database);
     await seedConnection(database, otherActor);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
-      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })]);
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor));
       repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
     });
 
@@ -521,8 +547,8 @@ describe("proposal foreign event ownership", () => {
     await seedConnection(database);
     await seedConnection(database, otherActor);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
-      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })]);
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor));
       repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
       repository.insertProposal(db, proposal(), "idem-transition-foreign", "hash-transition-foreign");
     });
@@ -538,7 +564,7 @@ describe("proposal replay after event cleanup", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
       repository.upsertEventReference(db, eventReference({ lastObservedAt: "2026-10-01T00:00:00.000Z" }));
     });
     const savedProposal = proposal({ id: "proposal-replay-cleanup", eventRef: "event-ref-01" });
