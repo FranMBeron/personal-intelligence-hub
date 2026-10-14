@@ -412,7 +412,7 @@ describe("Calendar repository", () => {
     await expect(count(database, "calendar_change_audit")).resolves.toBe(1);
   });
 
-  it("upgrades the event-reference foreign key without losing proposals or idempotency", async () => {
+  it("upgrades a 0200 database additively and then retains proposals when event references are purged", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pih-calendar-upgrade-"));
     directories.push(directory);
     const databasePath = join(directory, "connectors.sqlite");
@@ -454,6 +454,11 @@ describe("Calendar repository", () => {
     await expect(upgraded.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.not.toBeNull();
     await expect(count(upgraded, "calendar_idempotency")).resolves.toBe(1);
     await expect(upgraded.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
+    await expect(upgraded.write((db) => repository.purgeStaleEventReferences(db, "2026-10-13T00:00:00.000Z"))).resolves.toBe(1);
+    await expect(upgraded.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({
+      eventRef: "event-ref-01", status: "pending",
+    });
+    await expect(count(upgraded, "calendar_idempotency")).resolves.toBe(1);
     const migrated = await upgraded.read((db) => repository.getConnection(db, actorId));
     expect(migrated?.authorizationId).toMatch(/^[0-9a-f]{32}$/u);
     await upgraded.write((db) => db.prepare(

@@ -41,7 +41,7 @@ type EventRow = Readonly<{
 }>;
 type ProposalRow = Readonly<{
   actor_id: string; id: string; version: number; status: CalendarProposalStatus;
-  operation: ProposalRecord["operation"]; event_ref: string | null;
+  operation: ProposalRecord["operation"]; event_ref: string | null; retained_event_ref: string | null;
   encrypted_payload: string | null; payload_purged_at: string | null;
   provider_etag_ciphertext: string | null; created_by_actor_type: ProposalRecord["createdByActorType"];
   created_at: string; expires_at: string; completed_at: string | null;
@@ -94,7 +94,7 @@ const mapProposal = (row: ProposalRow | undefined): ProposalRecord | null => row
   actorId: row.actor_id, id: row.id, version: row.version, status: row.status,
   operation: row.operation, createdByActorType: row.created_by_actor_type,
   createdAt: row.created_at, expiresAt: row.expires_at,
-  ...optional({}, "eventRef", row.event_ref),
+  ...optional({}, "eventRef", row.event_ref ?? row.retained_event_ref),
   ...optional({}, "encryptedPayload", row.encrypted_payload),
   ...optional({}, "payloadPurgedAt", row.payload_purged_at),
   ...optional({}, "providerEtagCiphertext", row.provider_etag_ciphertext),
