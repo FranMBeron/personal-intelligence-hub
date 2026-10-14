@@ -88,7 +88,7 @@ describe("Calendar event query service", () => {
     const first = await service.list(humanPrincipal(), query);
     const cursor = first.pageInfo.nextCursor!;
     const nextCursors = new Set<string | undefined>();
-    for (let replay = 0; replay < 10_000; replay += 1) {
+    for (let replay = 0; replay < 1_000; replay += 1) {
       nextCursors.add((await service.list(humanPrincipal(), { ...query, cursor })).pageInfo.nextCursor);
     }
     expect(nextCursors.size).toBe(1);

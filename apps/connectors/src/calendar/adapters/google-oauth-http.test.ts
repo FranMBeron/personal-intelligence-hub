@@ -42,7 +42,7 @@ const listen = async () => {
 };
 
 const adapter = () => new GoogleOAuthHttpAdapter({ clientId, clientSecret }, {
-  timeoutMs: 100,
+  timeoutMs: 5_000, // Not under test here; the timeout test below builds its own adapter.
   fetch: async (input, init) => {
     requestedOfficialUrls.push(String(input));
     return fetch(new URL(String(input)).pathname.startsWith("/token") ? `${origin}/token` : `${origin}/revoke`, init);
