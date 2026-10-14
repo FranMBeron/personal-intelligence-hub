@@ -9,6 +9,18 @@ export const EVENT_CURSOR_PATTERN = /^[\x21-\x7e]{1,1024}$/u;
 
 const SAFE_EVENT_ID = /^[\x21-\x7e]{1,1024}$/u;
 
+/** Event types of the public HermesEvent union; anything else is skipped for forward compatibility. */
+const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set(
+  HermesEventSchema.options.map((option) => option.shape.type.value),
+);
+
+const isUnknownEventType = (payload: unknown): boolean =>
+  typeof payload === "object" &&
+  payload !== null &&
+  !Array.isArray(payload) &&
+  typeof (payload as { type?: unknown }).type === "string" &&
+  !KNOWN_EVENT_TYPES.has((payload as { type: string }).type);
+
 type BlockResult = { kind: "skip" } | { kind: "emit"; text: string } | { kind: "invalid" };
 
 const normalizeBlock = (block: string): BlockResult => {
@@ -30,6 +42,8 @@ const normalizeBlock = (block: string): BlockResult => {
   } catch {
     return { kind: "invalid" };
   }
+  // Unknown types are dropped (never re-emitted) so one future event cannot wedge reconnecting clients.
+  if (isUnknownEventType(payload)) return { kind: "skip" };
   const parsed = HermesEventSchema.safeParse(payload);
   if (!parsed.success || !SAFE_EVENT_ID.test(parsed.data.id)) return { kind: "invalid" };
   if (id !== undefined && id !== parsed.data.id) return { kind: "invalid" };
@@ -45,10 +59,11 @@ const normalizeLineEndings = (text: string): { text: string; held: string } => {
 
 /**
  * Re-emits only blocks whose data validates against the public HermesEvent
- * union, rebuilt from the parsed value. Anything else (malformed JSON, unknown
- * event types, extra fields such as reasoning or tool traces, mismatched ids,
- * oversized blocks, upstream errors) closes the stream instead of being
- * exposed. The upstream reader is cancelled at most once.
+ * union, rebuilt from the parsed value. Events whose `type` is not in the
+ * union are skipped and the stream continues. Anything else that fails
+ * validation (malformed JSON, a known type with extra fields such as reasoning
+ * or tool traces, mismatched ids, oversized blocks, upstream errors) closes the
+ * stream instead of being exposed. The upstream reader is cancelled at most once.
  */
 export const normalizeHermesEventStream = (
   source: ReadableStream<Uint8Array>,

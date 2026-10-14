@@ -139,7 +139,6 @@ describe("normalized SSE recovery boundary", () => {
 
   it.each([
     ["malformed JSON", "id: e2\ndata: {not-json\n\n"],
-    ["raw reasoning event", frame({ id: "e2", type: "agent.reasoning", occurredAt: "2026-10-12T12:00:00.000Z", text: "private chain" } as never)],
     ["tool trace smuggled into a known event", frame({ ...heartbeat("e2"), toolCall: { name: "private-tool" } } as never)],
     ["mismatched frame id", frame(heartbeat("e2"), "e3")],
     ["completed message with a reasoning part", frame({
@@ -154,6 +153,29 @@ describe("normalized SSE recovery boundary", () => {
     expect(output).not.toContain("private");
     expect(source.cancel).toHaveBeenCalledTimes(1);
     expect(gateway.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["raw reasoning event", frame({ id: "e2", type: "agent.reasoning", occurredAt: "2026-10-12T12:00:00.000Z", text: "private chain" } as never)],
+    ["future event type", frame({ id: "e2", type: "conversation.renamed", occurredAt: "2026-10-12T12:00:00.000Z", title: "private title" } as never)],
+  ])("skips an unknown event type (%s) without exposing it and keeps delivering later events", async (_name, unknown) => {
+    const source = upstream([frame(heartbeat("e1")), unknown, frame(heartbeat("e3"))]);
+    const { handler } = gatewayWith(async () => source.response);
+    const output = await drain(await handler(requestWithCursor(), routeContext));
+    expect(framesOf(output)).toEqual([heartbeat("e1"), heartbeat("e3")]);
+    expect(output).not.toContain("private");
+    expect(output).not.toContain("e2");
+  });
+
+  it.each([
+    ["missing type", "id: e2\ndata: {\"id\":\"e2\",\"occurredAt\":\"2026-10-12T12:00:00.000Z\"}\n\n"],
+    ["non-string type", "id: e2\ndata: {\"id\":\"e2\",\"type\":7}\n\n"],
+    ["non-object payload", "id: e2\ndata: [\"heartbeat\"]\n\n"],
+  ])("closes the stream on a payload with %s", async (_name, bad) => {
+    const source = upstream([frame(heartbeat("e1")), bad, frame(heartbeat("e3"))], true);
+    const { handler } = gatewayWith(async () => source.response);
+    expect(framesOf(await drain(await handler(requestWithCursor(), routeContext)))).toEqual([heartbeat("e1")]);
+    expect(source.cancel).toHaveBeenCalledTimes(1);
   });
 
   it("closes the stream when one upstream frame exceeds the frame limit", async () => {
