@@ -144,6 +144,16 @@ describe("Conversation", () => {
     expect(keys[1]).toBe(keys[0]);
   });
 
+  it("explains that no conversation is available instead of silently disabling send without a thread source", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("must not fetch"); }));
+    render(<Conversation agentName="Hermes" capabilities={capabilities} />);
+    const status = screen.getByRole("status");
+    expect(status.textContent).toMatch(/Conversación no disponible en esta vista/u);
+    expect(status.textContent).toMatch(/no tiene un hilo de conversación asignado/u);
+    expect(screen.queryByRole("button", { name: /Enviar/u })).toBeNull();
+    expect(screen.queryByLabelText("Mensaje para Hermes")).toBeNull();
+  });
+
   it("retains the draft when validation or send fails", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ detail: "conflict" }, { status: 409 }));
     vi.stubGlobal("fetch", fetcher);

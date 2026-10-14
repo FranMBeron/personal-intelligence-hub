@@ -6,7 +6,6 @@ import { useState } from "react";
 import { Conversation } from "../../_components/conversation/conversation";
 
 export function AgentConversation({
-  agentId,
   agentName,
   capabilities,
 }: Readonly<{
@@ -35,7 +34,7 @@ export function AgentConversation({
       </button>
       {open ? (
         <div className="agent-conversation__panel">
-          <Conversation capabilities={capabilities} agentId={agentId} />
+          <Conversation capabilities={capabilities} agentName={agentName} />
         </div>
       ) : null}
     </div>

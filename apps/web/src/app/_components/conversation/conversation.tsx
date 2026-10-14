@@ -30,8 +30,11 @@ export function Conversation({
   conversationId?: string | null;
   agentName?: string;
   capabilities: HermesCapabilities | null;
+  /**
+   * Thread source. Send requires either a selected `conversationId` or `onResolveMain` (which resolves and persists the
+   * agent's main thread on first send). Without both, the component renders an explicit "no disponible" state.
+   */
   onResolveMain?: () => Promise<Conversation>;
-  agentId?: string;
   canSend?: boolean;
   client?: ConversationClient;
   unavailableState?: "not_configured" | "unavailable";
@@ -257,6 +260,13 @@ export function Conversation({
     </section>;
   }
 
+  if (conversationId === null && onResolveMain === undefined) {
+    return <section className="conversation conversation--unavailable surface">
+      <SourceState compact state="unavailable" title="Conversación no disponible en esta vista"
+        detail={`Esta vista no tiene un hilo de conversación asignado para ${agentName}. Abre la conversación desde el espacio del agente para escribir.`} />
+    </section>;
+  }
+
   return (
     <section className={`conversation surface ${state.messages.length === 0 ? "conversation--empty" : "conversation--active"}`} aria-labelledby={titleId}>
       <header className="conversation__header">
@@ -276,7 +286,7 @@ export function Conversation({
       {completionAnnouncement === "" ? null : <p className="sr-only" role="status">{completionAnnouncement}</p>}
       {operationError === null ? null : <p className="conversation__error" role="status">{operationError}</p>}
       <Composer agentName={agentName} capabilities={capabilities} text={text} submitting={submitting} attachments={attachments} voice={voice}
-        onTextChange={changeText} onAttachmentsChange={changeAttachments} onVoiceChange={changeVoice} onSubmit={() => void submit()} submitDisabled={!canSend || (conversationId === null && onResolveMain === undefined)} />
+        onTextChange={changeText} onAttachmentsChange={changeAttachments} onVoiceChange={changeVoice} onSubmit={() => void submit()} submitDisabled={!canSend} />
     </section>
   );
 }
