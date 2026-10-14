@@ -51,7 +51,7 @@ class FakeHermesGateway implements HermesGateway {
     idempotencyKey: string;
     body: SendMessageBody;
   }> = [];
-  readonly uploads: Array<{ file: File; kind: "attachment" | "voice" }> = [];
+  readonly uploads: Array<{ file: File; kind: "attachment" | "voice"; conversationId: string | undefined }> = [];
   failCapabilities = false;
   lastEventId: string | undefined;
 
@@ -70,8 +70,9 @@ class FakeHermesGateway implements HermesGateway {
     _context: RequestContext,
     file: File,
     kind: "attachment" | "voice",
+    conversationId?: string,
   ): Promise<UploadedMedia> {
-    this.uploads.push({ file, kind });
+    this.uploads.push({ file, kind, conversationId });
     return {
       reference: "opaque-upload-reference",
       kind: "attachment",
@@ -537,6 +538,80 @@ describe("Hermes BFF handlers", () => {
     await expect(response.json()).resolves.toMatchObject({
       reference: "opaque-upload-reference",
     });
+  });
+
+  const uploadRequest = (form: FormData, extra?: HeadersInit) =>
+    new Request("https://pih.example/api/ui/v1/hermes/uploads", {
+      method: "POST",
+      headers: authenticatedHeaders(extra),
+      body: form,
+    });
+  const imageForm = (entries: Array<[string, string | File]> = []) => {
+    const form = new FormData();
+    form.set("conversationId", "conversation-01");
+    form.set("media", new File(["1234"], "image.png", { type: "image/png" }));
+    for (const [key, value] of entries) {
+      if (value === "") form.delete(key);
+      else form.append(key, value);
+    }
+    return form;
+  };
+
+  it("binds the upload to the existing conversation it names", async () => {
+    const gateway = new FakeHermesGateway();
+    const response = await createUploadHandler(gateway, requestPolicy)(uploadRequest(imageForm([["kind", "attachment"]])));
+    expect(response.status).toBe(201);
+    expect(gateway.uploads).toEqual([expect.objectContaining({ kind: "attachment", conversationId: "conversation-01" })]);
+  });
+
+  it.each([
+    ["missing conversation", [["conversationId", ""]]],
+    ["voice kind", [["kind", "voice"]]],
+    ["document kind", [["kind", "document"]]],
+    ["repeated kind", [["kind", "attachment"], ["kind", "attachment"]]],
+    ["second media file", [["media", new File(["1234"], "second.png", { type: "image/png" })]]],
+    ["unexpected field", [["transcript", "private text"]]],
+  ] as Array<[string, Array<[string, string | File]>]>)("rejects an upload with %s before forwarding", async (_name, entries) => {
+    const gateway = new FakeHermesGateway();
+    const response = await createUploadHandler(gateway, requestPolicy)(uploadRequest(imageForm(entries)));
+    expect(response.status).toBe(422);
+    expect(gateway.uploads).toHaveLength(0);
+  });
+
+  it("rejects a document even when declared as an attachment", async () => {
+    const gateway = new FakeHermesGateway();
+    const form = imageForm([["media", ""]]);
+    form.set("media", new File(["%PDF"], "doc.pdf", { type: "application/pdf" }));
+    const response = await createUploadHandler(gateway, requestPolicy)(uploadRequest(form));
+    expect(response.status).toBe(415);
+    expect(gateway.uploads).toHaveLength(0);
+  });
+
+  it("bounds an undeclared (chunked) upload body and answers 413 without forwarding", async () => {
+    const gateway = new FakeHermesGateway();
+    const encoder = new TextEncoder();
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > 64) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(encoder.encode("x".repeat(1024)));
+      },
+    });
+    const response = await createUploadHandler(gateway, { ...requestPolicy, maxUploadBodyBytes: 4096 })(
+      new Request("https://pih.example/api/ui/v1/hermes/uploads", {
+        method: "POST",
+        headers: authenticatedHeaders({ "content-type": "multipart/form-data; boundary=fictional" }),
+        body,
+        duplex: "half",
+      } as RequestInit),
+    );
+    expect(response.status).toBe(413);
+    expect(pulls).toBeLessThan(64);
+    expect(gateway.uploads).toHaveLength(0);
   });
 
   it("serializes safe gateway problems", async () => {

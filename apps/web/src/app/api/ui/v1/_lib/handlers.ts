@@ -14,8 +14,7 @@ import { z, ZodError } from "zod";
 
 import type { HermesGateway } from "../../../../../server/ports/hermes-gateway";
 
-const ImageMimeTypeSchema = z.enum(["image/jpeg", "image/png", "image/webp"]);
-
+import { EVENT_CURSOR_PATTERN, normalizeHermesEventStream } from "./hermes-event-stream";
 import {
   failureResponse,
   jsonResponse,
@@ -34,6 +33,67 @@ import {
 } from "./request-guards";
 
 export type { RequestPolicy } from "./request-guards";
+
+const ImageMimeTypeSchema = z.enum(["image/jpeg", "image/png", "image/webp"]);
+const UPLOAD_FIELDS: ReadonlySet<string> = new Set(["conversationId", "kind", "media"]);
+
+const invalidUpload = (message: string): ZodError =>
+  new ZodError([{ code: "custom", path: ["media"], message }]);
+
+/** Reads at most `limit` bytes; returns null (after cancelling the body) when exceeded. */
+const readBoundedBody = async (request: Request, limit: number): Promise<Uint8Array<ArrayBuffer> | null> => {
+  if (request.body === null) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+};
+
+/** Strict upload envelope: one existing conversation, optional `kind=attachment`, one media file. */
+const parseUploadForm = async (request: Request, bytes: Uint8Array<ArrayBuffer>): Promise<{ conversationId: string; media: File }> => {
+  let form: FormData;
+  try {
+    form = await new Response(bytes, {
+      headers: { "content-type": request.headers.get("content-type") ?? "" },
+    }).formData();
+  } catch {
+    throw invalidUpload("Expected a multipart upload.");
+  }
+  for (const key of form.keys()) {
+    if (!UPLOAD_FIELDS.has(key)) throw invalidUpload("Unexpected upload field.");
+  }
+  const kinds = form.getAll("kind");
+  if (kinds.length > 1 || (kinds.length === 1 && kinds[0] !== "attachment")) {
+    throw invalidUpload("Only image attachments can be uploaded.");
+  }
+  const conversationIds = form.getAll("conversationId");
+  const mediaEntries = form.getAll("media");
+  const conversationId = conversationIds[0];
+  const media = mediaEntries[0];
+  if (
+    conversationIds.length !== 1 || typeof conversationId !== "string" || conversationId.trim() === "" ||
+    mediaEntries.length !== 1 || !(media instanceof File)
+  ) {
+    throw invalidUpload("Exactly one image file and an existing conversation are required.");
+  }
+  return { conversationId: parseResourceId(conversationId), media };
+};
 
 export const createCapabilitiesHandler = (
   gateway: HermesGateway | null,
@@ -165,13 +225,14 @@ export const createUploadHandler = (
     const availableGateway = requireGateway(request, authenticated.context, gateway, "Hermes");
     if (availableGateway instanceof Response) return availableGateway;
     try {
-      const form = await request.formData();
-      const mediaEntries = form.getAll("media");
-      const media = mediaEntries[0];
-      const conversationIdValue = form.get("conversationId");
-      if (mediaEntries.length !== 1 || !(media instanceof File) || typeof conversationIdValue !== "string" || conversationIdValue.trim() === "") {
-        throw new ZodError([{ code: "custom", path: ["media"], message: "Exactly one image file and an existing conversation are required." }]);
+      const bytes = await readBoundedBody(request, policy.maxUploadBodyBytes);
+      if (bytes === null) {
+        return problemResponse(problem(
+          request, authenticated.context, 413, "payload_too_large", "Payload too large",
+          "The upload request exceeds the configured byte limit.",
+        ));
       }
+      const { conversationId, media } = await parseUploadForm(request, bytes);
       const capabilities = HermesCapabilitiesSchema.parse(
         await availableGateway.capabilities(authenticated.context, request.signal),
       );
@@ -189,7 +250,7 @@ export const createUploadHandler = (
         ));
       }
       const value = await runAgentOperation(authenticated.context, policy, () =>
-        availableGateway.upload(authenticated.context, media, "attachment", parseResourceId(conversationIdValue), request.signal),
+        availableGateway.upload(authenticated.context, media, "attachment", conversationId, request.signal),
       );
       return jsonResponse(UploadedMediaSchema.parse(value), authenticated.context.requestId, 201);
     } catch (error) {
@@ -212,10 +273,19 @@ export const createEventsHandler = (
       const { conversationId: rawConversationId } = await routeContext.params;
       const conversationId = parseResourceId(rawConversationId);
       const lastEventId = request.headers.get("last-event-id") ?? undefined;
+      if (lastEventId !== undefined && !EVENT_CURSOR_PATTERN.test(lastEventId)) {
+        throw new ZodError([{ code: "custom", path: ["last-event-id"], message: "Invalid event cursor." }]);
+      }
       const upstream = await availableGateway.events(
         authenticated.context, conversationId, lastEventId, request.signal,
       );
-      return new Response(upstream.body, {
+      if (upstream.body === null) {
+        return problemResponse(problem(
+          request, authenticated.context, 503, "dependency_unavailable", "Dependency unavailable",
+          "The conversation event stream is temporarily unavailable.",
+        ));
+      }
+      return new Response(normalizeHermesEventStream(upstream.body), {
         status: 200,
         headers: {
           "cache-control": "no-store, no-cache, no-transform",
