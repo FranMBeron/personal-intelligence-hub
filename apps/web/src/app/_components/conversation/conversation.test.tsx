@@ -114,6 +114,36 @@ describe("Conversation", () => {
     await waitFor(() => expect((screen.getByLabelText("Mensaje para Research") as HTMLTextAreaElement).value).toBe("Borrador de A"));
   });
 
+  it("reuses the idempotency key when a send of unknown outcome is interrupted by a thread switch", async () => {
+    const keys: string[] = [];
+    const fetcher = vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const path = String(input);
+      if (path.endsWith("/messages?limit=50")) return Promise.resolve(Response.json({
+        items: [], pageInfo: { nextCursor: null, hasNextPage: false }, streamCursor: "0",
+      }));
+      if (path.endsWith("/thread-a/messages") && init?.method === "POST") {
+        keys.push(new Headers(init.headers).get("idempotency-key") ?? "missing");
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+        });
+      }
+      return Promise.reject(new Error(`Unexpected request ${path}`));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const props = { agentName: "Research", capabilities, onResolveMain: async () => { throw new Error("unused"); } };
+    const view = render(<Conversation {...props} conversationId="thread-a" />);
+    fireEvent.change(screen.getByLabelText("Mensaje para Research"), { target: { value: "Una sola vez" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Conversación con Research" }));
+    await waitFor(() => expect(keys).toHaveLength(1));
+    view.rerender(<Conversation {...props} conversationId="thread-b" />);
+    view.rerender(<Conversation {...props} conversationId="thread-a" />);
+    await waitFor(() => expect((screen.getByLabelText("Mensaje para Research") as HTMLTextAreaElement).value).toBe("Una sola vez"));
+    await waitFor(() => expect((screen.getByRole("button", { name: /Enviar/u }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.submit(screen.getByRole("form", { name: "Conversación con Research" }));
+    await waitFor(() => expect(keys).toHaveLength(2));
+    expect(keys[1]).toBe(keys[0]);
+  });
+
   it("retains the draft when validation or send fails", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ detail: "conflict" }, { status: 409 }));
     vi.stubGlobal("fetch", fetcher);

@@ -11,6 +11,18 @@ import { subscribeToConversationEvents } from "./event-stream";
 import { ConversationClient } from "./conversation-client";
 import { conversationReducer, initialConversationState, type ConversationMessage } from "./state";
 
+type PendingSend = {
+  readonly idempotencyKey: string;
+  readonly text: string;
+  readonly attachments: readonly File[];
+  readonly voice: File | null;
+  parts?: MessagePart[];
+};
+
+const isSameDraft = (pending: PendingSend, text: string, attachments: readonly File[], voice: File | null): boolean =>
+  pending.text === text && pending.voice === voice && pending.attachments.length === attachments.length
+  && pending.attachments.every((file, index) => file === attachments[index]);
+
 export function Conversation({
   conversationId = null, agentName = "Hermes", capabilities, onResolveMain, client: suppliedClient, canSend = true,
   unavailableState = "not_configured",
@@ -43,6 +55,8 @@ export function Conversation({
   const previousId = useRef(conversationId);
   const sendController = useRef<AbortController | null>(null);
   const drafts = useRef(new Map<string, { text: string; attachments: readonly File[]; voice: File | null }>());
+  // Sends whose outcome is unknown (interrupted or failed), keyed by thread; resending the same draft reuses the idempotency key and uploads.
+  const pendingSends = useRef(new Map<string, PendingSend>());
   const draftKey = conversationId ?? "__main__";
 
   activeId.current = conversationId;
@@ -150,8 +164,6 @@ export function Conversation({
     sendController.current?.abort();
     sendController.current = controller;
     let targetGeneration = generation.current;
-    const idempotencyKey = crypto.randomUUID();
-    const localMessageId = crypto.randomUUID();
     let optimistic: ConversationMessage | undefined;
     let targetId = conversationId;
     const isCurrent = () => !controller.signal.aborted && activeId.current === targetId && generation.current === targetGeneration;
@@ -173,16 +185,28 @@ export function Conversation({
         }
       }
       if (!isCurrent()) return;
-      const uploadedAttachments = await Promise.all(attachments.map((file) => client.upload(targetId!, file, controller.signal)));
-      if (!isCurrent()) return;
-      const uploadedVoice = voice === null ? null : await client.upload(targetId!, voice, controller.signal);
-      if (!isCurrent()) return;
-      const parts: MessagePart[] = [];
-      if (text.trim() !== "") parts.push({ kind: "text", text: text.trim() });
-      parts.push(...uploadedAttachments.map((media) => ({
-        kind: "attachment" as const, reference: media.reference, name: media.name, mimeType: media.mimeType, size: media.size,
-      })));
-      if (uploadedVoice !== null) parts.push({ kind: "voice", reference: uploadedVoice.reference, mimeType: uploadedVoice.mimeType, size: uploadedVoice.size });
+      const previous = pendingSends.current.get(targetId);
+      const pending: PendingSend = previous !== undefined && isSameDraft(previous, text.trim(), attachments, voice)
+        ? previous
+        : { idempotencyKey: crypto.randomUUID(), text: text.trim(), attachments, voice };
+      pendingSends.current.set(targetId, pending);
+      const { idempotencyKey } = pending;
+      const localMessageId = crypto.randomUUID();
+      let parts = pending.parts;
+      if (parts === undefined) {
+        const uploadedAttachments = await Promise.all(attachments.map((file) => client.upload(targetId!, file, controller.signal)));
+        if (!isCurrent()) return;
+        const uploadedVoice = voice === null ? null : await client.upload(targetId!, voice, controller.signal);
+        if (!isCurrent()) return;
+        const built: MessagePart[] = [];
+        if (text.trim() !== "") built.push({ kind: "text", text: text.trim() });
+        built.push(...uploadedAttachments.map((media) => ({
+          kind: "attachment" as const, reference: media.reference, name: media.name, mimeType: media.mimeType, size: media.size,
+        })));
+        if (uploadedVoice !== null) built.push({ kind: "voice", reference: uploadedVoice.reference, mimeType: uploadedVoice.mimeType, size: uploadedVoice.size });
+        parts = built;
+        pending.parts = built;
+      }
       optimistic = {
         id: localMessageId, conversationId: targetId, role: "user", parts,
         deliveryState: "sending", createdAt: new Date().toISOString(), idempotencyKey,
@@ -190,6 +214,7 @@ export function Conversation({
       dispatch({ type: "message.submitted", message: optimistic, idempotencyKey });
       if (!isCurrent()) return;
       await sendExisting(targetId, optimistic, idempotencyKey, controller.signal);
+      if (pendingSends.current.get(targetId) === pending) pendingSends.current.delete(targetId);
       if (!isCurrent()) return;
       const emptyDraft = { text: "", attachments: [], voice: null };
       drafts.current.set(targetId, emptyDraft);
