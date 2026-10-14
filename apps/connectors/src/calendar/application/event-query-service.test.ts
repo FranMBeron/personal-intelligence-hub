@@ -82,6 +82,44 @@ describe("Calendar event query service", () => {
     expect(service.retainedSnapshotCount()).toBe(0);
   });
 
+  it("reuses one cursor per page so replaying a cursor never mints new ones", async () => {
+    const { google, service } = await setup();
+    google.pages.set("primary@example.test", chunk(manyEvents(230), 250));
+    const first = await service.list(humanPrincipal(), query);
+    const cursor = first.pageInfo.nextCursor!;
+    const nextCursors = new Set<string | undefined>();
+    for (let replay = 0; replay < 10_000; replay += 1) {
+      nextCursors.add((await service.list(humanPrincipal(), { ...query, cursor })).pageInfo.nextCursor);
+    }
+    expect(nextCursors.size).toBe(1);
+    // 230 items have exactly two follow-up pages, so at most two cursors can ever exist.
+    expect(service.retainedCursorCount()).toBe(2);
+    await expect(service.list(humanPrincipal(), query)).resolves.toMatchObject({ pageInfo: { nextCursor: expect.any(String) } });
+    expect(service.retainedCursorCount()).toBeLessThanOrEqual(2);
+  });
+
+  it("bounds retained snapshot bytes, evicting the oldest and refusing a single oversized result", async () => {
+    const { google, reader, clock } = await setup();
+    const heavy = manyEvents(150).map((event) => ({ ...event, description: "d".repeat(1_000) }));
+    google.pages.set("primary@example.test", chunk(heavy, 250));
+    const service = new CalendarEventQueryServiceImpl({
+      reader, clock: clock.now, limits: { maxSnapshotBytes: 300_000, maxTotalSnapshotBytes: 400_000 },
+    });
+    const windows = ["2026-11-01T00:00:00.000Z", "2026-11-02T00:00:00.000Z", "2026-11-03T00:00:00.000Z"];
+    const cursors: string[] = [];
+    for (const to of windows) cursors.push((await service.list(humanPrincipal(), { ...query, to })).pageInfo.nextCursor!);
+    expect(service.retainedSnapshotBytes()).toBeGreaterThan(150_000);
+    expect(service.retainedSnapshotBytes()).toBeLessThanOrEqual(400_000);
+    await expect(service.list(humanPrincipal(), { ...query, to: windows[0]!, cursor: cursors[0]! })).rejects.toThrow("calendar_cursor_expired");
+    await expect(service.list(humanPrincipal(), { ...query, to: windows[2]!, cursor: cursors[2]! })).resolves.toMatchObject({ items: expect.any(Array) });
+
+    const small = new CalendarEventQueryServiceImpl({
+      reader, clock: clock.now, limits: { maxSnapshotBytes: 100_000, maxTotalSnapshotBytes: 400_000 },
+    });
+    await expect(small.list(humanPrincipal(), query)).rejects.toThrow("calendar_result_too_large");
+    expect(small.retainedSnapshotBytes()).toBe(0);
+  });
+
   it("stops at the 5,001st item without requesting the next page or retaining a snapshot", async () => {
     const { db, google, service } = await setup();
     const pages = chunk(manyEvents(5_250), 250);

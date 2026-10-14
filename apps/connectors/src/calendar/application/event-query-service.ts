@@ -27,15 +27,23 @@ const PAGE_SIZE = 100;
 const SNAPSHOT_TTL_MS = 60_000;
 const MAX_SNAPSHOTS = 64;
 const MAX_SNAPSHOTS_PER_ACTOR = 4;
+/** Approximate serialized size bounds: one snapshot, and all snapshots together. */
+const MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024;
+const MAX_TOTAL_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 
 type Snapshot = Readonly<{
   actorId: string;
   filterHash: string;
   items: readonly CalendarEventDetail[];
   expiresAt: number;
+  /** Approximate size: UTF-8 length of the serialized items. */
+  bytes: number;
+  /** One cursor per page offset, reused on replay so cursors never outnumber pages. */
+  cursorsByOffset: Map<number, string>;
 }>;
 type CursorEntry = Readonly<{ snapshotKey: string; snapshot: Snapshot; offset: number }>;
-type Options = Readonly<{ reader: CalendarEventReader; clock: () => Date }>;
+type Limits = Readonly<{ maxSnapshotBytes: number; maxTotalSnapshotBytes: number }>;
+type Options = Readonly<{ reader: CalendarEventReader; clock: () => Date; limits?: Partial<Limits> }>;
 
 const fail = (code: string): never => { throw new Error(code); };
 const canonicalFilterHash = (window: { from: string; to: string; timeZone: string }): string =>
@@ -44,17 +52,24 @@ const canonicalFilterHash = (window: { from: string; to: string; timeZone: strin
 /**
  * Full event reads. A first page materializes only safe CalendarEventDetail values into a
  * 60-second in-memory snapshot keyed by actor and canonical filter; cursors are random, opaque
- * and address an offset inside that same snapshot. Nothing survives a restart.
+ * and address an offset inside that same snapshot. Nothing survives a restart. Memory is bounded
+ * by snapshot count, approximate snapshot bytes, and at most one cursor per snapshot page.
  */
 export class CalendarEventQueryServiceImpl implements EventQueryService {
   readonly #reader: CalendarEventReader;
   readonly #clock: () => Date;
   readonly #snapshots = new Map<string, Snapshot>();
   readonly #cursors = new Map<string, CursorEntry>();
+  readonly #limits: Limits;
+  #totalBytes = 0;
 
   constructor(options: Options) {
     this.#reader = options.reader;
     this.#clock = options.clock;
+    this.#limits = {
+      maxSnapshotBytes: options.limits?.maxSnapshotBytes ?? MAX_SNAPSHOT_BYTES,
+      maxTotalSnapshotBytes: options.limits?.maxTotalSnapshotBytes ?? MAX_TOTAL_SNAPSHOT_BYTES,
+    };
   }
 
   async list(
@@ -77,9 +92,13 @@ export class CalendarEventQueryServiceImpl implements EventQueryService {
     const items = await this.#reader.collect(principal.actorId, window, EVENTS_MAX_ITEMS);
     const snapshotKey = `${principal.actorId}\0${filterHash}`;
     this.#dropSnapshot(snapshotKey);
+    // Validated once here; pages served from the snapshot are slices of these already-safe values.
+    const frozen = Object.freeze([...CalendarEventListSchema.parse({ items, pageInfo: {} }).items]);
+    const bytes = items.length > PAGE_SIZE ? Buffer.byteLength(JSON.stringify(frozen), "utf8") : 0;
+    if (bytes > this.#limits.maxSnapshotBytes) return fail("calendar_result_too_large");
     const snapshot: Snapshot = {
-      actorId: principal.actorId, filterHash, items: Object.freeze([...items]),
-      expiresAt: this.#clock().getTime() + SNAPSHOT_TTL_MS,
+      actorId: principal.actorId, filterHash, items: frozen,
+      expiresAt: this.#clock().getTime() + SNAPSHOT_TTL_MS, bytes, cursorsByOffset: new Map(),
     };
     if (items.length > PAGE_SIZE) this.#retain(snapshotKey, snapshot);
     return this.#page(snapshotKey, snapshot, 0);
@@ -97,29 +116,50 @@ export class CalendarEventQueryServiceImpl implements EventQueryService {
     return this.#snapshots.size;
   }
 
+  /** Number of live cursors; exposed for bounded-memory assertions. */
+  retainedCursorCount(): number {
+    this.#evictExpired();
+    return this.#cursors.size;
+  }
+
+  /** Approximate bytes held by retained snapshots; exposed for bounded-memory assertions. */
+  retainedSnapshotBytes(): number {
+    this.#evictExpired();
+    return this.#totalBytes;
+  }
+
   #page(snapshotKey: string, snapshot: Snapshot, offset: number): CalendarEventList {
     const items = snapshot.items.slice(offset, offset + PAGE_SIZE);
     const nextOffset = offset + PAGE_SIZE;
     let nextCursor: string | undefined;
     if (nextOffset < snapshot.items.length && this.#snapshots.get(snapshotKey) === snapshot) {
-      nextCursor = randomBytes(32).toString("base64url");
-      this.#cursors.set(nextCursor, { snapshotKey, snapshot, offset: nextOffset });
+      nextCursor = snapshot.cursorsByOffset.get(nextOffset);
+      if (nextCursor === undefined) {
+        nextCursor = randomBytes(32).toString("base64url");
+        snapshot.cursorsByOffset.set(nextOffset, nextCursor);
+        this.#cursors.set(nextCursor, { snapshotKey, snapshot, offset: nextOffset });
+      }
     }
-    return CalendarEventListSchema.parse({ items, pageInfo: nextCursor === undefined ? {} : { nextCursor } });
+    return { items, pageInfo: nextCursor === undefined ? {} : { nextCursor } };
   }
 
   #retain(snapshotKey: string, snapshot: Snapshot): void {
     const owned = [...this.#snapshots.entries()].filter(([, value]) => value.actorId === snapshot.actorId);
     if (owned.length >= MAX_SNAPSHOTS_PER_ACTOR) this.#dropSnapshot(owned[0]![0]);
     if (this.#snapshots.size >= MAX_SNAPSHOTS) this.#dropSnapshot(this.#snapshots.keys().next().value!);
+    while (this.#snapshots.size > 0 && this.#totalBytes + snapshot.bytes > this.#limits.maxTotalSnapshotBytes) {
+      this.#dropSnapshot(this.#snapshots.keys().next().value!);
+    }
     this.#snapshots.set(snapshotKey, snapshot);
+    this.#totalBytes += snapshot.bytes;
   }
 
   #dropSnapshot(snapshotKey: string): void {
     const snapshot = this.#snapshots.get(snapshotKey);
     if (snapshot === undefined) return;
     this.#snapshots.delete(snapshotKey);
-    for (const [cursor, entry] of this.#cursors) if (entry.snapshot === snapshot) this.#cursors.delete(cursor);
+    this.#totalBytes -= snapshot.bytes;
+    for (const cursor of snapshot.cursorsByOffset.values()) this.#cursors.delete(cursor);
   }
 
   #evictExpired(): void {
