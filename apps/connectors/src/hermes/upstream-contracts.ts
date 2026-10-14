@@ -68,3 +68,9 @@ export type HermesTranscriptMessage = Readonly<{
   content: readonly Readonly<{ type: "text"; text: string }>[];
   created_at: string;
 }>;
+
+/** Minimal envelope of one upstream run SSE payload; only `event` and `delta` are ever read. */
+export const UpstreamRunEventSchema = z.object({
+  event: z.string().min(1).max(120),
+  delta: z.unknown().optional(),
+}).passthrough();
