@@ -1,7 +1,6 @@
 import { inspect } from "node:util";
 
-import type { HermesConfig, HermesProfile } from "./config.js";
-import { HermesProfileCredential } from "./config.js";
+import type { HermesConfig, HermesProfile, HermesProfileCredential } from "./config.js";
 
 export class HermesProfileRegistry {
   readonly config: HermesConfig;

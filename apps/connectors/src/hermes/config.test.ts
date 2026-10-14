@@ -4,7 +4,6 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { findHermesRepositoryRoot, loadHermesConfig } from "./config.js";
-import { HermesProfileRegistry } from "./profile-registry.js";
 
 const orchestratorKey = "fictional-orchestrator-key-32-bytes";
 const specialistKey = "fictional-specialist-key-32-bytes";
