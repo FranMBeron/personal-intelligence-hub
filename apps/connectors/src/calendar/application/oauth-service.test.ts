@@ -119,12 +119,10 @@ const makeService = (
     bootstrapPrimary: vi.fn(async () => ({ state: "requires_attention", checkedAt: now.toISOString(), stale: false, canRead: false, canProposeChanges: false, primaryCalendarConfigured: false, additionalCalendarCount: 0, safeReasonCode: "calendar_selection_required" } satisfies CalendarSourceStatus)),
     ...overrides.bootstrap,
   };
-  const getAccessToken = overrides.tokenProvider?.getAccessToken ?? vi.fn(async () => "fictional-access-token");
   const tokenProvider: GoogleAccessTokenProvider = {
-    getAccessToken,
     getAuthorizedAccessToken: vi.fn(async (id: string) => {
       const current = await database.read((db) => repository.getConnection(db, id));
-      return { accessToken: await getAccessToken(id), authorizationId: current?.authorizationId ?? "missing-authorization" };
+      return { accessToken: "fictional-access-token", authorizationId: current?.authorizationId ?? "missing-authorization" };
     }),
     invalidate: vi.fn(),
     ...overrides.tokenProvider,
@@ -367,7 +365,7 @@ describe("Calendar OAuth service", () => {
       throw new Error("calendar_provider_temporarily_unavailable");
     };
     const { service } = makeService(database, {
-      tokenProvider: { getAccessToken: vi.fn(replaceThenFail), getAuthorizedAccessToken: vi.fn(replaceThenFail) },
+      tokenProvider: { getAuthorizedAccessToken: vi.fn(replaceThenFail) },
     });
     await service.bootstrap(principal());
     expect(replaced).not.toBeNull();
@@ -384,7 +382,7 @@ describe("Calendar OAuth service", () => {
       lastSuccessAt: now.toISOString(),
     }));
     const { service } = makeService(database, {
-      tokenProvider: { getAccessToken: vi.fn(async () => { throw new Error("calendar_reauthorization_required"); }) },
+      tokenProvider: { getAuthorizedAccessToken: vi.fn(async () => { throw new Error("calendar_reauthorization_required"); }) },
     });
     await expect(service.bootstrap(principal())).resolves.toMatchObject({
       state: "requires_reauthorization",

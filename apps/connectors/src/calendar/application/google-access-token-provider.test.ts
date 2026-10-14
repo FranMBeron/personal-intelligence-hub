@@ -8,7 +8,7 @@ import { openConnectorDatabase, type ConnectorDatabase } from "../../foundation/
 import { createCalendarRepository } from "../storage/calendar-repository.js";
 import type { CalendarConnectionInput } from "../storage/records.js";
 import type { GoogleOAuthPort, GoogleTokenGrant } from "../ports/google-oauth.js";
-import { GoogleAccessTokenProviderService } from "./google-access-token-provider.js";
+import { GoogleAccessTokenProviderService, type GoogleAccessTokenProvider } from "./google-access-token-provider.js";
 
 const actorId = "actor-fictional-01";
 const now = new Date("2026-10-12T12:00:00.000Z");
@@ -70,6 +70,17 @@ afterEach(async () => {
 });
 
 describe("Google access token provider", () => {
+  it("exposes tokens only together with their issuing authorization", async () => {
+    currentTime = now;
+    const database = await createDatabase();
+    const oauth: GoogleOAuthPort = { exchangeAuthorizationCode: vi.fn(), refreshAccessToken: vi.fn(), revokeToken: vi.fn() };
+    const provider: GoogleAccessTokenProvider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
+    // @ts-expect-error getAccessToken was removed; callers must use getAuthorizedAccessToken.
+    const legacy: unknown = provider.getAccessToken;
+    expect(legacy).toBeUndefined();
+    expect("getAccessToken" in provider).toBe(false);
+  });
+
   it("caches per actor and persists encrypted refresh-token rotation", async () => {
     currentTime = now;
     const database = await createDatabase();
@@ -80,8 +91,8 @@ describe("Google access token provider", () => {
       revokeToken: vi.fn(),
     };
     const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
-    await expect(provider.getAccessToken(actorId)).resolves.toBe("fictional-access-token");
-    await expect(provider.getAccessToken(actorId)).resolves.toBe("fictional-access-token");
+    await expect(provider.getAuthorizedAccessToken(actorId)).resolves.toMatchObject({ accessToken: "fictional-access-token" });
+    await expect(provider.getAuthorizedAccessToken(actorId)).resolves.toMatchObject({ accessToken: "fictional-access-token" });
     expect(oauth.refreshAccessToken).toHaveBeenCalledTimes(1);
     const saved = await database.read((db) => repositories.getConnection(db, actorId));
     expect(openCalendarValue(saved!.refreshTokenCiphertext, `calendar_connections:${actorId}:refresh`, keyring)).toBe("fictional-rotated-refresh-token");
@@ -99,10 +110,10 @@ describe("Google access token provider", () => {
       revokeToken: vi.fn(),
     };
     const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
-    const first = provider.getAccessToken(actorId);
-    const second = provider.getAccessToken(actorId);
+    const first = provider.getAuthorizedAccessToken(actorId);
+    const second = provider.getAuthorizedAccessToken(actorId);
     release(grant());
-    await expect(Promise.all([first, second])).resolves.toEqual(["fictional-access-token", "fictional-access-token"]);
+    await expect(Promise.all([first, second])).resolves.toMatchObject([{ accessToken: "fictional-access-token" }, { accessToken: "fictional-access-token" }]);
     expect(oauth.refreshAccessToken).toHaveBeenCalledTimes(1);
   });
 
@@ -116,9 +127,9 @@ describe("Google access token provider", () => {
       revokeToken: vi.fn(),
     };
     const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
-    await provider.getAccessToken(actorId);
+    await provider.getAuthorizedAccessToken(actorId);
     currentTime = new Date(now.getTime() + 31_000);
-    await provider.getAccessToken(actorId);
+    await provider.getAuthorizedAccessToken(actorId);
     expect(oauth.refreshAccessToken).toHaveBeenCalledTimes(2);
   });
 
@@ -132,7 +143,7 @@ describe("Google access token provider", () => {
       revokeToken: vi.fn(),
     };
     const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
-    await expect(provider.getAccessToken(actorId)).rejects.toThrow("calendar_reauthorization_required");
+    await expect(provider.getAuthorizedAccessToken(actorId)).rejects.toThrow("calendar_reauthorization_required");
     await expect(database.read((db) => repositories.getConnection(db, actorId)))
       .resolves.toMatchObject({ state: "requires_reauthorization", safeReasonCode: "reauthorization_required" });
   });
@@ -147,7 +158,7 @@ describe("Google access token provider", () => {
       revokeToken: vi.fn(),
     };
     const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
-    await expect(provider.getAccessToken(actorId)).resolves.toBe("fictional-access-token");
+    await expect(provider.getAuthorizedAccessToken(actorId)).resolves.toMatchObject({ accessToken: "fictional-access-token" });
     await expect(database.read((db) => repositories.getConnection(db, actorId)))
       .resolves.toMatchObject({ grantedScopes: [...requiredScopes] });
   });
@@ -162,7 +173,7 @@ describe("Google access token provider", () => {
       revokeToken: vi.fn(),
     };
     const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
-    await provider.getAccessToken(actorId);
+    await provider.getAuthorizedAccessToken(actorId);
     const saved = await database.read((db) => repositories.getConnection(db, actorId));
     expect(openCalendarValue(saved!.refreshTokenCiphertext, `calendar_connections:${actorId}:refresh`, keyring)).toBe("fictional-refresh-token");
   });
@@ -177,7 +188,7 @@ describe("Google access token provider", () => {
       revokeToken: vi.fn(),
     };
     const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
-    await expect(provider.getAccessToken(actorId)).rejects.toThrow("calendar_reauthorization_required");
+    await expect(provider.getAuthorizedAccessToken(actorId)).rejects.toThrow("calendar_reauthorization_required");
     await expect(database.read((db) => repositories.getConnection(db, actorId)))
       .resolves.toMatchObject({ state: "requires_reauthorization", safeReasonCode: "reauthorization_required" });
   });
@@ -196,7 +207,7 @@ describe("Google access token provider", () => {
       revokeToken: vi.fn(),
     };
     const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
-    const pending = provider.getAccessToken(actorId);
+    const pending = provider.getAuthorizedAccessToken(actorId);
     await started;
     provider.invalidate(actorId);
     await database.transaction((db) => repositories.deleteConnection(db, actorId));
@@ -219,7 +230,7 @@ describe("Google access token provider", () => {
       revokeToken: vi.fn(),
     };
     const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
-    const pending = provider.getAccessToken(actorId);
+    const pending = provider.getAuthorizedAccessToken(actorId);
     await started;
     const replacement = connection({
       refreshTokenCiphertext: sealCalendarValue("fictional-callback-refresh-token", `calendar_connections:${actorId}:refresh`, keyring),
@@ -247,7 +258,7 @@ describe("Google access token provider", () => {
       revokeToken: vi.fn(),
     };
     const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
-    await expect(provider.getAccessToken(actorId)).rejects.toThrow("calendar_access_token_invalidated");
+    await expect(provider.getAuthorizedAccessToken(actorId)).rejects.toThrow("calendar_access_token_invalidated");
     const saved = await database.read((db) => repositories.getConnection(db, actorId));
     expect(openCalendarValue(saved!.refreshTokenCiphertext, `calendar_connections:${actorId}:refresh`, keyring))
       .toBe("fictional-refresh-token");
@@ -283,9 +294,9 @@ describe("Google access token provider", () => {
       revokeToken: vi.fn(),
     };
     const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
-    await provider.getAccessToken(actorId);
+    await provider.getAuthorizedAccessToken(actorId);
     provider.invalidate(actorId);
-    await provider.getAccessToken(actorId);
+    await provider.getAuthorizedAccessToken(actorId);
     expect(oauth.refreshAccessToken).toHaveBeenCalledTimes(2);
   });
 });

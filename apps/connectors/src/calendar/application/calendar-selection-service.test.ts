@@ -67,13 +67,10 @@ const bootstrapInput = async (db: ConnectorDatabase) => ({
   actorId, accessToken: "fictional-access-token", authorizationId: await currentAuthorizationId(db), requestId: "request-fictional",
 });
 const makeService = (db: ConnectorDatabase, google = mockGoogle(), tokenOverrides: Partial<GoogleAccessTokenProvider> = {}) => {
-  const getAccessToken = tokenOverrides.getAccessToken ?? vi.fn(async () => "fictional-access-token");
   const tokens: GoogleAccessTokenProvider = {
-    getAccessToken,
-    getAuthorizedAccessToken: vi.fn(async (id: string) => {
-      const authorizationId = await currentAuthorizationId(db, id);
-      return { accessToken: await getAccessToken(id), authorizationId };
-    }),
+    getAuthorizedAccessToken: vi.fn(async (id: string) => ({
+      accessToken: "fictional-access-token", authorizationId: await currentAuthorizationId(db, id),
+    })),
     invalidate: vi.fn(),
     ...tokenOverrides,
   };
@@ -185,7 +182,6 @@ describe("Calendar selection service", () => {
       return { accessToken: "fictional-old-access-token", authorizationId: current!.authorizationId };
     };
     const tokens: GoogleAccessTokenProvider = {
-      getAccessToken: vi.fn(async () => (await issueOldToken()).accessToken),
       getAuthorizedAccessToken: vi.fn(issueOldToken),
       invalidate: vi.fn(),
     };
@@ -213,7 +209,6 @@ describe("Calendar selection service", () => {
     };
     const tokens = {
       getAuthorizedAccessToken: vi.fn(issueOldToken),
-      getAccessToken: vi.fn(async () => (await issueOldToken()).accessToken),
       invalidate: vi.fn(),
     };
     const service = new CalendarSelectionServiceImpl({ database: db, repository, tokens, google, keyring, clock });
@@ -350,7 +345,7 @@ describe("Calendar selection service", () => {
     const db = await openDb();
     await seedConnection(db);
     const { service } = makeService(db, mockGoogle(), {
-      getAccessToken: vi.fn(async () => { throw new Error("calendar_reauthorization_required"); }),
+      getAuthorizedAccessToken: vi.fn(async () => { throw new Error("calendar_reauthorization_required"); }),
     });
     await expect(service.discover(principal())).rejects.toThrow("calendar_reauthorization_required");
     const connection = await db.read((handle) => repository.getConnection(handle, actorId));

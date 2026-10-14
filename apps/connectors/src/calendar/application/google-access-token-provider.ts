@@ -7,7 +7,6 @@ import type { CalendarConnectionRecord } from "../storage/records.js";
 export type AuthorizedAccessToken = Readonly<{ accessToken: string; authorizationId: string }>;
 
 export interface GoogleAccessTokenProvider {
-  getAccessToken(actorId: string): Promise<string>;
   /** Returns an access token together with the authorization that issued it, for compare-and-swap writes. */
   getAuthorizedAccessToken(actorId: string): Promise<AuthorizedAccessToken>;
   invalidate(actorId: string): void;
@@ -56,10 +55,6 @@ export class GoogleAccessTokenProviderService implements GoogleAccessTokenProvid
     const skew = options.expirySkewSeconds ?? 60;
     if (!Number.isInteger(skew) || skew < 0 || skew > 600) fail("calendar_token_cache_skew_invalid");
     this.#expirySkewMs = skew * 1000;
-  }
-
-  async getAccessToken(actorId: string): Promise<string> {
-    return (await this.getAuthorizedAccessToken(actorId)).accessToken;
   }
 
   getAuthorizedAccessToken(actorId: string): Promise<AuthorizedAccessToken> {
