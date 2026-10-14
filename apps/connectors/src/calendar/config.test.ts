@@ -28,6 +28,7 @@ const foundationEnvironment = (): Record<string, string> => ({
     serviceId, serviceToken: `fictional-token-${serviceId}-012345678901234567890123`,
     delegatedIssuer: `https://issuer.example.test/${serviceId}`,
     delegatedKey: bytes(3), actorTypes: [actorType], maxScopes,
+    ...(actorType === "agent" ? { boundActorId: "11111111-1111-4111-8111-111111111111" } : {}),
   }))),
   DEFAULT_TIME_ZONE: "UTC", LOG_LEVEL: "info",
 });

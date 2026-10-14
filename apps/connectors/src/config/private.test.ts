@@ -66,7 +66,10 @@ type CredentialFixture = {
   delegatedKey: string;
   actorTypes: ActorType[];
   maxScopes: ConnectorScope[];
+  boundActorId?: string;
 };
+
+const FICTIONAL_OWNER_ACTOR_ID = "11111111-1111-4111-8111-111111111111";
 
 const fictionalCredentialEnvironment = (): CredentialFixture[] =>
   SERVICE_IDS.map((serviceId, index) => ({
@@ -77,6 +80,11 @@ const fictionalCredentialEnvironment = (): CredentialFixture[] =>
     delegatedKey: Buffer.alloc(32, index + 1).toString("base64url"),
     actorTypes: [...SERVICE_CEILINGS[serviceId].actorTypes],
     maxScopes: [...SERVICE_CEILINGS[serviceId].scopes],
+    ...((SERVICE_CEILINGS[serviceId].actorTypes as readonly ActorType[]).includes(
+      "agent",
+    )
+      ? { boundActorId: FICTIONAL_OWNER_ACTOR_ID }
+      : {}),
   }));
 
 const validEnvironment = (
@@ -207,6 +215,66 @@ describe("private connector configuration", () => {
       host: "127.0.0.1",
       port: 0,
     });
+  });
+
+  it("binds each agent-capable service credential to one owner actor", () => {
+    const config = loadConnectorsConfig(validEnvironment());
+    const byService = new Map(
+      config.serviceCredentials.map((credential) => [
+        credential.serviceId,
+        credential,
+      ]),
+    );
+
+    expect(byService.get("hermes-central")?.boundActorId).toBe(
+      FICTIONAL_OWNER_ACTOR_ID,
+    );
+    expect(byService.get("pih-web")?.boundActorId).toBeUndefined();
+  });
+
+  it.each([
+    [
+      "an agent-capable credential without a bound actor",
+      (credential: CredentialFixture): CredentialFixture => {
+        const { boundActorId: _omitted, ...unbound } = credential;
+        return unbound;
+      },
+      "hermes-central",
+    ],
+    [
+      "an agent-capable credential bound to a non-UUID actor",
+      (credential: CredentialFixture): CredentialFixture => ({
+        ...credential,
+        boundActorId: "not-a-uuid",
+      }),
+      "hermes-central",
+    ],
+    [
+      "a human-only credential with a bound actor",
+      (credential: CredentialFixture): CredentialFixture => ({
+        ...credential,
+        boundActorId: FICTIONAL_OWNER_ACTOR_ID,
+      }),
+      "pih-web",
+    ],
+    [
+      "a service-only credential with a bound actor",
+      (credential: CredentialFixture): CredentialFixture => ({
+        ...credential,
+        boundActorId: FICTIONAL_OWNER_ACTOR_ID,
+      }),
+      "telegram-gateway",
+    ],
+  ] as const)("rejects %s", (_description, mutate, serviceId) => {
+    expect(() =>
+      loadConnectorsConfig(
+        environmentWithCredentials(
+          fictionalCredentialEnvironment().map((credential) =>
+            credential.serviceId === serviceId ? mutate(credential) : credential,
+          ),
+        ),
+      ),
+    ).toThrow();
   });
 
   it("rejects duplicate tokens, duplicate issuers, and policy escalation", () => {

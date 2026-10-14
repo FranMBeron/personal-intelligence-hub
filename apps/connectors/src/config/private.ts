@@ -8,6 +8,7 @@ import {
   DelegatedJwtKeySchema,
   ConnectorScopeSchema,
   ConnectorServiceIdSchema,
+  UuidSchema,
 } from "@personal-intelligence-hub/contracts";
 import { posix } from "node:path";
 import { z } from "zod";
@@ -24,6 +25,9 @@ export type ServiceCredentialPolicy = Readonly<{
   delegatedKey: Uint8Array;
   actorTypes: readonly ("human" | "agent" | "service")[];
   maxScopes: readonly ConnectorScope[];
+  // Agent-capable credentials act for exactly one owner actor. Present when
+  // actorTypes includes "agent"; delegated principals must carry this actorId.
+  boundActorId?: string;
 }>;
 
 // Provider packages declaration-merge their optional runtime configuration.
@@ -118,6 +122,7 @@ const EncodedCredentialSchema = z
     delegatedKey: DelegatedKeySchema,
     actorTypes: z.array(ActorTypeSchema).min(1),
     maxScopes: z.array(ConnectorScopeSchema).min(1),
+    boundActorId: UuidSchema.optional(),
   })
   .strict();
 
@@ -228,6 +233,16 @@ const parseCredentials = (
       throw new Error("Credential policy exceeds the ceiling for " + serviceId);
     }
 
+    const agentCapable = credential.actorTypes.includes("agent");
+    if (agentCapable !== (credential.boundActorId !== undefined)) {
+      throw new Error(
+        agentCapable
+          ? "Agent-capable credential for " + serviceId +
+              " must bind exactly one boundActorId"
+          : "boundActorId is only valid for agent-capable credentials",
+      );
+    }
+
     const delegatedKey = new Uint8Array(credential.delegatedKey);
     return Object.freeze({
       serviceId: credential.serviceId,
@@ -240,6 +255,9 @@ const parseCredentials = (
       maxScopes: Object.freeze(
         credential.maxScopes.filter((scope) => allowedScopes.has(scope)),
       ),
+      ...(credential.boundActorId === undefined
+        ? {}
+        : { boundActorId: credential.boundActorId }),
     });
   }));
 };

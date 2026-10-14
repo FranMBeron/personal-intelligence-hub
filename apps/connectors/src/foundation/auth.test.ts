@@ -21,6 +21,7 @@ import {
 } from "./auth.js";
 
 const actorId = "a03f7492-09f0-4e8f-95d0-12b7c616aaea";
+const otherActorId = "22222222-2222-4222-8222-222222222222";
 const requestId = "5af093d0-84f1-4759-a92e-bbe2949ab957";
 const subject = "test-subject";
 const apps: ReturnType<typeof fastify>[] = [];
@@ -74,6 +75,9 @@ const makeCredential = (
   delegatedKey: new Uint8Array(32).fill(index + 1),
   actorTypes: [...policies[serviceId].actorTypes],
   maxScopes: [...policies[serviceId].scopes],
+  ...((policies[serviceId].actorTypes as readonly ActorType[]).includes("agent")
+    ? { boundActorId: actorId }
+    : {}),
 });
 
 const makeConfig = (
@@ -404,6 +408,75 @@ describe("connector authentication", () => {
       expect(response.json()).toMatchObject({ code: "forbidden" });
     }
   });
+
+  it("accepts an agent principal for the credential's bound owner actor", async () => {
+    const config = makeConfig();
+    const app = makeApp(config);
+    const response = await app.inject({
+      method: "GET",
+      url: "/v1/test",
+      headers: await validHeaders(config, "hermes-central", {
+        issuerServiceId: "hermes-central",
+        actorType: "agent",
+        actorId,
+        scopes: ["calendar:read", "calendar:propose"],
+      }),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      authenticatedService: { serviceId: "hermes-central" },
+      principal: {
+        serviceId: "hermes-central",
+        actorId,
+        actorType: "agent",
+      },
+    });
+  });
+
+  it.each([
+    ["a different actor", (config: ConnectorsConfig) => config, otherActorId],
+    [
+      "an unbound agent credential",
+      () =>
+        makeConfig((credentials) =>
+          credentials.map((credential) => {
+            if (credential.serviceId !== "hermes-central") return credential;
+            const { boundActorId: _omitted, ...unbound } = credential;
+            return unbound;
+          }),
+        ),
+      actorId,
+    ],
+  ] as const)(
+    "forbids an agent principal for %s before any route handler runs",
+    async (_description, configure, presentedActorId) => {
+      const config = configure(makeConfig());
+      const app = fastify({ logger: false });
+      apps.push(app);
+      installConnectorAuthentication(app, config);
+      let handlerCalls = 0;
+      app.get("/v1/calendar-probe", async () => {
+        handlerCalls += 1;
+        return { reached: true };
+      });
+
+      const response = await app.inject({
+        method: "GET",
+        url: "/v1/calendar-probe",
+        headers: await validHeaders(config, "hermes-central", {
+          issuerServiceId: "hermes-central",
+          actorType: "agent",
+          actorId: presentedActorId,
+          scopes: ["calendar:read"],
+        }),
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json()).toMatchObject({ code: "forbidden" });
+      expect(handlerCalls).toBe(0);
+    },
+  );
 
   it.each(["calendar:confirm", "calendar:configure"] as const)(
     "forbids non-human %s even when runtime policy is over-broad",

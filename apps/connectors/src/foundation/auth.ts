@@ -304,6 +304,16 @@ const enforcePolicy = (
   ) {
     throw forbidden();
   }
+  // An agent-capable credential acts only for its bound owner actor. Missing
+  // bindings fail closed even if a configuration parser regresses.
+  if (
+    (credential.actorTypes.includes("agent") ||
+      credential.boundActorId !== undefined) &&
+    (credential.boundActorId === undefined ||
+      principal.actorId !== credential.boundActorId)
+  ) {
+    throw forbidden();
+  }
   if (
     principal.actorType !== "human" &&
     principal.scopes.some(

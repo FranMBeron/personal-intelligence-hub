@@ -83,6 +83,11 @@ const validEnvironment = (
       delegatedKey: Buffer.alloc(32, index + 1).toString("base64url"),
       actorTypes: [...SERVICE_CEILINGS[serviceId].actorTypes],
       maxScopes: [...SERVICE_CEILINGS[serviceId].scopes],
+      ...((SERVICE_CEILINGS[serviceId].actorTypes as readonly ActorType[]).includes(
+        "agent",
+      )
+        ? { boundActorId: "11111111-1111-4111-8111-111111111111" }
+        : {}),
     })),
   ),
   DEFAULT_TIME_ZONE: "America/Argentina/Buenos_Aires",
