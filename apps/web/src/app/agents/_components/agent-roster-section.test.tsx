@@ -129,4 +129,57 @@ describe("AgentRosterSection", () => {
     render(<AgentRosterSection result={{ state: "unavailable" }} capabilities={null} renderWorkspace={stubWorkspace} />);
     expect(within(screen.getByRole("region", { name: "Actividad reciente" })).getByText("Actividad no disponible")).toBeTruthy();
   });
+
+  it.each([
+    ["disabled agent conversations", { ...capabilities, agentConversations: false }],
+    ["unknown capabilities", null],
+  ] as const)("keeps the delegation ledger reachable with %s", async (_name, limited) => {
+    vi.stubGlobal("fetch", readOnlyFetch());
+    render(<AgentRosterSection result={{ state: "available", agents }} capabilities={limited} renderWorkspace={stubWorkspace} />);
+    expect(screen.queryByRole("button", { name: /Conversar con/u })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ver delegaciones de Coordinador" }));
+    const workspace = await screen.findByRole("region", { name: "Coordinador" });
+    const ledger = within(workspace).getByRole("region", { name: "Delegaciones" });
+    expect(await within(ledger).findByText(/Encargo delegado de prueba/u)).toBeTruthy();
+    expect(within(ledger).queryByRole("textbox")).toBeNull();
+    expect(within(workspace).queryByTestId("workspace")).toBeNull();
+    const directChats = within(workspace).getByRole("region", { name: "Conversaciones directas" });
+    expect(within(directChats).getByText(/no está disponible|no están habilitadas/u)).toBeTruthy();
+  });
+
+  it("does not move focus when a profile is restored from the URL on load or by history navigation", async () => {
+    vi.stubGlobal("fetch", readOnlyFetch());
+    window.history.replaceState(null, "", "/agents?agent=coordinator");
+    render(<AgentRosterSection result={{ state: "available", agents }} capabilities={capabilities} renderWorkspace={stubWorkspace} />);
+    expect(await screen.findByRole("region", { name: "Coordinador" })).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(document.body);
+    act(() => {
+      window.history.replaceState(null, "", "/agents?agent=specialist");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(await screen.findByRole("region", { name: "Especialista" })).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(document.activeElement).toBe(document.body);
+    act(() => {
+      window.history.replaceState(null, "", "/agents");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Especialista" })).toBeNull());
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("returns focus to the active filter, not the page body, when the closed profile is filtered out", async () => {
+    vi.stubGlobal("fetch", readOnlyFetch());
+    render(<AgentRosterSection result={{ state: "available", agents }} capabilities={capabilities} renderWorkspace={stubWorkspace} />);
+    fireEvent.click(screen.getByRole("button", { name: "Conversar con Especialista" }));
+    const workspace = await screen.findByRole("region", { name: "Especialista" });
+    const attentionFilter = screen.getByRole("button", { name: "Con alertas" });
+    fireEvent.click(attentionFilter);
+    expect(screen.queryByRole("button", { name: "Conversar con Especialista" })).toBeNull();
+    fireEvent.click(within(workspace).getByRole("button", { name: "Cerrar espacio de Especialista" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Especialista" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(attentionFilter));
+  });
 });
+

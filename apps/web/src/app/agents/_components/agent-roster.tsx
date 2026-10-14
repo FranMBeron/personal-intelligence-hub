@@ -23,9 +23,12 @@ import "./agents.css";
 export function AgentRoster({
   result,
   capabilities,
+  onProfileToggle,
 }: Readonly<{
   result: RosterResult;
   capabilities: HermesCapabilities | null;
+  /** Called when the user (not the URL) opens or closes a profile from a card. */
+  onProfileToggle?: () => void;
 }>) {
   const view = useMemo(() => buildAgentsView(result), [result]);
   const [rawFilter, setFilter] = useQueryParam("filter");
@@ -54,7 +57,10 @@ export function AgentRoster({
               capabilities={capabilities}
               headingLevel={3}
               selected={selectedId === agent.id}
-              onOpen={(agentId) => setSelectedId(selectedId === agentId ? null : agentId)}
+              onOpen={(agentId) => {
+                onProfileToggle?.();
+                setSelectedId(selectedId === agentId ? null : agentId);
+              }}
             />
           </li>
         ))}

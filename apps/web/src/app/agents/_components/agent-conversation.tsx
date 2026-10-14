@@ -5,7 +5,7 @@ import { useState } from "react";
 
 import { ThreadWorkspace } from "../../_components/conversation/thread-workspace";
 
-const unavailableNote = (capabilities: HermesCapabilities | null): string | null =>
+export const unavailableNote = (capabilities: HermesCapabilities | null): string | null =>
   capabilities === null
     ? "La conversación no está disponible ahora."
     : capabilities.agentConversations

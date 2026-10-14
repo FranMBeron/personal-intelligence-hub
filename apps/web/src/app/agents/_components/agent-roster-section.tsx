@@ -7,18 +7,21 @@ import { SourceState } from "../../_components/source-state";
 import { buildAgentsView, formatAgentTime, type RosterResult } from "../_lib/agents-view";
 import type { DelegationReader } from "../_lib/delegation-client";
 import { useQueryParam } from "../_lib/use-query-param";
-import { DirectConversations } from "./agent-conversation";
+import { DirectConversations, unavailableNote } from "./agent-conversation";
 import { AgentRoster } from "./agent-roster";
 import { DelegationLedger } from "./delegation-ledger";
 import "./agents.css";
 
-const focusCardButton = (agentId: string): void => {
-  for (const element of document.querySelectorAll<HTMLElement>("[data-agent-open]")) {
+/** Focus the profile's card button, or the active filter when the current filter hides that card. */
+const restoreFocus = (root: HTMLElement | null, agentId: string): void => {
+  if (root === null) return;
+  for (const element of root.querySelectorAll<HTMLElement>("[data-agent-open]")) {
     if (element.dataset.agentOpen === agentId) {
       element.focus();
       return;
     }
   }
+  root.querySelector<HTMLElement>('.agents-roster__filter[aria-pressed="true"]:not(:disabled)')?.focus();
 };
 
 /**
@@ -50,28 +53,36 @@ export function AgentRosterSection({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const previous = useRef<string | undefined>(selected?.id);
   const returnFocusTo = useRef<string | null>(null);
+  // Focus only follows user actions; selections restored from the URL (load, back/forward) leave it alone.
+  const userInitiated = useRef(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const headingId = useId();
   const directId = useId();
+  const conversationNote = unavailableNote(capabilities);
   const activityId = useId();
 
   useEffect(() => {
     const current = selected?.id;
     if (current !== previous.current) {
-      if (current !== undefined) headingRef.current?.focus();
-      else if (returnFocusTo.current !== null) focusCardButton(returnFocusTo.current);
+      if (userInitiated.current) {
+        if (current !== undefined) headingRef.current?.focus();
+        else if (returnFocusTo.current !== null) restoreFocus(rootRef.current, returnFocusTo.current);
+      }
+      userInitiated.current = false;
       returnFocusTo.current = null;
     }
     previous.current = current;
   }, [selected?.id]);
 
   const close = (agentId: string) => {
+    userInitiated.current = true;
     returnFocusTo.current = agentId;
     setSelectedId(null);
   };
 
   return (
-    <div className="agents-section">
-      <AgentRoster result={result} capabilities={capabilities} />
+    <div className="agents-section" ref={rootRef}>
+      <AgentRoster result={result} capabilities={capabilities} onProfileToggle={() => { userInitiated.current = true; }} />
 
       {selected === undefined ? null : (
         <section className="agent-workspace" aria-labelledby={headingId}>
@@ -89,7 +100,9 @@ export function AgentRosterSection({
           <div className="agent-workspace__body">
             <section className="agent-workspace__direct" aria-labelledby={directId}>
               <h3 className="agent-workspace__section-title" id={directId}>Conversaciones directas</h3>
-              {renderWorkspace === undefined ? (
+              {conversationNote !== null ? (
+                <p className="agent-card__conversation-note">{conversationNote}</p>
+              ) : renderWorkspace === undefined ? (
                 <DirectConversations key={selected.id} agentId={selected.id} agentName={selected.displayName} capabilities={capabilities} />
               ) : renderWorkspace(selected.id, selected)}
             </section>

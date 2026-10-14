@@ -2,7 +2,7 @@ import type { AgentSummary, HermesCapabilities } from "@personal-intelligence-hu
 
 import { StatusBadge } from "../../_components/status-badge";
 import { formatAgentTime } from "../_lib/agents-view";
-import { AgentConversation } from "./agent-conversation";
+import { AgentConversation, unavailableNote } from "./agent-conversation";
 
 type Tone = "positive" | "accent" | "warning" | "danger" | "neutral";
 type Label = Readonly<{ label: string; tone: Tone }>;
@@ -52,6 +52,7 @@ export function AgentCard({
 }>) {
   const Heading = headingLevel === 3 ? "h3" : "h2";
   const presence = availability[agent.availability];
+  const conversationNote = unavailableNote(capabilities);
   const initials = agent.displayName
     .split(/\s+/u)
     .slice(0, 2)
@@ -81,10 +82,20 @@ export function AgentCard({
           agentName={agent.displayName}
           capabilities={capabilities}
         />
-      ) : capabilities === null ? (
-        <p className="agent-card__conversation-note">La conversación no está disponible ahora.</p>
-      ) : !capabilities.agentConversations ? (
-        <p className="agent-card__conversation-note">Las conversaciones por agente no están habilitadas.</p>
+      ) : conversationNote !== null ? (
+        // Without direct conversations the workspace still opens, read-only, for the delegation ledger.
+        <div className="agent-conversation">
+          <p className="agent-card__conversation-note">{conversationNote}</p>
+          <button
+            className="button button--quiet"
+            type="button"
+            aria-pressed={selected}
+            data-agent-open={agent.id}
+            onClick={() => onOpen(agent.id)}
+          >
+            {`Ver delegaciones de ${agent.displayName}`}
+          </button>
+        </div>
       ) : (
         <div className="agent-conversation">
           <button
