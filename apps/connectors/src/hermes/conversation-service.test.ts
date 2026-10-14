@@ -452,11 +452,12 @@ describe("Hermes ConversationService", () => {
       id: `33333333-3333-4333-8333-${suffix}`, actorId, agentId: "fitness", title: "Training", isMain: false,
       upstreamSessionId: `pih_33333333-3333-4333-8333-${suffix}`, createdAt: at, updatedAt: at,
     }));
-    // 59s old: may still be in flight (stale threshold is 60s).
-    await reserve("000000000901", "2026-10-12T11:59:01.000Z");
+    // 119s old: may still be in flight. One attempt can make two sequential
+    // upstream calls (createSession 409, then getSession) of up to 30s each.
+    await reserve("000000000901", "2026-10-12T11:58:01.000Z");
     const fresh = await service.create(principal(), { agentId: "fitness", title: "Training" });
     expect(fresh.id).not.toBe("33333333-3333-4333-8333-000000000901");
-    await reserve("000000000902", "2026-10-12T11:58:00.000Z");
+    await reserve("000000000902", "2026-10-12T11:57:59.000Z");
     const resumed = await service.create(principal(), { agentId: "fitness", title: "Training" });
     expect(resumed.id).toBe("33333333-3333-4333-8333-000000000902");
   });

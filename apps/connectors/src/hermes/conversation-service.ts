@@ -100,10 +100,14 @@ const localError = (error: unknown, fallback: HermesConversationErrorCode): Herm
 
 /**
  * A `pending` reservation untouched for this long is treated as abandoned (its
- * attempt crashed) and may be resumed. It is 2x the 30s ceiling HermesNativeClient
- * accepts for `timeoutMs`, so a live attempt has always finished or timed out by then.
+ * attempt crashed) and may be resumed. The worst-case live attempt makes two
+ * sequential upstream calls (`createSession` answering 409, then `getSession`),
+ * each bounded by HermesNativeClient's 30s `timeoutMs` ceiling: 60s. The other
+ * 60s is margin for SQLite write queueing and event-loop delay. If an attempt
+ * still outlives this, the version fence on markFailed/markReady keeps it from
+ * touching the newer claim.
  */
-const RESERVATION_STALE_MS = 60_000;
+const RESERVATION_STALE_MS = 120_000;
 /** Provisioning attempts per additional-thread reservation before a create starts a new one. */
 const MAX_PROVISION_ATTEMPTS = 3;
 
