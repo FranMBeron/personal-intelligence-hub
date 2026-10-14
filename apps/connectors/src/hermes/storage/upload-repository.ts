@@ -74,9 +74,4 @@ export class UploadRepository {
   isStorageReferenced(connection:SqliteHandle,storagePath:string):boolean {
     return connection.prepare("SELECT 1 AS present FROM hermes_uploads WHERE storage_path=:storagePath").get<{present:number}>({storagePath})!==undefined;
   }
-  deleteExpired(connection:SqliteHandle,now:string):readonly string[] {
-    const paths=connection.prepare("SELECT storage_path FROM hermes_uploads WHERE expires_at<=:now").all<{storage_path:string}>({now}).map(({storage_path})=>storage_path);
-    connection.prepare("DELETE FROM hermes_uploads WHERE expires_at<=:now").run({now});
-    return paths;
-  }
 }

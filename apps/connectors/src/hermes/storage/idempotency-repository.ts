@@ -47,7 +47,12 @@ export class IdempotencyRepository {
     return connection.prepare("SELECT * FROM hermes_idempotency WHERE state=:state ORDER BY created_at, actor_id, conversation_id, idempotency_key LIMIT :limit")
       .all<Row>({ state, limit }).map(mapRow);
   }
+  /**
+   * Purge expired records that are already terminal. A reserved or admitted record
+   * is never removed: it is the only durable handle on its admission, and the
+   * resume/reconcile workers own its lifetime until they terminalize it.
+   */
   deleteExpired(connection: SqliteHandle, now: string): number {
-    return connection.prepare("DELETE FROM hermes_idempotency WHERE expires_at<=:now").run({now}).changes;
+    return connection.prepare("DELETE FROM hermes_idempotency WHERE state='terminal' AND expires_at<=:now").run({now}).changes;
   }
 }
