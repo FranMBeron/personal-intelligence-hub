@@ -178,6 +178,92 @@ describe("normalized SSE recovery boundary", () => {
     expect(source.cancel).toHaveBeenCalledTimes(1);
   });
 
+  it("parses a large event delivered in many small chunks without rescanning the buffer", async () => {
+    const big = delta("e2", "y".repeat(600_000));
+    const text = frame(heartbeat("e1")) + frame(big) + frame(heartbeat("e3"));
+    const chunks: string[] = [];
+    for (let offset = 0; offset < text.length; offset += 1_000) chunks.push(text.slice(offset, offset + 1_000));
+    const { handler } = gatewayWith(async () => upstream(chunks).response);
+    const original = String.prototype.indexOf;
+    let scanned = 0;
+    const spy = vi.spyOn(String.prototype, "indexOf").mockImplementation(function (this: string, search: string, position?: number) {
+      if (search === "\n\n") scanned += this.length - Math.max(0, position ?? 0);
+      return original.call(this, search, position);
+    });
+    let output: string;
+    try {
+      output = await drain(await handler(requestWithCursor(), routeContext));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(framesOf(output)).toEqual([heartbeat("e1"), big, heartbeat("e3")]);
+    expect(scanned).toBeLessThan(text.length * 4);
+  });
+
+  it("handles a CRLF pair split across chunks (held trailing CR)", async () => {
+    const one = `id: e1\r\ndata: ${JSON.stringify(heartbeat("e1"))}\r\n\r\n`;
+    const two = `id: e2\r\ndata: ${JSON.stringify(delta("e2", "dos"))}\r\n\r\n`;
+    const text = one + two;
+    const chunks: string[] = [];
+    let start = 0;
+    // Split right after every CR so each LF arrives at the start of the next chunk.
+    for (let index = 0; index < text.length; index += 1) {
+      if (text[index] === "\r") { chunks.push(text.slice(start, index + 1)); start = index + 1; }
+    }
+    chunks.push(text.slice(start));
+    expect(chunks.filter((chunk) => chunk.endsWith("\r")).length).toBeGreaterThan(2);
+    const { handler } = gatewayWith(async () => upstream(chunks).response);
+    const output = await drain(await handler(requestWithCursor(), routeContext));
+    expect(output).not.toContain("\r");
+    expect(framesOf(output)).toEqual([heartbeat("e1"), delta("e2", "dos")]);
+  });
+
+  it("keeps a multi-line data field intact when its CRLF is split across chunks", async () => {
+    const [head, tail] = [`{"id":"e1","type":"heartbeat",`, `"occurredAt":"2026-10-12T12:00:00.000Z"}`];
+    const chunks = [`id: e1\r\ndata: ${head}\r`, `\ndata: ${tail}\r\n\r\n`];
+    const { handler } = gatewayWith(async () => upstream(chunks).response);
+    expect(framesOf(await drain(await handler(requestWithCursor(), routeContext)))).toEqual([heartbeat("e1")]);
+  });
+
+  it("treats a lone CR at the end of a chunk as a line break when no LF follows", async () => {
+    const chunks = [`id: e1\rdata: ${JSON.stringify(heartbeat("e1"))}\r`, `\rid: e2\rdata: ${JSON.stringify(heartbeat("e2"))}\r\r`];
+    const { handler } = gatewayWith(async () => upstream(chunks).response);
+    expect(framesOf(await drain(await handler(requestWithCursor(), routeContext)))).toEqual([heartbeat("e1"), heartbeat("e2")]);
+  });
+
+  it("cancels the upstream reader at most once when cancellation and a bad event race", async () => {
+    const encoder = new TextEncoder();
+    let resolveRead!: (result: ReadableStreamReadResult<Uint8Array>) => void;
+    const reader = {
+      read: vi.fn(() => new Promise<ReadableStreamReadResult<Uint8Array>>((resolve) => { resolveRead = resolve; })),
+      cancel: vi.fn(async () => undefined),
+      releaseLock: vi.fn(),
+    };
+    const body = { getReader: () => reader } as unknown as ReadableStream<Uint8Array>;
+    const { handler } = gatewayWith(async () => ({ body }) as unknown as Response);
+    const response = await handler(requestWithCursor(), routeContext);
+    const consumer = response.body!.getReader();
+    const pending = consumer.read();
+    await vi.waitFor(() => expect(reader.read).toHaveBeenCalledTimes(1));
+    const cancelled = consumer.cancel();
+    resolveRead({ done: false, value: encoder.encode("id: e2\ndata: {not-json\n\n") });
+    await cancelled;
+    await pending.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reader.cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels the upstream reader at most once when a bad event is followed by browser cancellation", async () => {
+    const source = upstream([frame(heartbeat("e1")), "id: e2\ndata: {not-json\n\n"], true);
+    const { handler } = gatewayWith(async () => source.response);
+    const response = await handler(requestWithCursor(), routeContext);
+    const consumer = response.body!.getReader();
+    expect(framesOf(new TextDecoder().decode((await consumer.read()).value))).toEqual([heartbeat("e1")]);
+    expect((await consumer.read()).done).toBe(true);
+    await consumer.cancel();
+    expect(source.cancel).toHaveBeenCalledTimes(1);
+  });
+
   it("closes the stream when one upstream frame exceeds the frame limit", async () => {
     const source = upstream([frame(heartbeat("e1")), "data: " + "x".repeat(1_100_000)], true);
     const { handler } = gatewayWith(async () => source.response);

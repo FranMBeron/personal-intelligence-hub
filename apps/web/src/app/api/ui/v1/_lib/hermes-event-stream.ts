@@ -73,6 +73,9 @@ export const normalizeHermesEventStream = (
   const encoder = new TextEncoder();
   let buffer = "";
   let held = "";
+  // Everything before this offset is known to hold no "\n\n", so each chunk is scanned once.
+  let scanFrom = 0;
+  let ended = false;
   let settled = false;
   let cancelled = false;
 
@@ -86,10 +89,11 @@ export const normalizeHermesEventStream = (
     {
       async pull(controller) {
         for (;;) {
-          const boundary = buffer.indexOf("\n\n");
+          const boundary = buffer.indexOf("\n\n", scanFrom);
           if (boundary !== -1) {
             const block = buffer.slice(0, boundary);
             buffer = buffer.slice(boundary + 2);
+            scanFrom = 0;
             const result = normalizeBlock(block);
             if (result.kind === "invalid") {
               release();
@@ -101,6 +105,14 @@ export const normalizeHermesEventStream = (
               return;
             }
             continue;
+          }
+          // A boundary arriving later can only start at the last character already scanned.
+          scanFrom = Math.max(0, buffer.length - 1);
+          if (ended) {
+            // An incomplete trailing block is dropped; the client resumes from its last applied id.
+            settled = true;
+            controller.close();
+            return;
           }
           if (buffer.length > MAX_SSE_BLOCK_CHARS) {
             release();
@@ -118,10 +130,11 @@ export const normalizeHermesEventStream = (
           }
           if (cancelled) return;
           if (chunk.done) {
-            // An incomplete trailing block is dropped; the client resumes from its last applied id.
-            settled = true;
-            controller.close();
-            return;
+            // Flush the decoder and any held CR: a stream may legally end on a lone CR line ending.
+            ended = true;
+            buffer += (held + decoder.decode()).replace(/\r\n?/gu, "\n");
+            held = "";
+            continue;
           }
           const normalized = normalizeLineEndings(held + decoder.decode(chunk.value, { stream: true }));
           held = normalized.held;
