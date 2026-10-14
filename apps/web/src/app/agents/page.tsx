@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { Icon } from "../_components/icon";
 import { PageHeader } from "../_components/app-shell";
 import { SourceState } from "../_components/source-state";
-import { AgentCard } from "./_components/agent-card";
+import { AgentCard, formatCheckedAt } from "./_components/agent-card";
 import { deriveRequestContext } from "../../server/context";
 import { serverRuntime } from "../../server/runtime";
 
@@ -39,21 +39,31 @@ export default async function AgentsPage() {
     agentsPromise,
   ]);
   const agents = agentsResult.ok ? agentsResult.value : [];
-  const availableCount = agents.filter(({ status }) => status === "available").length;
-  const workingCount = agents.filter(({ status }) => status === "working").length;
-  const readyCount = agents.filter(({ status }) => status === "waiting").length;
-  const attentionCount = agents.filter(({ status }) =>
-    status === "offline" || status === "unknown"
-  ).length;
-  const activity = agents.flatMap((agent) => {
-    if (agent.currentWork !== undefined) {
-      return [{ id: `${agent.id}-work`, name: agent.displayName, detail: `En curso · ${agent.currentWork}` }];
-    }
-    if (agent.lastResult !== undefined) {
-      return [{ id: `${agent.id}-result`, name: agent.displayName, detail: `Resultado · ${agent.lastResult}` }];
-    }
-    return [];
-  }).slice(0, 3);
+  const count = (matches: (agent: AgentSummary) => boolean): number | null =>
+    agentsResult.ok ? agents.filter(matches).length : null;
+  const availableCount = count(({ availability }) => availability === "online");
+  const workingCount = count(({ execution }) => execution === "working");
+  const readyCount = count(({ result }) => result === "ready");
+  const attentionCount = count(({ attention }) => attention === "required");
+  const activity = agents
+    .filter(({ execution, result }) => execution === "working" || result === "ready")
+    .toSorted((left, right) => Date.parse(right.checkedAt) - Date.parse(left.checkedAt))
+    .map((agent) => ({
+      id: agent.id,
+      name: agent.displayName,
+      detail: agent.execution === "working" ? "En curso" : "Resultado listo",
+      checkedAt: agent.checkedAt,
+    }));
+  const summary = (value: number | null, none: string, some: (value: number) => string) => ({
+    value: value === null ? "Sin datos" : String(value),
+    detail: value === null ? "Estado no disponible" : value === 0 ? none : some(value),
+  });
+  const metrics = [
+    { label: "Disponibles", ...summary(availableCount, "Ningún agente conectado", (value) => value === 1 ? "1 agente conectado" : `${value} agentes conectados`) },
+    { label: "Trabajando ahora", ...summary(workingCount, "Sin trabajos publicados", () => "Actividad en curso") },
+    { label: "Resultados listos", ...summary(readyCount, "Sin resultados pendientes", () => "Revisión disponible") },
+    { label: "Requieren atención", ...summary(attentionCount, "Sin bloqueos", () => "Revisar estado") },
+  ];
 
   return (
     <div className="agents-page">
@@ -74,10 +84,9 @@ export default async function AgentsPage() {
       </div>
 
       <section className="agent-summary" aria-label="Resumen de agentes">
-        <article className="summary-metric"><span>Disponibles</span><strong>{availableCount}</strong><small>{availableCount === 1 ? "1 agente conectado" : `${availableCount} agentes conectados`}</small></article>
-        <article className="summary-metric"><span>Trabajando ahora</span><strong>{workingCount}</strong><small>{workingCount === 0 ? "Sin trabajos publicados" : "Actividad en curso"}</small></article>
-        <article className="summary-metric"><span>Resultados listos</span><strong>{readyCount}</strong><small>{readyCount === 0 ? "Sin resultados pendientes" : "Revisión disponible"}</small></article>
-        <article className="summary-metric"><span>Requieren atención</span><strong>{attentionCount}</strong><small>{attentionCount === 0 ? "Sin bloqueos" : "Revisar estado"}</small></article>
+        {metrics.map((metric) => (
+          <article className="summary-metric" key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong><small>{metric.detail}</small></article>
+        ))}
       </section>
 
       <section className="agent-roster" aria-label="Roster de agentes">
@@ -113,6 +122,7 @@ export default async function AgentsPage() {
               <article className="activity-item" key={item.id}>
                 <strong>{item.name}</strong>
                 <span>{item.detail}</span>
+                <time dateTime={item.checkedAt}>{formatCheckedAt(item.checkedAt)}</time>
               </article>
             ))}
           </div>
