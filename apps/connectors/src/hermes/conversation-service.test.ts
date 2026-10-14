@@ -329,16 +329,16 @@ describe("Hermes ConversationService", () => {
   it("does not select an archived main thread when another writer finished and archived it mid-provision", async () => {
     // Simulates another process completing provisioning and archiving the main
     // thread (with no selection row) while this ensureMain call awaits Hermes.
-    let database!: ConnectorDatabase;
+    const shared = {} as { database: ConnectorDatabase };
     const harness = await createHarness({
       createSession: async (_profile, input) => {
-        await database.transaction((db) => db.prepare(
+        await shared.database.transaction((db) => db.prepare(
           "UPDATE hermes_conversations SET provision_state = 'ready', archived = 1, version = 2 WHERE upstream_session_id = :id",
         ).run({ id: input.id }));
         return { id: input.id, source: "pih", title: input.title, archived: false };
       },
     });
-    database = harness.database;
+    shared.database = harness.database;
     const main = await harness.service.ensureMain(principal(), "fitness");
     const selection = await harness.service.selection(principal(), "fitness");
     expect(main.archived && selection.conversationId === main.id).toBe(false);
