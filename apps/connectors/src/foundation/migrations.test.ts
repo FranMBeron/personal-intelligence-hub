@@ -84,7 +84,7 @@ describe("connector migrations", () => {
     // Pinned packaged set: each provider branch appends its migrations here.
     const loaded = loadMigrations(new URL("../migrations/", import.meta.url));
 
-    expect(loaded.map(({ name }) => name)).toEqual(["0000_foundation"]);
+    expect(loaded.map(({ name }) => name)).toEqual(["0000_foundation", "0100_hermes"]);
     expect(loaded[0]?.sha256).toMatch(/^[0-9a-f]{64}$/u);
   });
 
