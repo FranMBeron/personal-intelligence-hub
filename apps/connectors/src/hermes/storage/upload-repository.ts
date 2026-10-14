@@ -46,6 +46,34 @@ export class UploadRepository {
       if(result.changes!==1) fail("hermes_upload_unavailable");
     }
   }
+  /** Claimed, unconsumed row for one admission. Expiry is not rechecked: purge never removes an in-flight claim. */
+  getClaimed(connection:SqliteHandle,input:Omit<ClaimedUploadLookup,"now">):StoredUpload|null {
+    const row=connection.prepare("SELECT "+uploadColumns+" FROM hermes_uploads WHERE reference=:reference AND actor_id=:actorId AND conversation_id=:conversationId AND claimed_by_admission=:admissionId AND consumed_at IS NULL")
+      .get<Row>({reference:input.reference,actorId:input.actorId,conversationId:input.conversationId,admissionId:input.admissionId});
+    return row===undefined?null:mapRow(row);
+  }
+  /** Every unconsumed upload claimed by one admission, in a stable order. */
+  listClaimedByAdmission(connection:SqliteHandle,input:Readonly<{actorId:string;conversationId:string;admissionId:string}>):readonly StoredUpload[] {
+    return connection.prepare("SELECT "+uploadColumns+" FROM hermes_uploads WHERE actor_id=:actorId AND conversation_id=:conversationId AND claimed_by_admission=:admissionId AND consumed_at IS NULL ORDER BY reference")
+      .all<Row>(input).map(mapRow);
+  }
+  /** Mark every upload claimed by one admission consumed (expiry-independent) and return them for file removal. */
+  consumeAdmission(connection:SqliteHandle,input:Readonly<{actorId:string;conversationId:string;admissionId:string;consumedAt:string}>):readonly StoredUpload[] {
+    const claimed=this.listClaimedByAdmission(connection,input);
+    connection.prepare("UPDATE hermes_uploads SET consumed_at=:consumedAt WHERE actor_id=:actorId AND conversation_id=:conversationId AND claimed_by_admission=:admissionId AND consumed_at IS NULL")
+      .run(input);
+    return claimed;
+  }
+  /** Delete at most `limit` expired rows that no in-flight admission holds; returns their opaque storage names. */
+  deleteExpiredReleasable(connection:SqliteHandle,now:string,limit:number):readonly string[] {
+    const rows=connection.prepare("SELECT reference,storage_path FROM hermes_uploads WHERE expires_at<=:now AND (claimed_by_admission IS NULL OR consumed_at IS NOT NULL) ORDER BY expires_at,reference LIMIT :limit")
+      .all<{reference:string;storage_path:string}>({now,limit});
+    const remove=connection.prepare("DELETE FROM hermes_uploads WHERE reference=:reference AND expires_at<=:now AND (claimed_by_admission IS NULL OR consumed_at IS NOT NULL)");
+    return rows.filter(({reference})=>remove.run({reference,now}).changes===1).map(({storage_path})=>storage_path);
+  }
+  isStorageReferenced(connection:SqliteHandle,storagePath:string):boolean {
+    return connection.prepare("SELECT 1 AS present FROM hermes_uploads WHERE storage_path=:storagePath").get<{present:number}>({storagePath})!==undefined;
+  }
   deleteExpired(connection:SqliteHandle,now:string):readonly string[] {
     const paths=connection.prepare("SELECT storage_path FROM hermes_uploads WHERE expires_at<=:now").all<{storage_path:string}>({now}).map(({storage_path})=>storage_path);
     connection.prepare("DELETE FROM hermes_uploads WHERE expires_at<=:now").run({now});
