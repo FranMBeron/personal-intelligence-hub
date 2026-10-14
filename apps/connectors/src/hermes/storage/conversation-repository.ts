@@ -244,6 +244,13 @@ export class ConversationRepository {
     }) as ConversationList;
   }
 
+  /**
+   * Version-checked title/archive update. It does not itself enforce that the row
+   * is `ready` or that a selected conversation is never archived: those invariants
+   * live in ConversationService.patch (readiness is checked first and never
+   * reverts; the selection check runs in the same transaction as this update).
+   * Callers outside that service must enforce both themselves.
+   */
   patchOwned(connection: SqliteHandle, input: PatchOwnedConversation): StoredConversation {
     const row = this.getOwned(connection, input.actorId, input.id);
     if (row === null || row.version !== input.expectedVersion) fail("hermes_conversation_version_conflict");
