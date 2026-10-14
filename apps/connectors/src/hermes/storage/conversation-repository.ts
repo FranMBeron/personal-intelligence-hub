@@ -207,10 +207,19 @@ export class ConversationRepository {
    * Compensate a locally applied patch whose upstream mirror failed. Restores the
    * previous title/archived values with a fresh (monotonic) version, and only if no
    * other writer has moved the row past the compensated version.
+   *
+   * Selections do not bump the conversation version, so the row may have been
+   * selected while the compensated unarchive was in flight. A selected thread
+   * must never be archived, so in that case the archived flag is left as-is
+   * (only the title is restored). That accepts documented drift: Hermes may
+   * still hold the old archived state while PIH keeps the thread unarchived.
    */
   restoreOwned(connection: SqliteHandle, input: RestoreOwnedConversation): boolean {
     const result = connection.prepare(
-      "UPDATE hermes_conversations SET title = :title, archived = :archived, version = version + 1, updated_at = :updatedAt " +
+      "UPDATE hermes_conversations SET title = :title, archived = CASE WHEN :archived = 1 AND EXISTS(" +
+      "SELECT 1 FROM hermes_conversation_selection s WHERE s.actor_id = hermes_conversations.actor_id " +
+      "AND s.agent_id = hermes_conversations.agent_id AND s.conversation_id = hermes_conversations.id" +
+      ") THEN archived ELSE :archived END, version = version + 1, updated_at = :updatedAt " +
       "WHERE actor_id = :actorId AND id = :id AND version = :appliedVersion",
     ).run({
       actorId: input.actorId, id: input.id, appliedVersion: input.appliedVersion,

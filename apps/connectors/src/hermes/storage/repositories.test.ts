@@ -166,6 +166,20 @@ describe("Hermes repositories", () => {
     }))).rejects.toThrow();
   });
 
+  it("restores the title but keeps a selected conversation unarchived", async () => {
+    const database = await configuredDatabase();
+    const repository = await createConversation(database);
+    await database.transaction((db) => {
+      repository.ensureSelection(db, { actorId, agentId: profileId, updatedAt: now });
+      repository.putSelection(db, { actorId, agentId: profileId, conversationId, expectedVersion: 1, updatedAt: later });
+    });
+    await expect(database.transaction((db) => repository.restoreOwned(db, {
+      actorId, id: conversationId, appliedVersion: 1, title: "Restored", archived: true, updatedAt: later,
+    }))).resolves.toBe(true);
+    await expect(database.read((db) => repository.getOwned(db, actorId, conversationId)))
+      .resolves.toMatchObject({ title: "Restored", archived: false, version: 2 });
+  });
+
   it("inserts only public message roles and returns a transactionally captured stream cursor", async () => {
     const database = await configuredDatabase();
     await createConversation(database);

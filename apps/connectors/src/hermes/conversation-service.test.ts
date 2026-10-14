@@ -302,6 +302,30 @@ describe("Hermes ConversationService", () => {
       .resolves.toMatchObject({ title: "Again" });
   });
 
+  it("does not restore archived=true over a selection made while an unarchive was in flight", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const { service, native } = await createHarness();
+    const conversation = await service.create(principal(), { agentId: "fitness" });
+    const archived = await service.patch(principal(), conversation.id, { archived: true, expectedVersion: 1 });
+    expect(archived).toMatchObject({ archived: true, version: 2 });
+    const upstreamEntered = new Promise<void>((resolve) => { entered = resolve; });
+    native.patchSession.mockImplementationOnce(async () => {
+      entered();
+      await new Promise<void>((resolve) => { release = resolve; });
+      throw new Error("hermes_request_timeout");
+    });
+    const unarchiving = service.patch(principal(), conversation.id, { archived: false, expectedVersion: 2 })
+      .catch((error: unknown) => error);
+    await upstreamEntered;
+    await service.putSelection(principal(), "fitness", { conversationId: conversation.id, expectedVersion: 0 });
+    release();
+    await expect(unarchiving).resolves.toMatchObject({ code: "hermes_request_timeout" });
+    const current = await service.get(principal(), conversation.id);
+    const selection = await service.selection(principal(), "fitness");
+    expect(current.archived && selection.conversationId === conversation.id).toBe(false);
+  });
+
   it("filters list pages in SQL to ready conversations without short pages", async () => {
     const { service, database, repository } = await createHarness();
     const ready = await service.create(principal(), { agentId: "fitness" });
