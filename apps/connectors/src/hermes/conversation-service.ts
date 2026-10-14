@@ -98,6 +98,15 @@ const localError = (error: unknown, fallback: HermesConversationErrorCode): Herm
   return new HermesConversationError(fallback);
 };
 
+/**
+ * A `pending` reservation untouched for this long is treated as abandoned (its
+ * attempt crashed) and may be resumed. It is 2x the 30s ceiling HermesNativeClient
+ * accepts for `timeoutMs`, so a live attempt has always finished or timed out by then.
+ */
+const RESERVATION_STALE_MS = 60_000;
+/** Provisioning attempts per additional-thread reservation before a create starts a new one. */
+const MAX_PROVISION_ATTEMPTS = 3;
+
 type SelectionRow = Readonly<{
   agent_id: string;
   conversation_id: string | null;
@@ -162,12 +171,19 @@ export class ConversationService {
     const title = parsed.data.title ?? profile.displayName;
     let reservation: StoredConversation;
     try {
-      // Retry safety: resume an unfinished reservation for the same actor, profile
-      // and title (its upstream ID is deterministic, and #provision adopts an
-      // already-created PIH session), rather than orphaning it with a new row.
-      reservation = await this.#database.transaction((db) =>
-        this.#conversations.findPendingAdditional(db, principal.actorId, profile.id, title) ??
-        this.#reserveAdditional(db, principal.actorId, profile.id, title, timestamp));
+      // Retry safety: resume a failed or abandoned reservation for the same actor,
+      // profile and title (its upstream ID is deterministic, and #provision adopts
+      // an already-created PIH session), rather than orphaning it with a new row.
+      // In-flight reservations are never shared; see findReusableAdditional.
+      const staleBefore = new Date(Date.parse(timestamp) - RESERVATION_STALE_MS).toISOString();
+      reservation = await this.#database.transaction((db) => {
+        const reusable = this.#conversations.findReusableAdditional(db, {
+          actorId: principal.actorId, agentId: profile.id, title, staleBefore, maxAttempts: MAX_PROVISION_ATTEMPTS,
+        });
+        return reusable === null
+          ? this.#reserveAdditional(db, principal.actorId, profile.id, title, timestamp)
+          : this.#conversations.claimForRetry(db, principal.actorId, reusable.id, timestamp);
+      });
     } catch {
       return fail("hermes_conversation_unavailable");
     }
@@ -417,6 +433,19 @@ export class ConversationService {
 
   async #provision(actorId: string, reservation: StoredConversation, selectMain = false): Promise<Conversation> {
     if (reservation.provisionState === "ready") return this.#publicConversation(reservation);
+    try {
+      return await this.#provisionAttempt(actorId, reservation, selectMain);
+    } catch (error) {
+      try {
+        await this.#database.transaction((db) => this.#conversations.markFailed(db, actorId, reservation.id));
+      } catch {
+        // Best effort: an unmarked row stays pending and becomes reusable once stale.
+      }
+      throw error;
+    }
+  }
+
+  async #provisionAttempt(actorId: string, reservation: StoredConversation, selectMain: boolean): Promise<Conversation> {
     const profile = this.#requireDirectProfile(reservation.agentId);
     let session;
     try {

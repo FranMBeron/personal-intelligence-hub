@@ -132,20 +132,48 @@ export class ConversationRepository {
   }
 
   /**
-   * Oldest unfinished additional-thread reservation for the same actor, profile and
-   * title. Reusing it makes a retried create resume the same deterministic upstream
-   * session ID instead of leaving an orphaned pending row behind.
+   * Oldest additional-thread reservation for the same actor, profile and title that
+   * a retried create may resume (its upstream session ID is deterministic, so the
+   * retry adopts any session the earlier attempt created instead of orphaning it).
+   *
+   * Only rows no live attempt owns qualify: ones a previous attempt marked
+   * `failed`, or `pending` rows not touched since `staleBefore` (an attempt that
+   * crashed before finishing). A fresh `pending` row is in flight, so a concurrent
+   * create with the same title gets its own thread. Before `markReady` the
+   * row's `version` is unobservable and counts provisioning attempts; rows that
+   * reached `maxAttempts` are left failed and never resumed.
    */
-  findPendingAdditional(connection: SqliteHandle, actorId: string, agentId: string, title: string): StoredConversation | null {
+  findReusableAdditional(
+    connection: SqliteHandle,
+    input: Readonly<{ actorId: string; agentId: string; title: string; staleBefore: string; maxAttempts: number }>,
+  ): StoredConversation | null {
     const row = connection.prepare(
       "SELECT * FROM hermes_conversations WHERE actor_id = :actorId AND agent_id = :agentId AND title = :title " +
-      "AND is_main = 0 AND provision_state = 'pending' ORDER BY created_at, id LIMIT 1",
-    ).get<ConversationRow>({ actorId, agentId, title });
+      "AND is_main = 0 AND version < :maxAttempts " +
+      "AND (provision_state = 'failed' OR (provision_state = 'pending' AND updated_at < :staleBefore)) " +
+      "ORDER BY created_at, id LIMIT 1",
+    ).get<ConversationRow>(input);
     return row === undefined ? null : mapConversation(row);
   }
 
+  /** Take ownership of a reusable reservation for one more provisioning attempt. */
+  claimForRetry(connection: SqliteHandle, actorId: string, id: string, updatedAt: string): StoredConversation {
+    const result = connection.prepare(
+      "UPDATE hermes_conversations SET provision_state = 'pending', version = version + 1, updated_at = :updatedAt " +
+      "WHERE actor_id = :actorId AND id = :id AND provision_state IN ('pending', 'failed')",
+    ).run({ actorId, id, updatedAt });
+    if (result.changes !== 1) fail("hermes_conversation_state_conflict");
+    return this.getOwned(connection, actorId, id) ?? fail("hermes_conversation_missing");
+  }
+
+  /** Record that a provisioning attempt ended without the row becoming ready. */
+  markFailed(connection: SqliteHandle, actorId: string, id: string): void {
+    connection.prepare("UPDATE hermes_conversations SET provision_state = 'failed' WHERE actor_id = :actorId AND id = :id AND provision_state = 'pending'")
+      .run({ actorId, id });
+  }
+
   markReady(connection: SqliteHandle, actorId: string, id: string): void {
-    const result = connection.prepare("UPDATE hermes_conversations SET provision_state = 'ready' WHERE actor_id = :actorId AND id = :id AND provision_state = 'pending'")
+    const result = connection.prepare("UPDATE hermes_conversations SET provision_state = 'ready' WHERE actor_id = :actorId AND id = :id AND provision_state IN ('pending', 'failed')")
       .run({ actorId, id });
     if (result.changes !== 1) fail("hermes_conversation_state_conflict");
   }

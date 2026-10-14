@@ -391,6 +391,76 @@ describe("Hermes ConversationService", () => {
     await expect(service.list(principal(), { limit: 50, agentId: "fitness" })).resolves.toMatchObject({ items: [] });
   });
 
+  it("keeps two overlapping creates with the same title as separate threads", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const firstEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const createSession = vi.fn(async (_profile: string, input: { id: string; title: string; source: string }) => {
+      entered();
+      await gate;
+      return { id: input.id, source: "pih", title: input.title, archived: false };
+    });
+    const { service } = await createHarness({ createSession });
+    const first = service.create(principal(), { agentId: "fitness", title: "Training" });
+    await firstEntered;
+    const second = service.create(principal(), { agentId: "fitness", title: "Training" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    release();
+    const [one, two] = await Promise.all([first, second]);
+    expect(one.id).not.toBe(two.id);
+    expect(createSession.mock.calls.map(([, input]) => input.id)).toEqual([`pih_${one.id}`, `pih_${two.id}`]);
+  });
+
+  it("marks a failed create so a retry reuses it instead of orphaning it", async () => {
+    const createSession = vi.fn()
+      .mockRejectedValueOnce(new Error("hermes_request_timeout"))
+      .mockImplementation(async (_profile: string, input: { id: string; title: string; source: string }) => ({
+        id: input.id, source: "pih", title: input.title, archived: false,
+      }));
+    const { service, database } = await createHarness({ createSession });
+    await expect(service.create(principal(), { agentId: "fitness", title: "Training" }))
+      .rejects.toMatchObject({ code: "hermes_request_timeout" });
+    const states = () => database.read((db) => db.prepare(
+      "SELECT id, provision_state AS state FROM hermes_conversations ORDER BY created_at, id",
+    ).all<{ id: string; state: string }>());
+    expect(await states()).toEqual([{ id: "33333333-3333-4333-8333-000000000001", state: "failed" }]);
+    const created = await service.create(principal(), { agentId: "fitness", title: "Training" });
+    expect(created.id).toBe("33333333-3333-4333-8333-000000000001");
+    expect(await states()).toEqual([{ id: created.id, state: "ready" }]);
+  });
+
+  it("stops reusing a reservation after a bounded number of failed attempts", async () => {
+    const { service, native, database } = await createHarness({
+      createSession: async () => { throw new Error("hermes_unauthorized"); },
+    });
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await expect(service.create(principal(), { agentId: "fitness", title: "Training" })).rejects.toThrow();
+    }
+    const ids = native.createSession.mock.calls.map(([, input]) => input.id);
+    expect(ids.slice(0, 3)).toEqual(Array(3).fill("pih_33333333-3333-4333-8333-000000000001"));
+    expect(ids[3]).toBe("pih_33333333-3333-4333-8333-000000000002");
+    const rows = await database.read((db) => db.prepare(
+      "SELECT provision_state AS state FROM hermes_conversations ORDER BY id",
+    ).all<{ state: string }>());
+    expect(rows).toEqual([{ state: "failed" }, { state: "failed" }]);
+  });
+
+  it("resumes an abandoned in-flight reservation only once it is stale", async () => {
+    const { service, database, repository } = await createHarness();
+    const reserve = (suffix: string, at: string) => database.transaction((db) => repository.reserve(db, {
+      id: `33333333-3333-4333-8333-${suffix}`, actorId, agentId: "fitness", title: "Training", isMain: false,
+      upstreamSessionId: `pih_33333333-3333-4333-8333-${suffix}`, createdAt: at, updatedAt: at,
+    }));
+    // 59s old: may still be in flight (stale threshold is 60s).
+    await reserve("000000000901", "2026-10-12T11:59:01.000Z");
+    const fresh = await service.create(principal(), { agentId: "fitness", title: "Training" });
+    expect(fresh.id).not.toBe("33333333-3333-4333-8333-000000000901");
+    await reserve("000000000902", "2026-10-12T11:58:00.000Z");
+    const resumed = await service.create(principal(), { agentId: "fitness", title: "Training" });
+    expect(resumed.id).toBe("33333333-3333-4333-8333-000000000902");
+  });
+
   it("retries a failed create on the same reservation and upstream session ID", async () => {
     const createSession = vi.fn()
       .mockRejectedValueOnce(new Error("transport details with fictional-secret-token"))
