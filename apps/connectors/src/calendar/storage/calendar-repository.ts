@@ -202,6 +202,10 @@ export interface CalendarRepository {
   upsertEventReference(database: SqliteHandle, record: EventReferenceRecord): void;
   insertProposal(database: SqliteHandle, proposal: ProposalRecord, idempotencyKey: string, requestHash: string): ProposalInsertResult;
   getProposal(database: SqliteHandle, actorId: string, proposalId: string): ProposalRecord | null;
+  /** Read-only idempotency lookup so a replay never needs provider calls. */
+  findProposalByIdempotencyKey(
+    database: SqliteHandle, actorId: string, idempotencyKeyHash: string,
+  ): Readonly<{ requestHash: string; proposal: ProposalRecord }> | null;
   listExecutingProposals(database: SqliteHandle, limit: number): readonly ProposalRecord[];
   transitionProposal(database: SqliteHandle, input: ProposalTransition): ProposalRecord;
   appendAudit(database: SqliteHandle, record: SanitizedCalendarAuditRecord): void;
@@ -391,6 +395,13 @@ export const createCalendarRepository = (): CalendarRepository => ({
   },
   getProposal(database, actorId, proposalId) {
     return mapProposal(selectProposal(database, actorId, proposalId));
+  },
+  findProposalByIdempotencyKey(database, actorId, idempotencyKeyHash) {
+    const row = database.prepare("SELECT request_hash, proposal_id FROM calendar_idempotency WHERE actor_id = :actorId AND idempotency_key_hash = :idempotencyKeyHash")
+      .get<{ request_hash: string; proposal_id: string }>({ actorId, idempotencyKeyHash });
+    if (row === undefined) return null;
+    const proposal = mapProposal(selectProposal(database, actorId, row.proposal_id));
+    return proposal === null ? null : { requestHash: row.request_hash, proposal };
   },
   listExecutingProposals(database, limit) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail("calendar_proposal_limit_invalid");

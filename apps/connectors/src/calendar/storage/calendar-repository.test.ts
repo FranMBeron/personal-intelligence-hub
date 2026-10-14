@@ -246,6 +246,18 @@ describe("Calendar repository", () => {
     await expect(database.transaction((db) => repository.insertProposal(db, proposal({ id: "proposal-03" }), "idempotency-hash-01", "different-request-hash"))).resolves.toEqual({ kind: "conflict" });
   });
 
+  it("looks up an idempotent proposal by actor-scoped key hash without inserting", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await seedConnection(database, otherActor);
+    await expect(database.read((db) => repository.findProposalByIdempotencyKey(db, actorId, "idempotency-lookup"))).resolves.toBeNull();
+    await database.transaction((db) => repository.insertProposal(db, proposal(), "idempotency-lookup", "request-hash-lookup"));
+    await expect(database.read((db) => repository.findProposalByIdempotencyKey(db, actorId, "idempotency-lookup")))
+      .resolves.toMatchObject({ requestHash: "request-hash-lookup", proposal: { id: "proposal-01", actorId } });
+    await expect(database.read((db) => repository.findProposalByIdempotencyKey(db, otherActor, "idempotency-lookup"))).resolves.toBeNull();
+    expect(await count(database, "calendar_idempotency")).toBe(1);
+  });
+
   it("uses compare-and-set versions for proposal state transitions", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
