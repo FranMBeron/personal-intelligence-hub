@@ -263,6 +263,7 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
           if (!sameConnectionSnapshot(current, connectionSnapshot)) return fail("calendar_connection_changed");
           const nextVersion = this.#repository.replaceCalendarSelection(
             db, principal.actorId, parsedBody.data.expectedVersion, records, token.authorizationId,
+            { now: timestamp, requestId: principal.requestId },
           );
           this.#repository.appendAudit(db, {
             id: randomUUID(), actorId: principal.actorId, operation: "selection_change", outcome: "selection_updated",
@@ -336,7 +337,9 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
             readEnabled: true, writeEnabled: true, isPrimary: true, lastVerifiedAt: timestamp,
           };
           const initialVersion = connection.selectionVersion;
-          this.#repository.replaceCalendarSelection(db, input.actorId, initialVersion, [record], input.authorizationId);
+          this.#repository.replaceCalendarSelection(
+            db, input.actorId, initialVersion, [record], input.authorizationId, { now: timestamp, requestId: input.requestId },
+          );
           const current = this.#repository.getConnection(db, input.actorId)!;
           const { safeReasonCode: _safeReasonCode, ...fields } = current;
           const bound = this.#repository.saveConnectionIfUnchanged(db, current, {

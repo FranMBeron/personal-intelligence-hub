@@ -78,6 +78,12 @@ export type SanitizedCalendarAuditRecord = Readonly<{
   occurredAt: string;
 }>;
 
+/** Clock and request that attribute system-initiated proposal transitions and their audit rows. */
+export type SystemTransitionContext = Readonly<{
+  now: string;
+  requestId: string;
+}>;
+
 export type NewOAuthTransaction = Omit<OAuthTransaction, "consumedAt" | "authorizationCompletedAt">;
 
 export type ProposalInsertResult =

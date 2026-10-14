@@ -427,6 +427,51 @@ describe("Calendar selection service", () => {
     expect(await auditCount(db)).toBe(0);
   });
 
+  it("rejects pending proposals on a deselected calendar at the injected clock with one content-free audit row", async () => {
+    const db = await openDb();
+    await seedConnection(db);
+    const { service } = makeService(db);
+    await service.bootstrapPrimary(await bootstrapInput(db));
+    const discovered = await service.discover(principal());
+    const primaryRef = discovered.items.find((item) => item.isPrimary)!.calendarRef;
+    const secondaryRef = discovered.items.find((item) => !item.isPrimary)!.calendarRef;
+    await service.update(principal(), { expectedVersion: 1, calendars: [
+      { calendarRef: primaryRef, readEnabled: true, writeEnabled: true },
+      { calendarRef: secondaryRef, readEnabled: true, writeEnabled: true },
+    ] });
+    await db.transaction((handle) => {
+      repository.upsertEventReference(handle, {
+        actorId, eventRef: "event-ref-secondary", calendarRef: secondaryRef,
+        providerEventIdCiphertext: sealCalendarValue("provider-event-secondary", `calendar_event_refs:${actorId}:provider-id`, keyring),
+        providerEventBlindIndex: "blind-event-secondary", lastObservedAt: now.toISOString(),
+      });
+      repository.insertProposal(handle, {
+        actorId, id: "proposal-secondary", version: 1, status: "pending", operation: "update", eventRef: "event-ref-secondary",
+        encryptedPayload: sealCalendarValue("fictional-payload", `calendar_change_proposals:${actorId}:proposal-secondary:payload`, keyring),
+        createdByActorType: "human", createdAt: now.toISOString(), expiresAt: "2026-10-12T12:15:00.000Z",
+      }, "idem-secondary", "hash-secondary");
+    });
+    const auditBefore = await auditCount(db);
+    currentTime = new Date("2020-01-01T00:00:00.000Z");
+
+    await service.update({ ...principal(), requestId: "request-deselect-secondary" }, { expectedVersion: 2, calendars: [
+      { calendarRef: primaryRef, readEnabled: true, writeEnabled: true },
+    ] });
+
+    await expect(db.read((handle) => repository.getProposal(handle, actorId, "proposal-secondary"))).resolves.toMatchObject({
+      status: "rejected", version: 2, safeReasonCode: "provider_state_changed", completedAt: "2020-01-01T00:00:00.000Z",
+      retainedEventRef: "event-ref-secondary",
+    });
+    const rejections = await db.read((handle) => handle.prepare(
+      "SELECT proposal_id, operation, outcome, request_id, occurred_at FROM calendar_change_audit WHERE actor_id = :actorId AND outcome = 'rejected'",
+    ).all<Record<string, unknown>>({ actorId }));
+    expect(rejections).toEqual([{
+      proposal_id: "proposal-secondary", operation: "update", outcome: "rejected",
+      request_id: "request-deselect-secondary", occurred_at: "2020-01-01T00:00:00.000Z",
+    }]);
+    expect(await auditCount(db)).toBe(auditBefore + 2);
+  });
+
   it("rejects cross-actor and fabricated opaque references", async () => {
     const db = await openDb();
     await seedConnection(db);

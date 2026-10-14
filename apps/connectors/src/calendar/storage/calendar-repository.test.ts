@@ -21,6 +21,7 @@ const databases: ConnectorDatabase[] = [];
 const directories: string[] = [];
 const now = "2026-10-12T12:00:00.000Z";
 const later = "2026-10-12T12:10:00.000Z";
+const systemTransition = { now, requestId: "request-system" };
 const actorId = "actor-fictional-01";
 const otherActor = "actor-fictional-02";
 const ring: CalendarKeyring = {
@@ -149,12 +150,12 @@ describe("Calendar repository", () => {
   it("rejects duplicate provider calendar identities by actor-scoped blind index", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db)));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition));
     await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toMatchObject({ selectionVersion: 2 });
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [
       calendar({ calendarRef: "calendar-ref-02" }),
       calendar({ calendarRef: "calendar-ref-03" }),
-    ], authorizationIdOf(db)))).rejects.toThrow();
+    ], authorizationIdOf(db), systemTransition))).rejects.toThrow();
     await expect(count(database, "calendar_allowlist")).resolves.toBe(1);
   });
 
@@ -162,11 +163,11 @@ describe("Calendar repository", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.write((db) => repository.saveConnection(db, connection({ actorId: otherActor })));
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db)));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition));
 
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [
       calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" }),
-    ], authorizationIdOf(db)))).rejects.toThrow();
+    ], authorizationIdOf(db), systemTransition))).rejects.toThrow();
 
     await expect(database.read((db) => repository.listCalendars(db, actorId))).resolves.toMatchObject([
       { actorId, calendarRef: "calendar-ref-01" },
@@ -178,8 +179,8 @@ describe("Calendar repository", () => {
   it("rejects selection version conflicts without changing the saved selection", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db)));
-    await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [], authorizationIdOf(db)))).rejects.toThrow();
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition));
+    await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [], authorizationIdOf(db), systemTransition))).rejects.toThrow();
     await expect(database.read((db) => repository.listCalendars(db, actorId))).resolves.toHaveLength(1);
   });
 
@@ -189,10 +190,10 @@ describe("Calendar repository", () => {
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [
       calendar({ calendarRef: "calendar-ref-01", isPrimary: true }),
       calendar({ calendarRef: "calendar-ref-02", isPrimary: true, providerCalendarBlindIndex: "blind-calendar-02" }),
-    ], authorizationIdOf(db)))).rejects.toThrow();
+    ], authorizationIdOf(db), systemTransition))).rejects.toThrow();
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [
       calendar({ readEnabled: false, writeEnabled: false, isPrimary: true }),
-    ], authorizationIdOf(db)))).rejects.toThrow();
+    ], authorizationIdOf(db), systemTransition))).rejects.toThrow();
   });
 
   it("enforces write-role and boolean constraints in SQLite", async () => {
@@ -201,13 +202,13 @@ describe("Calendar repository", () => {
 
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [
       calendar({ providerAccessRole: "reader", writeEnabled: true }),
-    ], authorizationIdOf(db)))).rejects.toThrow();
+    ], authorizationIdOf(db), systemTransition))).rejects.toThrow();
     await expect(database.read((db) => repository.listCalendars(db, actorId))).resolves.toEqual([]);
     await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toMatchObject({ selectionVersion: 1 });
 
     await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [
       calendar({ readEnabled: 2 as unknown as boolean }),
-    ], authorizationIdOf(db)))).rejects.toThrow();
+    ], authorizationIdOf(db), systemTransition))).rejects.toThrow();
     await expect(database.read((db) => repository.listCalendars(db, actorId))).resolves.toEqual([]);
   });
 
@@ -226,7 +227,7 @@ describe("Calendar repository", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference());
     });
 
@@ -310,12 +311,12 @@ describe("Calendar repository", () => {
     await seedConnection(database);
     const selectedCalendar = calendar();
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [selectedCalendar], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 1, [selectedCalendar], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference());
       repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idempotency-resave", "request-resave");
     });
 
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [selectedCalendar], authorizationIdOf(db)));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [selectedCalendar], authorizationIdOf(db), systemTransition));
 
     await expect(database.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.not.toBeNull();
     await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "pending", eventRef: "event-ref-01" });
@@ -327,7 +328,7 @@ describe("Calendar repository", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference({ lastObservedAt: "2026-10-01T00:00:00.000Z" }));
       repository.insertProposal(db, proposal({ eventRef: "event-ref-01", status: "completed", completedAt: now }), "idempotency-stale-event", "request-stale-event");
     });
@@ -338,49 +339,134 @@ describe("Calendar repository", () => {
     await expect(count(database, "calendar_idempotency")).resolves.toBe(1);
   });
 
-  it("makes live proposals non-executable and keeps them detached when their calendar is deselected and reselected", async () => {
+  it("rejects pending proposals in the application and only detaches the rest when their calendar is deselected and reselected", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     const primary = calendar();
     const secondary = calendar({ calendarRef: "calendar-ref-02", providerCalendarBlindIndex: "blind-calendar-02", isPrimary: false });
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [primary, secondary], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 1, [primary, secondary], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference({ calendarRef: "calendar-ref-02" }));
-      repository.insertProposal(db, proposal({ id: "proposal-pending", eventRef: "event-ref-01" }), "idem-deselect-pending", "hash-deselect-pending");
-      repository.insertProposal(db, proposal({ id: "proposal-executing", status: "executing", eventRef: "event-ref-01" }), "idem-deselect-executing", "hash-deselect-executing");
-      repository.insertProposal(db, proposal({ id: "proposal-done", status: "completed", completedAt: now, eventRef: "event-ref-01" }), "idem-deselect-done", "hash-deselect-done");
+      repository.insertProposal(db, proposal({ id: "proposal-pending", operation: "update", eventRef: "event-ref-01" }), "idem-deselect-pending", "hash-deselect-pending");
+      repository.insertProposal(db, proposal({ id: "proposal-done", operation: "update", status: "completed", completedAt: now, eventRef: "event-ref-01" }), "idem-deselect-done", "hash-deselect-done");
     });
 
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [primary], authorizationIdOf(db)));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [primary], authorizationIdOf(db), { now: later, requestId: "request-deselect" }));
 
     await expect(database.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.toBeNull();
     const pending = await database.read((db) => repository.getProposal(db, actorId, "proposal-pending"));
-    expect(pending).toMatchObject({ status: "rejected", version: 2, safeReasonCode: "provider_state_changed", retainedEventRef: "event-ref-01" });
+    expect(pending).toMatchObject({
+      status: "rejected", version: 2, safeReasonCode: "provider_state_changed", completedAt: later, retainedEventRef: "event-ref-01",
+    });
     expect(pending?.eventRef).toBeUndefined();
-    expect(pending?.completedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
-    const executing = await database.read((db) => repository.getProposal(db, actorId, "proposal-executing"));
-    expect(executing).toMatchObject({ status: "conflict", version: 2, safeReasonCode: "provider_state_changed", retainedEventRef: "event-ref-01" });
-    expect(executing?.eventRef).toBeUndefined();
     const done = await database.read((db) => repository.getProposal(db, actorId, "proposal-done"));
     expect(done).toMatchObject({ status: "completed", version: 1, completedAt: now, retainedEventRef: "event-ref-01" });
     expect(done?.eventRef).toBeUndefined();
     expect(done?.safeReasonCode).toBeUndefined();
+    const audit = await database.read((db) => db.prepare("SELECT * FROM calendar_change_audit ORDER BY occurred_at, id").all<Record<string, unknown>>());
+    expect(audit).toEqual([{
+      id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u),
+      actor_id: actorId, proposal_id: "proposal-pending", operation: "update", outcome: "rejected",
+      request_id: "request-deselect", occurred_at: later,
+    }]);
 
-    await expect(database.transaction((db) => repository.transitionProposal(db, {
-      actorId, proposalId: "proposal-pending", expectedVersion: 1, from: ["pending"], to: "executing",
-    }))).rejects.toThrow("calendar_proposal_transition_conflict");
     await expect(database.transaction((db) => repository.transitionProposal(db, {
       actorId, proposalId: "proposal-pending", expectedVersion: 2, from: ["pending"], to: "executing",
     }))).rejects.toThrow("calendar_proposal_transition_conflict");
 
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 3, [primary, secondary], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 3, [primary, secondary], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference({ calendarRef: "calendar-ref-02" }));
     });
     const reselected = await database.read((db) => repository.getProposal(db, actorId, "proposal-pending"));
     expect(reselected).toMatchObject({ status: "rejected", version: 2, retainedEventRef: "event-ref-01" });
     expect(reselected?.eventRef).toBeUndefined();
-    await expect(count(database, "calendar_idempotency")).resolves.toBe(3);
+    await expect(count(database, "calendar_change_audit")).resolves.toBe(1);
+    await expect(count(database, "calendar_idempotency")).resolves.toBe(2);
+    await expect(database.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
+  });
+
+  it("only detaches an executing proposal on deselection and lets the executor settle it from its retained reference", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    const primary = calendar();
+    const secondary = calendar({ calendarRef: "calendar-ref-02", providerCalendarBlindIndex: "blind-calendar-02", isPrimary: false });
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [primary, secondary], authorizationIdOf(db), systemTransition);
+      repository.upsertEventReference(db, eventReference({ calendarRef: "calendar-ref-02" }));
+      repository.insertProposal(db, proposal({ id: "proposal-executing", operation: "update", status: "executing", eventRef: "event-ref-01" }), "idem-deselect-executing", "hash-deselect-executing");
+    });
+
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [primary], authorizationIdOf(db), systemTransition));
+
+    const executing = await database.read((db) => repository.getProposal(db, actorId, "proposal-executing"));
+    expect(executing).toMatchObject({ status: "executing", version: 1, retainedEventRef: "event-ref-01" });
+    expect(executing?.eventRef).toBeUndefined();
+    expect(executing?.completedAt).toBeUndefined();
+    expect(executing?.safeReasonCode).toBeUndefined();
+    await expect(count(database, "calendar_change_audit")).resolves.toBe(0);
+    await expect(database.read((db) => repository.listExecutingProposals(db, 10))).resolves.toEqual([executing]);
+
+    const settled = await database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-executing", expectedVersion: 1, from: ["executing"], to: "completed",
+      eventRef: "event-ref-01", completedAt: later,
+    }));
+    expect(settled).toMatchObject({ status: "completed", version: 2, completedAt: later, retainedEventRef: "event-ref-01" });
+    expect(settled.eventRef).toBeUndefined();
+    await expect(database.read((db) => repository.listExecutingProposals(db, 10))).resolves.toEqual([]);
+    await expect(count(database, "calendar_idempotency")).resolves.toBe(1);
+  });
+
+  it("stamps system rejections with the injected clock so payload retention counts from it", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    const primary = calendar();
+    const secondary = calendar({ calendarRef: "calendar-ref-02", providerCalendarBlindIndex: "blind-calendar-02", isPrimary: false });
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [primary, secondary], authorizationIdOf(db), systemTransition);
+      repository.upsertEventReference(db, eventReference({ calendarRef: "calendar-ref-02" }));
+      repository.insertProposal(db, proposal({ id: "proposal-clock", operation: "update", eventRef: "event-ref-01" }), "idem-clock", "hash-clock");
+    });
+    const fakeNow = "2020-01-01T00:00:00.000Z";
+
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [primary], authorizationIdOf(db), { now: fakeNow, requestId: "request-clock" }));
+
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-clock"))).resolves.toMatchObject({ status: "rejected", completedAt: fakeNow });
+    // The retention service purges 30 days after the terminal state; run it 31 days after the fake clock.
+    const day = 24 * 60 * 60 * 1000;
+    const retentionCutoff = new Date(Date.parse(fakeNow) + 31 * day - 30 * day).toISOString();
+    await expect(database.write((db) => repository.purgeTerminalProposalPayloads(db, retentionCutoff))).resolves.toBe(1);
+    const purged = await database.read((db) => repository.getProposal(db, actorId, "proposal-clock"));
+    expect(purged?.encryptedPayload).toBeUndefined();
+    expect(purged).toMatchObject({ status: "rejected", payloadPurgedAt: retentionCutoff });
+  });
+
+  it("treats a rebound calendar (changed blind index) exactly like a deselection", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
+      repository.upsertEventReference(db, eventReference());
+      repository.insertProposal(db, proposal({ id: "proposal-rebind-pending", operation: "cancel", eventRef: "event-ref-01" }), "idem-rebind-pending", "hash-rebind-pending");
+      repository.insertProposal(db, proposal({ id: "proposal-rebind-executing", operation: "update", status: "executing", eventRef: "event-ref-01" }), "idem-rebind-executing", "hash-rebind-executing");
+    });
+
+    await database.transaction((db) => repository.replaceCalendarSelection(
+      db, actorId, 2, [calendar({ providerCalendarBlindIndex: "blind-calendar-rebound" })], authorizationIdOf(db), { now: later, requestId: "request-rebind" },
+    ));
+
+    await expect(database.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.toBeNull();
+    const pending = await database.read((db) => repository.getProposal(db, actorId, "proposal-rebind-pending"));
+    expect(pending).toMatchObject({
+      status: "rejected", version: 2, safeReasonCode: "provider_state_changed", completedAt: later, retainedEventRef: "event-ref-01",
+    });
+    expect(pending?.eventRef).toBeUndefined();
+    const executing = await database.read((db) => repository.getProposal(db, actorId, "proposal-rebind-executing"));
+    expect(executing).toMatchObject({ status: "executing", version: 1, retainedEventRef: "event-ref-01" });
+    expect(executing?.eventRef).toBeUndefined();
+    const audit = await database.read((db) => db.prepare("SELECT proposal_id, operation, outcome, request_id, occurred_at FROM calendar_change_audit").all<Record<string, unknown>>());
+    expect(audit).toEqual([{ proposal_id: "proposal-rebind-pending", operation: "cancel", outcome: "rejected", request_id: "request-rebind", occurred_at: later }]);
+    await expect(count(database, "calendar_idempotency")).resolves.toBe(2);
     await expect(database.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
   });
 
@@ -388,7 +474,7 @@ describe("Calendar repository", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference({ lastObservedAt: "2026-01-01T00:00:00.000Z" }));
       repository.insertProposal(db, proposal({ id: "proposal-live-pending", eventRef: "event-ref-01" }), "idem-live-pending", "hash-live-pending");
       repository.insertProposal(db, proposal({ id: "proposal-live-executing", status: "executing", eventRef: "event-ref-01" }), "idem-live-executing", "hash-live-executing");
@@ -404,7 +490,7 @@ describe("Calendar repository", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference({ lastObservedAt: "2026-10-01T00:00:00.000Z" }));
     });
     await database.transaction((db) => repository.insertProposal(db, proposal({ id: "proposal-idem-purge", createdAt: "2026-10-01T00:00:00.000Z" }), "idempotency-aged", "request-aged"));
@@ -437,7 +523,7 @@ describe("Calendar repository", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference());
       repository.appendAudit(db, auditRecord());
     });
@@ -561,17 +647,20 @@ describe("Calendar repository", () => {
     await expect(count(database, "calendar_change_proposals")).resolves.toBe(2);
     await expect(count(database, "calendar_idempotency")).resolves.toBe(2);
     await expect(database.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
-    // The detach trigger already moved both live proposals out of pending and
-    // bumped their version, so the older runtime's stale compare-and-set loses.
+    // The detach trigger only detaches, so the older runtime's compare-and-set
+    // still applies and proposals keep the status the runtime gave them.
     await expect(database.transaction((db) => db.prepare(
-      "UPDATE calendar_change_proposals SET status = 'executing', version = version + 1 WHERE actor_id = :actorId AND id = 'proposal-02' AND version = 1",
-    ).run({ actorId }).changes)).resolves.toBe(0);
-    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({
-      retainedEventRef: "event-ref-01", status: "rejected", version: 2, safeReasonCode: "provider_state_changed",
-    });
-    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-02"))).resolves.toMatchObject({
-      retainedEventRef: "event-ref-02", status: "rejected", version: 2, safeReasonCode: "provider_state_changed",
-    });
+      "UPDATE calendar_change_proposals SET status = 'rejected', version = version + 1 WHERE actor_id = :actorId AND id = 'proposal-01' AND version = 1",
+    ).run({ actorId }).changes)).resolves.toBe(1);
+    const first = await database.read((db) => repository.getProposal(db, actorId, "proposal-01"));
+    expect(first).toMatchObject({ retainedEventRef: "event-ref-01", status: "rejected", version: 2 });
+    expect(first?.eventRef).toBeUndefined();
+    const second = await database.read((db) => repository.getProposal(db, actorId, "proposal-02"));
+    expect(second).toMatchObject({ retainedEventRef: "event-ref-02", status: "pending", version: 1 });
+    expect(second?.eventRef).toBeUndefined();
+    expect(second?.safeReasonCode).toBeUndefined();
+    await expect(count(database, "calendar_idempotency")).resolves.toBe(2);
+    await expect(database.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
   });
 
   it("assigns a fresh authorization id on every replacement, even with identical metadata", async () => {
@@ -589,9 +678,9 @@ describe("Calendar repository", () => {
       .resolves.toBe(false);
     await database.write((db) => repository.saveConnection(db, { ...replaced!, state: "degraded" }));
     await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toMatchObject({ authorizationId: returned });
-    await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], original!.authorizationId)))
+    await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], original!.authorizationId, systemTransition)))
       .rejects.toThrow("calendar_connection_changed");
-    await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], returned)))
+    await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], returned, systemTransition)))
       .resolves.toBe(2);
   });
 
@@ -625,8 +714,8 @@ describe("proposal event ownership", () => {
     await seedConnection(database);
     await seedConnection(database, otherActor);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
-      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor), systemTransition);
       repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
     });
 
@@ -640,8 +729,8 @@ describe("proposal event ownership", () => {
     await seedConnection(database);
     await seedConnection(database, otherActor);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
-      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor), systemTransition);
       repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
       repository.insertProposal(db, proposal({ id: "proposal-transition-ref" }), "idem-transition-ref", "hash-transition-ref");
     });
@@ -662,8 +751,8 @@ describe("proposal foreign event ownership", () => {
     await seedConnection(database);
     await seedConnection(database, otherActor);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
-      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor), systemTransition);
       repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
     });
 
@@ -675,8 +764,8 @@ describe("proposal foreign event ownership", () => {
     await seedConnection(database);
     await seedConnection(database, otherActor);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
-      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
+      repository.replaceCalendarSelection(db, otherActor, 1, [calendar({ actorId: otherActor, calendarRef: "foreign-calendar-ref" })], authorizationIdOf(db, otherActor), systemTransition);
       repository.upsertEventReference(db, eventReference({ actorId: otherActor, eventRef: "foreign-event-ref", calendarRef: "foreign-calendar-ref" }));
       repository.insertProposal(db, proposal(), "idem-transition-foreign", "hash-transition-foreign");
     });
@@ -691,7 +780,7 @@ describe("terminal transitions of detached proposals", () => {
   const seedExecuting = async (database: ConnectorDatabase) => {
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference());
       repository.insertProposal(db, proposal({ id: "proposal-detached", status: "executing", operation: "update", eventRef: "event-ref-01" }), "idem-detached", "hash-detached");
     });
@@ -700,8 +789,8 @@ describe("terminal transitions of detached proposals", () => {
   it("lets an in-flight proposal whose reference was detached reach a terminal state without re-attaching it", async () => {
     const { database } = await createDatabase();
     await seedExecuting(database);
-    // An in-flight row detached without leaving `executing` (defense in depth:
-    // the 0210 trigger moves live rows to a terminal state itself).
+    // An in-flight row detached without leaving `executing`, as the 0210
+    // trigger leaves it when its reference is deleted.
     await database.write((db) => {
       db.prepare("UPDATE calendar_change_proposals SET retained_event_ref = event_ref, event_ref = NULL WHERE id = 'proposal-detached'").run();
       db.prepare("DELETE FROM calendar_event_refs WHERE event_ref = 'event-ref-01'").run();
@@ -718,7 +807,12 @@ describe("terminal transitions of detached proposals", () => {
   it("reports a stale executor snapshot as a transition conflict, not a missing reference", async () => {
     const { database } = await createDatabase();
     await seedExecuting(database);
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [calendar({ calendarRef: "calendar-ref-02", providerCalendarBlindIndex: "blind-calendar-02" })], authorizationIdOf(db)));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [calendar({ calendarRef: "calendar-ref-02", providerCalendarBlindIndex: "blind-calendar-02" })], authorizationIdOf(db), systemTransition));
+    // The reconciler settles the detached row first; the executor's v1 snapshot is now stale.
+    await database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-detached", expectedVersion: 1, from: ["executing"], to: "conflict", eventRef: "event-ref-01",
+      completedAt: later, safeReasonCode: "provider_state_changed",
+    }));
 
     await expect(database.transaction((db) => repository.transitionProposal(db, {
       actorId, proposalId: "proposal-detached", expectedVersion: 1, from: ["executing"], to: "failed", eventRef: "event-ref-01",
@@ -730,7 +824,7 @@ describe("terminal transitions of detached proposals", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference());
       repository.insertProposal(db, proposal({ id: "proposal-pending-detached", eventRef: "event-ref-01" }), "idem-pending-detached", "hash-pending-detached");
     });
@@ -788,7 +882,7 @@ describe("event reference REPLACE hazard", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference());
       repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idem-replace", "hash-replace");
     });
@@ -809,7 +903,7 @@ describe("proposal replay after event cleanup", () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference({ lastObservedAt: "2026-10-01T00:00:00.000Z" }));
     });
     const savedProposal = proposal({ id: "proposal-replay-cleanup", eventRef: "event-ref-01" });

@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import type { CalendarProposalStatus } from "@personal-intelligence-hub/contracts";
 import type { SqliteHandle } from "../../foundation/database.js";
@@ -13,6 +13,7 @@ import type {
   ProposalRecord,
   ProposalTransition,
   SanitizedCalendarAuditRecord,
+  SystemTransitionContext,
 } from "./records.js";
 
 type ConnectionRow = Readonly<{
@@ -112,6 +113,37 @@ const requireOwnedEventReference = (database: SqliteHandle, actorId: string, eve
   if (row === undefined) fail("calendar_event_reference_not_found");
 };
 
+const insertAudit = (database: SqliteHandle, record: SanitizedCalendarAuditRecord): void => {
+  const result = database.prepare("INSERT INTO calendar_change_audit(id, actor_id, proposal_id, operation, outcome, request_id, occurred_at) VALUES(:id, :actorId, :proposalId, :operation, :outcome, :requestId, :occurredAt)")
+    .run({ id: record.id, actorId: record.actorId, proposalId: record.proposalId ?? null, operation: record.operation, outcome: record.outcome, requestId: record.requestId, occurredAt: record.occurredAt });
+  requireChanges(result.changes);
+};
+
+// Before a calendar's event references are removed, pending proposals on them leave the state
+// machine through pending -> rejected (provider_state_changed) at the application clock, each with
+// one content-free audit row. Executing proposals are left alone: the 0210 trigger only detaches
+// them, and the executor or reconciler settles them from retained_event_ref.
+const rejectPendingProposalsForCalendar = (
+  database: SqliteHandle, actorId: string, calendarRef: string, system: SystemTransitionContext,
+): void => {
+  const affected = database.prepare(
+    "SELECT proposal.id, proposal.version, proposal.operation FROM calendar_change_proposals AS proposal " +
+    "JOIN calendar_event_refs AS event ON event.actor_id = proposal.actor_id AND event.event_ref = proposal.event_ref " +
+    "WHERE proposal.actor_id = :actorId AND event.calendar_ref = :calendarRef AND proposal.status = 'pending' ORDER BY proposal.id",
+  ).all<{ id: string; version: number; operation: ProposalRecord["operation"] }>({ actorId, calendarRef });
+  const reject = database.prepare(
+    "UPDATE calendar_change_proposals SET status = 'rejected', version = version + 1, completed_at = :now, safe_reason_code = 'provider_state_changed' " +
+    "WHERE actor_id = :actorId AND id = :id AND version = :version AND status = 'pending'",
+  );
+  for (const row of affected) {
+    requireChanges(reject.run({ actorId, id: row.id, version: row.version, now: system.now }).changes, "calendar_proposal_transition_conflict");
+    insertAudit(database, {
+      id: randomUUID(), actorId, proposalId: row.id, operation: row.operation, outcome: "rejected",
+      requestId: system.requestId, occurredAt: system.now,
+    });
+  }
+};
+
 const newAuthorizationId = (): string => randomBytes(16).toString("hex");
 const upsertConnection = (
   database: SqliteHandle,
@@ -163,6 +195,7 @@ export interface CalendarRepository {
     expectedVersion: number,
     calendars: readonly CalendarRecord[],
     expectedAuthorizationId: string,
+    system: SystemTransitionContext,
   ): number;
   resolveCalendar(database: SqliteHandle, actorId: string, calendarRef: string): CalendarRecord | null;
   resolveEvent(database: SqliteHandle, actorId: string, eventRef: string): EventReferenceRecord | null;
@@ -259,7 +292,7 @@ export const createCalendarRepository = (): CalendarRepository => ({
     return database.prepare("SELECT * FROM calendar_allowlist WHERE actor_id = :actorId ORDER BY calendar_ref")
       .all<CalendarRow>({ actorId }).map(mapCalendar);
   },
-  replaceCalendarSelection(database, actorId, expectedVersion, calendars, expectedAuthorizationId) {
+  replaceCalendarSelection(database, actorId, expectedVersion, calendars, expectedAuthorizationId, system) {
     if (calendars.some((item) => item.actorId !== actorId)) {
       fail("calendar_selection_actor_mismatch");
     }
@@ -282,11 +315,14 @@ export const createCalendarRepository = (): CalendarRepository => ({
     const selectedRefs = new Set(selected.map((item) => item.calendarRef));
     const existing = database.prepare("SELECT calendar_ref, provider_calendar_blind_index FROM calendar_allowlist WHERE actor_id = :actorId")
       .all<{ calendar_ref: string; provider_calendar_blind_index: string }>({ actorId });
-    const removeCalendar = database.prepare("DELETE FROM calendar_allowlist WHERE actor_id = :actorId AND calendar_ref = :calendarRef");
+    const deleteCalendar = database.prepare("DELETE FROM calendar_allowlist WHERE actor_id = :actorId AND calendar_ref = :calendarRef");
+    // Removing an allowlist row cascades to its event references, so settle their pending proposals first.
+    const removeCalendar = (calendarRef: string): void => {
+      rejectPendingProposalsForCalendar(database, actorId, calendarRef, system);
+      deleteCalendar.run({ actorId, calendarRef });
+    };
     for (const row of existing) {
-      if (!selectedRefs.has(row.calendar_ref)) {
-        removeCalendar.run({ actorId, calendarRef: row.calendar_ref });
-      }
+      if (!selectedRefs.has(row.calendar_ref)) removeCalendar(row.calendar_ref);
     }
 
     const upsert = database.prepare(
@@ -297,7 +333,7 @@ export const createCalendarRepository = (): CalendarRepository => ({
     for (const item of selected) {
       const previous = existing.find((row) => row.calendar_ref === item.calendarRef);
       if (previous !== undefined && previous.provider_calendar_blind_index !== item.providerCalendarBlindIndex) {
-        removeCalendar.run({ actorId, calendarRef: item.calendarRef });
+        removeCalendar(item.calendarRef);
       }
       const result = upsert.run({
         actorId, calendarRef: item.calendarRef,
@@ -387,9 +423,7 @@ export const createCalendarRepository = (): CalendarRepository => ({
     return result ?? fail("calendar_proposal_transition_conflict");
   },
   appendAudit(database, record) {
-    const result = database.prepare("INSERT INTO calendar_change_audit(id, actor_id, proposal_id, operation, outcome, request_id, occurred_at) VALUES(:id, :actorId, :proposalId, :operation, :outcome, :requestId, :occurredAt)")
-      .run({ id: record.id, actorId: record.actorId, proposalId: record.proposalId ?? null, operation: record.operation, outcome: record.outcome, requestId: record.requestId, occurredAt: record.occurredAt });
-    requireChanges(result.changes);
+    insertAudit(database, record);
   },
   expirePendingProposals(database, now) {
     return database.prepare("UPDATE calendar_change_proposals SET status = 'expired', version = version + 1, completed_at = :now, safe_reason_code = 'proposal_expired' WHERE status = 'pending' AND expires_at <= :now")

@@ -17,6 +17,7 @@ import type { GoogleAccessTokenProvider } from "./google-access-token-provider.j
 const actorId = "00000000-0000-4000-8000-000000000001";
 const otherActorId = "00000000-0000-4000-8000-000000000002";
 const now = new Date("2026-10-12T12:00:00.000Z");
+const systemTransition = { now: now.toISOString(), requestId: "request-system" };
 const requiredScopes = [
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
@@ -193,7 +194,7 @@ describe("Calendar OAuth service", () => {
       primaryCalendarBindingCiphertext: sealCalendarValue("primary-id-fictional", `calendar_connections:${actorId}:primary-calendar`, keyring),
       selectionVersion: 1,
     }));
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [makeCalendar()], authorizationIdOf(db)));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [makeCalendar()], authorizationIdOf(db), systemTransition));
     await expect(service.status(principal())).resolves.toMatchObject({
       state: "available", canRead: true, canProposeChanges: true, primaryCalendarConfigured: true,
       additionalCalendarCount: 0,
@@ -214,7 +215,7 @@ describe("Calendar OAuth service", () => {
     currentTime = now;
     const database = await createDatabase();
     await database.write((db) => repository.saveConnection(db, oldConnection()));
-    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 4, [makeCalendar()], authorizationIdOf(db)));
+    await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 4, [makeCalendar()], authorizationIdOf(db), systemTransition));
     let bootstrapCount = 0;
     const { service, oauth } = makeService(database, {
       bootstrap: {
@@ -230,7 +231,7 @@ describe("Calendar OAuth service", () => {
               safeReasonCode: undefined,
               updatedAt: now.toISOString(),
             });
-            repository.replaceCalendarSelection(db, actorId, 1, [makeCalendar()], authorizationIdOf(db));
+            repository.replaceCalendarSelection(db, actorId, 1, [makeCalendar()], authorizationIdOf(db), systemTransition);
           });
           return { state: "available", checkedAt: now.toISOString(), stale: false, canRead: true, canProposeChanges: true, primaryCalendarConfigured: true, additionalCalendarCount: 0 };
         },
@@ -262,7 +263,7 @@ describe("Calendar OAuth service", () => {
       providerEventBlindIndex: "event-blind-fictional", lastObservedAt: now.toISOString(),
     };
     await database.transaction((db) => {
-      repository.replaceCalendarSelection(db, actorId, 4, [makeCalendar()], authorizationIdOf(db));
+      repository.replaceCalendarSelection(db, actorId, 4, [makeCalendar()], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, event);
       repository.insertProposal(db, {
         actorId, id: "proposal-to-clear", version: 1, status: "pending", operation: "update",
