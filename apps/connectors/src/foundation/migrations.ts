@@ -152,6 +152,12 @@ export const validateMigrationHistory = (
     const actual = recorded[index]!;
     const expected = ordered[index]!;
     if (actual.name !== expected.name) {
+      // A recorded name that sorts before the packaged migration at the same
+      // position is not part of the packaged set at all: the history was
+      // altered rather than a packaged file going missing.
+      if (actual.name < expected.name) {
+        throw new MigrationError("migration_history_invalid", "unknown_record");
+      }
       throw new MigrationError("migration_missing", expected.name);
     }
     if (actual.sha256 !== expected.sha256) {

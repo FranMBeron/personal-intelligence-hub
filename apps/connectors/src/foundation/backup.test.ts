@@ -21,6 +21,7 @@ import {
   restoreConnectorBackup,
   verifyConnectorBackup,
 } from "./backup.js";
+import { loadMigrations } from "./migrations.js";
 
 const databases: ConnectorDatabase[] = [];
 const directories: string[] = [];
@@ -90,7 +91,7 @@ describe("connector backups", () => {
       createdAt: "2026-10-12T12:34:56.000Z",
       databaseFile: "connectors.sqlite",
       encryptionKeyVersions: ["calendar-key-v2", "hermes-key-v1"],
-      migrations: [{ name: "0000_foundation", sha256: expect.stringMatching(/^[0-9a-f]{64}$/u) }],
+      migrations: loadMigrations().map(({ name }) => ({ name, sha256: expect.stringMatching(/^[0-9a-f]{64}$/u) })),
     });
     expect(await restored.read((handle) =>
       handle.prepare("SELECT actor_id FROM user_preferences WHERE actor_id = :actorId")
@@ -105,7 +106,7 @@ describe("connector backups", () => {
     await (await import("./migrations.js")).applyMigrations(database, [
       ...(await import("./migrations.js")).loadMigrations(),
       ...(await import("./migrations.js")).migrations({
-        "0001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT NOT NULL);",
+        "9001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT NOT NULL);",
       }),
     ]);
     await database.write((handle) => handle.prepare("INSERT INTO notes VALUES(:id,:body)").run({ id: "kept", body: "restore" }));
@@ -122,7 +123,7 @@ describe("connector backups", () => {
     });
     databases.push(restored);
 
-    expect(manifest.migrations.map(({ name }) => name)).toEqual(["0000_foundation", "0001_additive_notes"]);
+    expect(manifest.migrations.map(({ name }) => name)).toEqual([...loadMigrations().map(({ name }) => name), "9001_additive_notes"]);
     await expect(restored.read((handle) =>
       handle.prepare("SELECT body FROM notes WHERE id = :id").get({ id: "kept" }),
     )).resolves.toEqual({ body: "restore" });
@@ -134,7 +135,7 @@ describe("connector backups", () => {
     await applyMigrations(database, [
       ...loadMigrations(),
       ...migrations({
-        "0001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY);",
+        "9001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY);",
       }),
     ]);
     const backup = await createConnectorBackup({
@@ -145,7 +146,7 @@ describe("connector backups", () => {
     });
     const db = new DatabaseSync(backup.databasePath);
     db.prepare("UPDATE connector_migrations SET sha256 = :sha WHERE name = :name")
-      .run({ name: "0001_additive_notes", sha: "f".repeat(64) });
+      .run({ name: "9001_additive_notes", sha: "f".repeat(64) });
     db.close();
     const manifest = JSON.parse(await readFile(backup.manifestPath, "utf8")) as Record<string, unknown>;
     manifest.databaseSha256 = createHash("sha256").update(await readFile(backup.databasePath)).digest("hex");
