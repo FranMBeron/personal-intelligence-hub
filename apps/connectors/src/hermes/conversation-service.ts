@@ -34,8 +34,48 @@ type Options = Readonly<{
   idGenerator: IdGenerator;
 }>;
 
-const fail = (code: string): never => { throw new Error(code); };
-const safeUpstreamErrors = new Set([
+export const hermesConversationErrorCodes = [
+  "forbidden",
+  "not_found",
+  "version_conflict",
+  "hermes_conversation_query_invalid",
+  "hermes_conversation_request_invalid",
+  "hermes_conversation_unavailable",
+  "hermes_conversation_update_failed",
+  "hermes_active_conversation_selected",
+  "hermes_message_query_invalid",
+  "hermes_selection_request_invalid",
+  "hermes_selection_update_failed",
+  "hermes_profile_not_configured",
+  "hermes_direct_conversations_disabled",
+  "hermes_clock_invalid",
+  "hermes_cursor_invalid",
+  "hermes_conflict",
+  "hermes_not_found",
+  "hermes_unauthorized",
+  "hermes_upstream_unavailable",
+  "hermes_request_timeout",
+  "hermes_response_invalid",
+  "hermes_page_limit_exceeded",
+] as const;
+export type HermesConversationErrorCode = (typeof hermesConversationErrorCodes)[number];
+const knownCodes: ReadonlySet<string> = new Set(hermesConversationErrorCodes);
+
+/** Typed service error. The message is always the code, never request or provider content. */
+export class HermesConversationError extends Error {
+  readonly code: HermesConversationErrorCode;
+
+  constructor(code: HermesConversationErrorCode) {
+    super(code);
+    this.name = "HermesConversationError";
+    this.code = code;
+  }
+}
+
+const fail = (code: HermesConversationErrorCode): never => { throw new HermesConversationError(code); };
+const hasCode = (error: unknown, ...codes: readonly HermesConversationErrorCode[]): boolean =>
+  error instanceof HermesConversationError && codes.includes(error.code);
+const upstreamCodes: ReadonlySet<string> = new Set<HermesConversationErrorCode>([
   "hermes_conflict",
   "hermes_not_found",
   "hermes_unauthorized",
@@ -45,10 +85,18 @@ const safeUpstreamErrors = new Set([
   "hermes_cursor_invalid",
   "hermes_page_limit_exceeded",
 ]);
-const upstreamError = (error: unknown): Error =>
-  error instanceof Error && safeUpstreamErrors.has(error.message)
-    ? new Error(error.message)
-    : new Error("hermes_upstream_unavailable");
+const upstreamError = (error: unknown): HermesConversationError =>
+  error instanceof Error && upstreamCodes.has(error.message)
+    ? new HermesConversationError(error.message as HermesConversationErrorCode)
+    : new HermesConversationError("hermes_upstream_unavailable");
+/** Re-raise typed errors; map known plain-coded repository errors; hide everything else. */
+const localError = (error: unknown, fallback: HermesConversationErrorCode): HermesConversationError => {
+  if (error instanceof HermesConversationError) return error;
+  if (error instanceof Error && knownCodes.has(error.message)) {
+    return new HermesConversationError(error.message as HermesConversationErrorCode);
+  }
+  return new HermesConversationError(fallback);
+};
 
 type SelectionRow = Readonly<{
   agent_id: string;
@@ -90,7 +138,12 @@ export class ConversationService {
     this.#requireScope(principal, "hermes:conversations:read");
     const parsed = ConversationListQuerySchema.safeParse(query);
     if (!parsed.success) return fail("hermes_conversation_query_invalid");
-    const page = await this.#database.read((db) => this.#conversations.listOwned(db, principal.actorId, parsed.data));
+    let page: ConversationList;
+    try {
+      page = await this.#database.read((db) => this.#conversations.listOwned(db, principal.actorId, parsed.data));
+    } catch (error) {
+      throw localError(error, "hermes_conversation_unavailable");
+    }
     const readyIds = await this.#database.read((db) => new Set(page.items
       .filter((item) => this.#conversations.getOwned(db, principal.actorId, item.id)?.provisionState === "ready")
       .map((item) => item.id)));
@@ -184,9 +237,9 @@ export class ConversationService {
       });
       return this.#publicConversation(updated);
     } catch (error) {
-      if (error instanceof Error && error.message === "hermes_active_conversation_selected") throw error;
+      if (hasCode(error, "hermes_active_conversation_selected")) throw error;
       if (error instanceof Error && error.message === "hermes_conversation_version_conflict") return fail("version_conflict");
-      throw new Error("hermes_conversation_update_failed");
+      return fail("hermes_conversation_update_failed");
     }
   }
 
@@ -199,11 +252,15 @@ export class ConversationService {
     await this.#getReady(principal.actorId, conversationId);
     const parsed = MessagePageQuerySchema.safeParse(query);
     if (!parsed.success) return fail("hermes_message_query_invalid");
-    return this.#database.read((db) => this.#messages.snapshot(db, {
-      actorId: principal.actorId,
-      conversationId,
-      query: parsed.data,
-    }));
+    try {
+      return await this.#database.read((db) => this.#messages.snapshot(db, {
+        actorId: principal.actorId,
+        conversationId,
+        query: parsed.data,
+      }));
+    } catch (error) {
+      throw localError(error, "hermes_conversation_unavailable");
+    }
   }
 
   async selection(principal: DelegatedPrincipal, agentId: string): Promise<ConversationSelection> {
@@ -277,7 +334,7 @@ export class ConversationService {
         });
       });
     } catch (error) {
-      if (error instanceof Error && (error.message === "not_found" || error.message === "version_conflict")) throw error;
+      if (hasCode(error, "not_found", "version_conflict")) throw error;
       return fail("hermes_selection_update_failed");
     }
   }
@@ -362,7 +419,7 @@ export class ConversationService {
         return this.#conversations.getOwned(db, actorId, latest.id) ?? fail("not_found");
       });
     } catch (error) {
-      if (error instanceof Error && error.message === "not_found") throw error;
+      if (hasCode(error, "not_found")) throw error;
       return fail("hermes_conversation_unavailable");
     }
     return this.#publicConversation(completed);

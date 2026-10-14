@@ -241,6 +241,25 @@ describe("Hermes ConversationService", () => {
     expect(native.createSession).not.toHaveBeenCalled();
   });
 
+  it("raises typed, content-free error codes from a closed set", async () => {
+    const { service } = await createHarness();
+    const own = await service.create(principal(), { agentId: "fitness", title: "Private title" });
+    await expect(service.patch(principal(foreignActorId), own.id, { title: "Foreign", expectedVersion: 1 }))
+      .rejects.toMatchObject({ name: "HermesConversationError", code: "not_found", message: "not_found" });
+    await expect(service.patch(principal(), own.id, { title: "Stale", expectedVersion: 7 }))
+      .rejects.toMatchObject({ code: "version_conflict" });
+    await expect(service.list(principal(), { limit: 50, cursor: "not-a-cursor" } as never))
+      .rejects.toMatchObject({ code: "hermes_cursor_invalid" });
+    await expect(service.selection({ ...principal(), scopes: [] }, "fitness"))
+      .rejects.toMatchObject({ code: "forbidden" });
+    const failing = await createHarness({
+      createSession: async () => { throw new Error("transport details with fictional-secret-token"); },
+    });
+    const upstream = await failing.service.create(principal(), { agentId: "fitness" }).catch((error: unknown) => error);
+    expect(upstream).toMatchObject({ code: "hermes_upstream_unavailable" });
+    expect(String((upstream as Error).message)).not.toContain("fictional-secret-token");
+  });
+
   it("maps message history only after checking actor-owned conversation", async () => {
     const { service, native } = await createHarness();
     const conversation = await service.create(principal(), { agentId: "fitness" });
