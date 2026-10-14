@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ConnectorsDelegationClient, DelegationClientError } from "./delegation-client.js";
+import { ConnectorsDelegationClient, DelegationClientError, delegationIdempotencyKey } from "./delegation-client.js";
 import type { UnixHttpTransport } from "./unix-http-transport.js";
 
 const socketPath = "/run/pih-connectors/hermes-delegation.sock";
@@ -16,7 +16,7 @@ const transportReturning = (status: number, body: unknown) => ({
 });
 const clientWith = (transport: UnixHttpTransport, credentials: [string, string][] = [["specialist-a", tokenA], ["specialist-b", tokenB]]) =>
   new ConnectorsDelegationClient({
-    socketPath, credentialsByTarget: new Map(credentials), transport, idempotencyKeyFactory: () => "delegation-key-0001",
+    socketPath, credentialsByTarget: new Map(credentials), transport,
   });
 
 describe("ConnectorsDelegationClient", () => {
@@ -26,7 +26,10 @@ describe("ConnectorsDelegationClient", () => {
     expect(result).toEqual(delegation);
     expect(transport.postJson).toHaveBeenCalledWith({
       socketPath, path: "/internal/v1/hermes/delegations", method: "POST",
-      headers: { authorization: `Bearer ${tokenA}`, "content-type": "application/json", "idempotency-key": "delegation-key-0001" },
+      headers: {
+        authorization: `Bearer ${tokenA}`, "content-type": "application/json",
+        "idempotency-key": delegationIdempotencyKey({ targetAgentId: "specialist-a", message: "Revisá esto.", sourceSessionId: "pih_conversation-01" }),
+      },
       body: JSON.stringify({ targetAgentId: "specialist-a", message: "Revisá esto.", sourceSessionId: "pih_conversation-01" }),
     });
     expect(transport.postJson.mock.calls[0]?.[0].body).not.toContain(tokenA);
@@ -64,6 +67,7 @@ describe("ConnectorsDelegationClient", () => {
     ["a relative socket path", { socketPath: "run/hermes-delegation.sock" }],
     ["the BFF socket", { socketPath: "/run/pih-connectors/web/connectors.sock" }],
     ["the BFF socket as mounted in web", { socketPath: "/run/pih-connectors/connectors.sock" }],
+    ["any socket inside the BFF directory", { socketPath: "/run/pih-connectors/web/hermes-delegation.sock" }],
     ["no credentials", { credentialsByTarget: new Map() }],
     ["a short credential", { credentialsByTarget: new Map([["specialist-a", "short"]]) }],
     ["a duplicated credential", { credentialsByTarget: new Map([["specialist-a", tokenA], ["specialist-b", tokenA]]) }],
@@ -71,7 +75,17 @@ describe("ConnectorsDelegationClient", () => {
   ])("refuses construction with %s", (_name, overrides) => {
     expect(() => new ConnectorsDelegationClient({
       socketPath, credentialsByTarget: new Map([["specialist-a", tokenA]]), transport: transportReturning(201, delegation),
-      idempotencyKeyFactory: () => "delegation-key-0001", ...overrides,
+      ...overrides,
     })).toThrow();
+  });
+
+  it("derives the idempotency key from the tool-call id when given, otherwise from session, target, and message", () => {
+    const base = { targetAgentId: "specialist-a", message: "Hola" };
+    expect(delegationIdempotencyKey(base)).toBe(delegationIdempotencyKey({ ...base }));
+    expect(delegationIdempotencyKey(base)).not.toBe(delegationIdempotencyKey({ ...base, sourceSessionId: "pih_conversation-01" }));
+    expect(delegationIdempotencyKey(base)).not.toBe(delegationIdempotencyKey({ ...base, targetAgentId: "specialist-b" }));
+    expect(delegationIdempotencyKey({ ...base, toolCallId: "call_01" })).toBe(delegationIdempotencyKey({ ...base, toolCallId: "call_01" }));
+    expect(delegationIdempotencyKey({ ...base, toolCallId: "call_01" })).not.toBe(delegationIdempotencyKey({ ...base, toolCallId: "call_02" }));
+    expect(delegationIdempotencyKey(base)).not.toContain("Hola");
   });
 });

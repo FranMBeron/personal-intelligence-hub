@@ -16,6 +16,15 @@ export interface UnixHttpTransport {
 }
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+/**
+ * Default client deadline. It must exceed the server's worst-case delegation
+ * path, three sequential upstream Hermes calls at 5s each (Bot Chat create,
+ * conflict recovery, run creation) plus local work, and the server's 15s
+ * request timeout; otherwise the client gives up while the server may still
+ * create the delegation. 30s leaves a 2x margin. A retry after a timeout reuses
+ * the deterministic idempotency key, so it replays rather than duplicates.
+ */
+export const DEFAULT_DELEGATION_TIMEOUT_MS = 30_000;
 const fail = (code: string): never => { throw new Error(code); };
 
 /**
@@ -27,7 +36,7 @@ export class NodeUnixHttpTransport implements UnixHttpTransport {
   readonly #timeoutMs: number;
 
   constructor(options: Readonly<{ timeoutMs?: number }> = {}) {
-    this.#timeoutMs = options.timeoutMs ?? 10_000;
+    this.#timeoutMs = options.timeoutMs ?? DEFAULT_DELEGATION_TIMEOUT_MS;
     if (!Number.isInteger(this.#timeoutMs) || this.#timeoutMs < 1 || this.#timeoutMs > 60_000) fail("delegation_transport_invalid");
   }
 

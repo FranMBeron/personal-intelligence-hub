@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { NodeUnixHttpTransport } from "./unix-http-transport.js";
+import { DEFAULT_DELEGATION_TIMEOUT_MS, NodeUnixHttpTransport } from "./unix-http-transport.js";
 
 const servers: Server[] = [];
 const directories: string[] = [];
@@ -80,5 +80,11 @@ describe("NodeUnixHttpTransport", () => {
   it("times out a stalled server with a finite deadline", async () => {
     const { socketPath } = await listen(() => undefined);
     await expect(new NodeUnixHttpTransport({ timeoutMs: 50 }).postJson(request(socketPath))).rejects.toThrow("delegation_timeout");
+  });
+
+  it("waits longer by default than the server's worst-case delegation path", () => {
+    // Server: three sequential upstream calls at 5s each (Bot Chat create, recover, run) plus a 15s request timeout.
+    expect(DEFAULT_DELEGATION_TIMEOUT_MS).toBeGreaterThan(3 * 5_000);
+    expect(DEFAULT_DELEGATION_TIMEOUT_MS).toBeGreaterThan(15_000);
   });
 });
