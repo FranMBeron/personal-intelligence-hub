@@ -14,6 +14,7 @@ import { detectImageMime, isAcceptedImageMime } from "./image-signature.js";
 import type { HermesProfileRegistry } from "./profile-registry.js";
 import type { ConversationRepository } from "./storage/conversation-repository.js";
 import type { StoredUpload, UploadRepository } from "./storage/upload-repository.js";
+import { UNSAFE_NAME_CHARACTERS } from "./unsafe-text.js";
 
 type Clock = Readonly<{ now(): Date }>;
 type IdGenerator = Readonly<{ generate(): string }>;
@@ -58,8 +59,8 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = 3;
 const PURGE_BATCH = 500;
 const MAX_SWEEP_ENTRIES = 10_000;
 const OPAQUE_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
-// Path separators, NUL and other C0/C1 control characters never belong in a display name.
-const UNSAFE_NAME = /[/\\\u0000-\u001f\u007f-\u009f]/u;
+// Path separators, C0/C1 controls, and zero-width/bidi formatting never belong in a display name: rejected, not rewritten.
+const UNSAFE_NAME = UNSAFE_NAME_CHARACTERS;
 
 /** Collect an async byte stream, aborting the moment `maxBytes` is crossed. */
 export const readBoundedBytes = async (

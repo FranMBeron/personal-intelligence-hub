@@ -94,7 +94,8 @@ describe("UploadService.store", () => {
 
   it("rejects path-like or control-character filenames", async () => {
     const { service } = await setup();
-    for (const name of ["../escape.png", "nested/a.png", "nested\\a.png", "..", ".", "bad\u0000.png", "bad\n.png", " ", "x".repeat(256)]) {
+    for (const name of ["../escape.png", "nested/a.png", "nested\\a.png", "..", ".", "bad\u0000.png", "bad\n.png", " ", "x".repeat(256),
+      "invoice\u202egnp.exe", "a\u200bb.png", "a\u2066b.png", "a\u061cb.png", "a\u200fb.png"]) {
       await expect(service.store(principalFor(), png({ name }))).rejects.toMatchObject({ code: "validation_failed" });
     }
   });

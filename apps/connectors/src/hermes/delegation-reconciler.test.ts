@@ -52,6 +52,14 @@ describe("DelegationReconciler.reconcileOnce", () => {
     expect(await row()).toEqual({ state: "completed", safe_summary: null, result_summary: "Resultado listo", completed_at: "2026-10-12T12:00:00.000Z" });
   });
 
+  it("strips zero-width and bidirectional formatting characters from the summary", async () => {
+    const { native, reconciler, row } = await setup();
+    const hidden = "\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u061c";
+    native.runStatus.mockResolvedValue(status({ status: "completed", output: `Resul${hidden}tado listo` }));
+    await reconciler().reconcileOnce(10);
+    expect((await row())?.result_summary).toBe("Resultado listo");
+  });
+
   it("truncates long results to 2,000 characters", async () => {
     const { native, reconciler, row } = await setup();
     native.runStatus.mockResolvedValue(status({ status: "completed", output: "a".repeat(5_000) }));

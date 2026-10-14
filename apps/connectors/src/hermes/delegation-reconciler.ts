@@ -2,6 +2,7 @@ import type { ConnectorDatabase } from "../foundation/database.js";
 import type { HermesNativeClient } from "./native-client.js";
 import type { HermesProfileRegistry } from "./profile-registry.js";
 import type { DelegationRepository, StoredDelegation } from "./storage/delegation-repository.js";
+import { UNSAFE_TEXT_CHARACTERS } from "./unsafe-text.js";
 
 type Clock = Readonly<{ now(): Date }>;
 type Options = Readonly<{
@@ -25,16 +26,14 @@ const QUEUED_MAX_AGE_MS = 60 * 60 * 1_000;
 const RUNNING_MAX_AGE_MS = 6 * 60 * 60 * 1_000;
 /** Longer cap for a delegated run waiting for human approval (same 24h rationale as RunReconciler). */
 const APPROVAL_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
-// C0/C1 controls except tab and newline never belong in a plain-text summary.
-const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu;
 
 type Terminal =
   | Readonly<{ state: "completed"; resultSummary: string }>
   | Readonly<{ state: "failed" | "cancelled"; reason: string }>;
 
-/** Bounded plain text: controls removed, at most 2,000 code-point-safe characters. */
+/** Bounded plain text: controls and invisible formatting removed, at most 2,000 code-point-safe characters. */
 const summarize = (output: string): string | null => {
-  const plain = output.replace(CONTROL, "").replace(/\r\n?/gu, "\n");
+  const plain = output.replace(UNSAFE_TEXT_CHARACTERS, "").replace(/\r\n?/gu, "\n");
   if (!/\S/u.test(plain)) return null;
   let summary = "";
   for (const character of plain) {
