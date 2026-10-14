@@ -246,6 +246,18 @@ describe("Calendar repository", () => {
     await expect(database.transaction((db) => repository.insertProposal(db, proposal({ id: "proposal-03" }), "idempotency-hash-01", "different-request-hash"))).resolves.toEqual({ kind: "conflict" });
   });
 
+  it("looks up an idempotent proposal by actor-scoped key hash without inserting", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await seedConnection(database, otherActor);
+    await expect(database.read((db) => repository.findProposalByIdempotencyKey(db, actorId, "idempotency-lookup"))).resolves.toBeNull();
+    await database.transaction((db) => repository.insertProposal(db, proposal(), "idempotency-lookup", "request-hash-lookup"));
+    await expect(database.read((db) => repository.findProposalByIdempotencyKey(db, actorId, "idempotency-lookup")))
+      .resolves.toMatchObject({ requestHash: "request-hash-lookup", proposal: { id: "proposal-01", actorId } });
+    await expect(database.read((db) => repository.findProposalByIdempotencyKey(db, otherActor, "idempotency-lookup"))).resolves.toBeNull();
+    expect(await count(database, "calendar_idempotency")).toBe(1);
+  });
+
   it("uses compare-and-set versions for proposal state transitions", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
@@ -257,6 +269,19 @@ describe("Calendar repository", () => {
       actorId, proposalId: "proposal-01", expectedVersion: 1, from: ["pending"], to: "rejected",
     }))).rejects.toThrow();
     await expect(database.read((db) => repository.getProposal(db, otherActor, "proposal-01"))).resolves.toBeNull();
+  });
+
+  it("refuses a transition guarded by expiry once expires_at has passed", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await database.transaction((db) => repository.insertProposal(db, proposal(), "idempotency-hash-expiry", "request-hash-expiry"));
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-01", expectedVersion: 1, from: ["pending"], to: "executing", unexpiredAt: "2026-10-12T13:00:00.000Z",
+    }))).rejects.toThrow("calendar_proposal_expired");
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "pending", version: 1 });
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-01", expectedVersion: 1, from: ["pending"], to: "executing", unexpiredAt: "2026-10-12T12:59:59.999Z",
+    }))).resolves.toMatchObject({ status: "executing", version: 2 });
   });
 
   it("enumerates executing proposals in stable order with a strict bound", async () => {
@@ -271,6 +296,10 @@ describe("Calendar repository", () => {
     await expect(database.read((db) => repository.listExecutingProposals(db, 2))).resolves.toMatchObject([
       { id: "proposal-a" }, { id: "proposal-c" },
     ]);
+    await expect(database.read((db) => repository.listExecutingProposals(db, 2, { createdAt: now, id: "proposal-a", actorId })))
+      .resolves.toMatchObject([{ id: "proposal-c" }, { id: "proposal-b" }]);
+    await expect(database.read((db) => repository.listExecutingProposals(db, 2, { createdAt: later, id: "proposal-b", actorId })))
+      .resolves.toEqual([]);
     await expect(database.read((db) => repository.listExecutingProposals(db, 0))).rejects.toThrow();
     await expect(database.read((db) => repository.listExecutingProposals(db, 101))).rejects.toThrow();
   });

@@ -47,7 +47,8 @@ const RawCalendarConfigSchema = z.object({
   googleClientSecret: NonBlankSchema,
   oauthRedirectUri: NonBlankSchema,
   oauthStateTtlSeconds: TtlString(60, 600),
-  proposalTtlSeconds: TtlString(300, 1800),
+  // Pinned: the specification fixes proposal lifetime at 15 minutes (see PROPOSAL_TTL_SECONDS).
+  proposalTtlSeconds: TtlString(900, 900),
   retentionIntervalSeconds: TtlString(60, 86_400),
   activeEncryptionKeyId: KeyIdSchema,
   encryptionKeys: RawKeyListSchema,

@@ -165,6 +165,56 @@ describe("Calendar selection service", () => {
     expect(JSON.stringify(rows)).not.toContain("Primary calendar");
   });
 
+  it("requires a separate, later write approval for an additional calendar", async () => {
+    const db = await openDb();
+    await seedConnection(db);
+    const { service } = makeService(db);
+    await service.bootstrapPrimary(await bootstrapInput(db));
+    const discovered = await service.discover(principal());
+    const primaryRef = discovered.items.find((item) => item.isPrimary)!.calendarRef;
+    const secondaryRef = discovered.items.find((item) => !item.isPrimary)!.calendarRef;
+    await expect(service.update(principal(), { expectedVersion: 1, calendars: [
+      { calendarRef: primaryRef, readEnabled: true, writeEnabled: true },
+      { calendarRef: secondaryRef, readEnabled: true, writeEnabled: true },
+    ] })).rejects.toThrow("calendar_write_requires_read_selection");
+    expect((await service.get(principal())).version).toBe(1);
+    const readOnly = await service.update(principal(), { expectedVersion: 1, calendars: [
+      { calendarRef: primaryRef, readEnabled: true, writeEnabled: true },
+      { calendarRef: secondaryRef, readEnabled: true, writeEnabled: false },
+    ] });
+    expect(readOnly.items.find((item) => item.calendarRef === secondaryRef)).toMatchObject({ readEnabled: true, writeEnabled: false });
+    await expect(service.update(principal(), { expectedVersion: 2, calendars: [
+      { calendarRef: primaryRef, readEnabled: true, writeEnabled: true },
+      { calendarRef: secondaryRef, readEnabled: false, writeEnabled: true },
+    ] })).rejects.toThrow("calendar_write_requires_read_selection");
+    const approved = await service.update(principal(), { expectedVersion: 2, calendars: [
+      { calendarRef: primaryRef, readEnabled: true, writeEnabled: true },
+      { calendarRef: secondaryRef, readEnabled: true, writeEnabled: true },
+    ] });
+    expect(approved.items.find((item) => item.calendarRef === secondaryRef)).toMatchObject({ readEnabled: true, writeEnabled: true });
+  });
+
+  it("rejects write enablement unless Google currently reports writer or owner", async () => {
+    const db = await openDb();
+    await seedConnection(db);
+    const readerSecondary = { ...secondary, accessRole: "reader" as const };
+    const google = mockGoogle({ listCalendars: vi.fn(async () => [primary, readerSecondary]) });
+    const { service } = makeService(db, google);
+    await service.bootstrapPrimary(await bootstrapInput(db));
+    const discovered = await service.discover(principal());
+    const primaryRef = discovered.items.find((item) => item.isPrimary)!.calendarRef;
+    const secondaryRef = discovered.items.find((item) => !item.isPrimary)!.calendarRef;
+    await service.update(principal(), { expectedVersion: 1, calendars: [
+      { calendarRef: primaryRef, readEnabled: true, writeEnabled: true },
+      { calendarRef: secondaryRef, readEnabled: true, writeEnabled: false },
+    ] });
+    await expect(service.update(principal(), { expectedVersion: 2, calendars: [
+      { calendarRef: primaryRef, readEnabled: true, writeEnabled: true },
+      { calendarRef: secondaryRef, readEnabled: true, writeEnabled: true },
+    ] })).rejects.toThrow("calendar_write_not_permitted");
+    expect((await service.get(principal())).version).toBe(2);
+  });
+
   it("rejects a replaced authorization returned during token acquisition before provider discovery", async () => {
     const db = await openDb();
     await seedConnection(db);
@@ -351,7 +401,10 @@ describe("Calendar selection service", () => {
     const selected = await service.get(principal());
     const primaryRef = selected.items[0]!.calendarRef;
     mutable.roles = [{ ...primary, accessRole: "reader" as const }, secondary];
-    const updated = await service.update(principal(), { expectedVersion: 1, calendars: [{ calendarRef: primaryRef, readEnabled: true, writeEnabled: true }] });
+    expect((await service.discover(principal())).items[0]).toMatchObject({ accessRole: "reader", writeEnabled: false });
+    await expect(service.update(principal(), { expectedVersion: 1, calendars: [{ calendarRef: primaryRef, readEnabled: true, writeEnabled: true }] }))
+      .rejects.toThrow("calendar_write_not_permitted");
+    const updated = await service.update(principal(), { expectedVersion: 1, calendars: [{ calendarRef: primaryRef, readEnabled: true, writeEnabled: false }] });
     expect(updated.items[0]).toMatchObject({ accessRole: "reader", readEnabled: true, writeEnabled: false });
     await expect(service.update({ ...principal(), serviceId: "hermes-central", actorType: "agent", actorId: centralActorId }, {
       expectedVersion: 2, calendars: [{ calendarRef: primaryRef, readEnabled: true, writeEnabled: true }],
@@ -437,6 +490,10 @@ describe("Calendar selection service", () => {
     const secondaryRef = discovered.items.find((item) => !item.isPrimary)!.calendarRef;
     await service.update(principal(), { expectedVersion: 1, calendars: [
       { calendarRef: primaryRef, readEnabled: true, writeEnabled: true },
+      { calendarRef: secondaryRef, readEnabled: true, writeEnabled: false },
+    ] });
+    await service.update(principal(), { expectedVersion: 2, calendars: [
+      { calendarRef: primaryRef, readEnabled: true, writeEnabled: true },
       { calendarRef: secondaryRef, readEnabled: true, writeEnabled: true },
     ] });
     await db.transaction((handle) => {
@@ -454,7 +511,7 @@ describe("Calendar selection service", () => {
     const auditBefore = await auditCount(db);
     currentTime = new Date("2020-01-01T00:00:00.000Z");
 
-    await service.update({ ...principal(), requestId: "request-deselect-secondary" }, { expectedVersion: 2, calendars: [
+    await service.update({ ...principal(), requestId: "request-deselect-secondary" }, { expectedVersion: 3, calendars: [
       { calendarRef: primaryRef, readEnabled: true, writeEnabled: true },
     ] });
 

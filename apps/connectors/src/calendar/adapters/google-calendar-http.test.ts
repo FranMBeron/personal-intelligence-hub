@@ -90,8 +90,15 @@ describe("Google Calendar HTTP adapter", () => {
     expect(listUrl.searchParams.get("timeMin")).toBe(request.timeMin);
     expect(listUrl.searchParams.get("timeMax")).toBe(request.timeMax);
     expect(listUrl.searchParams.get("timeZone")).toBe(request.timeZone);
-    await port.updateEvent("fictional-token", { calendarId: request.calendarId, eventId: "event/one", expectedEtag: '"etag-1"', event: { summary: "Updated", start: { dateTime: request.timeMin }, end: { dateTime: request.timeMax } }, sendUpdates: "externalOnly" });
+    await port.updateEvent("fictional-token", { calendarId: request.calendarId, eventId: "event/one", expectedEtag: '"etag-1"', event: {
+      summary: "Updated", start: { dateTime: request.timeMin }, end: { dateTime: request.timeMax },
+      attendees: [{ email: "guest@example.test", responseStatus: "accepted" }, { email: "new@example.test", responseStatus: "needsAction" }],
+    }, sendUpdates: "externalOnly" });
     const updateInit = fetcher.mock.calls[1]?.[1];
+    // The full list goes out with each guest's existing response, so a PATCH never resets RSVPs.
+    expect(JSON.parse(String(updateInit?.body)).attendees).toEqual([
+      { email: "guest@example.test", responseStatus: "accepted" }, { email: "new@example.test", responseStatus: "needsAction" },
+    ]);
     expect(String(fetcher.mock.calls[1]?.[0])).toContain("event%2Fone");
     expect(new Headers(updateInit?.headers).get("if-match")).toBe('"etag-1"');
     expect(new URL(String(fetcher.mock.calls[1]?.[0])).searchParams.get("sendUpdates")).toBe("externalOnly");
@@ -119,12 +126,46 @@ describe("Google Calendar HTTP adapter", () => {
       .mockResolvedValueOnce(response(event()))
       .mockResolvedValueOnce(response(event()));
     const port = makeAdapter(fetcher);
-    await port.respondToInvitation("fictional-token", { calendarId: "cal-one", eventId: "event-one", expectedEtag: '"e"', response: "declined", sendUpdates: "all" });
-    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ attendeesOmitted: true, attendees: [{ responseStatus: "declined" }] });
+    await port.respondToInvitation("fictional-token", { calendarId: "cal-one", eventId: "event-one", expectedEtag: '"e"', response: "declined", attendeeEmail: "me@example.test", sendUpdates: "all" });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({ attendeesOmitted: true, attendees: [{ email: "me@example.test", responseStatus: "declined" }] });
     expect(new URL(String(fetcher.mock.calls[0]?.[0])).searchParams.get("sendUpdates")).toBe("all");
-    await port.respondToInvitation("fictional-token", { calendarId: "cal-one", eventId: "event-one", expectedEtag: '"e"', response: "removed", sendUpdates: "none" });
+    await port.respondToInvitation("fictional-token", { calendarId: "cal-one", eventId: "event-one", expectedEtag: '"e"', response: "removed", attendeeEmail: "me@example.test", sendUpdates: "none" });
     expect(String(fetcher.mock.calls[1]?.[0])).toContain("/events/event-one?sendUpdates=none");
     expect(fetcher.mock.calls[1]?.[1]?.method).toBe("DELETE");
+  });
+
+  it("projects organizer and attendee self markers needed to tell invitations from owned events", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(event({
+      organizer: { email: "organizer@example.test", self: false, displayName: "Fictional organizer" },
+      attendees: [
+        { email: "guest@example.test", responseStatus: "accepted" },
+        { email: "me@example.test", self: true, responseStatus: "needsAction" },
+      ],
+    })));
+    const result = await makeAdapter(fetcher).getEvent("fictional-token", "cal-one", "event-one");
+    expect(result.organizer).toEqual({ self: false });
+    expect(result.attendees).toEqual([
+      { email: "guest@example.test", responseStatus: "accepted" },
+      { email: "me@example.test", self: true, responseStatus: "needsAction" },
+    ]);
+  });
+
+  it("identifies the responding attendee by email and never sends other attendees", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(event()));
+    const port = makeAdapter(fetcher);
+    await port.respondToInvitation("fictional-token", {
+      calendarId: "cal-one", eventId: "event-one", expectedEtag: '"e"', response: "tentative",
+      attendeeEmail: "me@example.test", sendUpdates: "externalOnly",
+    });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      attendeesOmitted: true, attendees: [{ email: "me@example.test", responseStatus: "tentative" }],
+    });
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("if-match")).toBe('"e"');
+    await expect(port.respondToInvitation("fictional-token", {
+      calendarId: "cal-one", eventId: "event-one", expectedEtag: '"e"', response: "accepted",
+      attendeeEmail: "not-an-email", sendUpdates: "none",
+    })).rejects.toThrow("google_calendar_request_invalid");
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("keeps its timeout active while consuming a stalled response body", async () => {

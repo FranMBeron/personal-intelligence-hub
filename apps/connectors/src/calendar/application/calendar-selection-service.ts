@@ -138,6 +138,24 @@ const connectionStatus = (
   return CalendarSourceStatusSchema.parse({ ...common, state: "available" });
 };
 
+// An additional calendar is approved for reading first; write is a second, separate approval that
+// only applies to a calendar whose read selection is already persisted. The primary calendar is
+// read/write by default and is exempt.
+const requireSeparateWriteApproval = (
+  persisted: readonly CalendarRecord[],
+  requested: readonly CalendarRecord[],
+): void => {
+  const persistedByRef = new Map(persisted.map((record) => [record.calendarRef, record]));
+  for (const record of requested) {
+    if (record.isPrimary || !record.writeEnabled) continue;
+    const previous = persistedByRef.get(record.calendarRef);
+    if (!record.readEnabled || previous === undefined || !previous.readEnabled ||
+        previous.providerCalendarBlindIndex !== record.providerCalendarBlindIndex) {
+      fail("calendar_write_requires_read_selection");
+    }
+  }
+};
+
 export class CalendarSelectionServiceImpl implements CalendarSelectionService {
   readonly #database: ConnectorDatabase;
   readonly #repository: CalendarRepository;
@@ -239,7 +257,8 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
         seen.add(request.calendarRef);
         const provider = discovered.get(request.calendarRef);
         if (provider === undefined) return fail("calendar_not_found");
-        const writable = canWrite(provider.accessRole);
+        // Google access is not PIH authorization, but write can never exceed what Google reports now.
+        if (request.writeEnabled && !canWrite(provider.accessRole)) return fail("calendar_write_not_permitted");
         records.push({
           actorId: principal.actorId,
           calendarRef: request.calendarRef,
@@ -248,7 +267,7 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
           displayNameCiphertext: sealCalendarValue(provider.summary, calendarAad(principal.actorId, "display-name"), this.#keyring),
           providerAccessRole: accessRole(provider.accessRole),
           readEnabled: request.readEnabled,
-          writeEnabled: request.writeEnabled && writable,
+          writeEnabled: request.writeEnabled,
           isPrimary: provider.primary,
           lastVerifiedAt: timestamp,
         });
@@ -261,6 +280,7 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
           const current = this.#repository.getConnection(db, principal.actorId);
           if (current === null) return fail("calendar_not_configured");
           if (!sameConnectionSnapshot(current, connectionSnapshot)) return fail("calendar_connection_changed");
+          requireSeparateWriteApproval(this.#repository.listCalendars(db, principal.actorId), records);
           const nextVersion = this.#repository.replaceCalendarSelection(
             db, principal.actorId, parsedBody.data.expectedVersion, records, token.authorizationId,
             { now: timestamp, requestId: principal.requestId },
@@ -281,6 +301,7 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
         if (error instanceof Error && error.message === "calendar_connection_changed") throw error;
         if (error instanceof Error && error.message === "calendar_selection_primary_required") throw error;
         if (error instanceof Error && error.message === "calendar_selection_actor_mismatch") throw error;
+        if (error instanceof Error && error.message === "calendar_write_requires_read_selection") throw error;
         throw new Error("calendar_selection_update_failed");
       }
     });

@@ -172,6 +172,9 @@ const selectProposal = (database: SqliteHandle, actorId: string, proposalId: str
   database.prepare("SELECT * FROM calendar_change_proposals WHERE actor_id = :actorId AND id = :proposalId")
     .get<ProposalRow>({ actorId, proposalId });
 
+/** Position of a proposal in the executing-proposal scan order. */
+export type ProposalKeyset = Readonly<{ createdAt: string; id: string; actorId: string }>;
+
 export interface CalendarRepository {
   createOAuthTransaction(database: SqliteHandle, input: NewOAuthTransaction): void;
   consumeOAuthTransaction(database: SqliteHandle, stateHash: string, actorId: string, now: string): OAuthTransaction | null;
@@ -202,7 +205,12 @@ export interface CalendarRepository {
   upsertEventReference(database: SqliteHandle, record: EventReferenceRecord): void;
   insertProposal(database: SqliteHandle, proposal: ProposalRecord, idempotencyKey: string, requestHash: string): ProposalInsertResult;
   getProposal(database: SqliteHandle, actorId: string, proposalId: string): ProposalRecord | null;
-  listExecutingProposals(database: SqliteHandle, limit: number): readonly ProposalRecord[];
+  /** Read-only idempotency lookup so a replay never needs provider calls. */
+  findProposalByIdempotencyKey(
+    database: SqliteHandle, actorId: string, idempotencyKeyHash: string,
+  ): Readonly<{ requestHash: string; proposal: ProposalRecord }> | null;
+  /** Executing proposals in (created_at, id, actor_id) order, strictly after an optional keyset position. */
+  listExecutingProposals(database: SqliteHandle, limit: number, after?: ProposalKeyset): readonly ProposalRecord[];
   transitionProposal(database: SqliteHandle, input: ProposalTransition): ProposalRecord;
   appendAudit(database: SqliteHandle, record: SanitizedCalendarAuditRecord): void;
   expirePendingProposals(database: SqliteHandle, now: string): number;
@@ -392,16 +400,32 @@ export const createCalendarRepository = (): CalendarRepository => ({
   getProposal(database, actorId, proposalId) {
     return mapProposal(selectProposal(database, actorId, proposalId));
   },
-  listExecutingProposals(database, limit) {
+  findProposalByIdempotencyKey(database, actorId, idempotencyKeyHash) {
+    const row = database.prepare("SELECT request_hash, proposal_id FROM calendar_idempotency WHERE actor_id = :actorId AND idempotency_key_hash = :idempotencyKeyHash")
+      .get<{ request_hash: string; proposal_id: string }>({ actorId, idempotencyKeyHash });
+    if (row === undefined) return null;
+    const proposal = mapProposal(selectProposal(database, actorId, row.proposal_id));
+    return proposal === null ? null : { requestHash: row.request_hash, proposal };
+  },
+  listExecutingProposals(database, limit, after) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) fail("calendar_proposal_limit_invalid");
-    return database.prepare("SELECT * FROM calendar_change_proposals WHERE status = 'executing' ORDER BY created_at, id LIMIT :limit")
-      .all<ProposalRow>({ limit }).map((row) => mapProposal(row)!);
+    if (after === undefined) {
+      return database.prepare("SELECT * FROM calendar_change_proposals WHERE status = 'executing' ORDER BY created_at, id, actor_id LIMIT :limit")
+        .all<ProposalRow>({ limit }).map((row) => mapProposal(row)!);
+    }
+    return database.prepare(
+      "SELECT * FROM calendar_change_proposals WHERE status = 'executing' AND (created_at, id, actor_id) > (:createdAt, :id, :actorId) " +
+      "ORDER BY created_at, id, actor_id LIMIT :limit",
+    ).all<ProposalRow>({ limit, createdAt: after.createdAt, id: after.id, actorId: after.actorId }).map((row) => mapProposal(row)!);
   },
   transitionProposal(database, input) {
     if (input.from.length === 0) fail("calendar_proposal_transition_invalid");
     const current = selectProposal(database, input.actorId, input.proposalId);
     if (current === undefined || current.version !== input.expectedVersion || !input.from.includes(current.status)) {
       fail("calendar_proposal_transition_conflict");
+    }
+    if (input.unexpiredAt !== undefined && Date.parse(current!.expires_at) <= Date.parse(input.unexpiredAt)) {
+      fail("calendar_proposal_expired");
     }
     const terminal = TERMINAL_PROPOSAL_STATUSES.has(input.to);
     // A detached proposal never re-attaches: it may only reach a terminal state, naming no reference
@@ -422,9 +446,11 @@ export const createCalendarRepository = (): CalendarRepository => ({
       to: input.to, eventRef: settlesDetached ? null : input.eventRef ?? null, completedAt: input.completedAt ?? null,
       safeReasonCode: input.safeReasonCode ?? null,
     };
+    const unexpired = input.unexpiredAt === undefined ? "" : " AND expires_at > :unexpiredAt";
+    if (input.unexpiredAt !== undefined) parameters.unexpiredAt = input.unexpiredAt;
     input.from.forEach((status, index) => { parameters[`from${index}`] = status; });
     const updated = database.prepare(
-      `UPDATE calendar_change_proposals SET status = :to, version = version + 1, event_ref = COALESCE(:eventRef, event_ref), completed_at = COALESCE(:completedAt, completed_at), safe_reason_code = :safeReasonCode WHERE actor_id = :actorId AND id = :proposalId AND version = :expectedVersion AND status IN (${placeholders})`,
+      `UPDATE calendar_change_proposals SET status = :to, version = version + 1, event_ref = COALESCE(:eventRef, event_ref), completed_at = COALESCE(:completedAt, completed_at), safe_reason_code = :safeReasonCode WHERE actor_id = :actorId AND id = :proposalId AND version = :expectedVersion AND status IN (${placeholders})${unexpired}`,
     ).run(parameters);
     requireChanges(updated.changes, "calendar_proposal_transition_conflict");
     const result = mapProposal(selectProposal(database, input.actorId, input.proposalId));

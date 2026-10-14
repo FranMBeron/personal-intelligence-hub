@@ -48,6 +48,7 @@ const EventSchema = z.object({
   attendees: z.array(z.object({
     email: z.string().email().max(320).optional(),
     displayName: z.string().max(500).optional(),
+    self: z.boolean().optional(),
     responseStatus: z.enum(["needsAction", "declined", "tentative", "accepted"]).optional(),
   }).passthrough()).max(500).optional(),
   recurringEventId: z.string().min(1).optional(),
@@ -63,6 +64,7 @@ const WritableEventTimeSchema = z.object({
   dateTime: z.string().min(1).max(64).optional(),
   timeZone: z.string().min(1).max(200).optional(),
 }).strict().refine((value) => value.date !== undefined || value.dateTime !== undefined);
+const AttendeeEmailSchema = z.string().email().max(320);
 const InvitationResponseSchema = z.enum(["accepted", "declined", "tentative", "removed"]);
 const WritableEventSchema = z.object({
   summary: z.string().trim().min(1).max(2000),
@@ -70,7 +72,10 @@ const WritableEventSchema = z.object({
   location: z.string().max(2000).optional(),
   start: WritableEventTimeSchema,
   end: WritableEventTimeSchema,
-  attendees: z.array(z.object({ email: z.string().email().max(320) }).strict()).max(100).optional(),
+  attendees: z.array(z.object({
+    email: z.string().email().max(320),
+    responseStatus: z.enum(["needsAction", "declined", "tentative", "accepted"]).optional(),
+  }).strict()).max(100).optional(),
 }).strict();
 
 type Options = Readonly<{ fetch?: typeof fetch; timeoutMs?: number }>;
@@ -108,6 +113,7 @@ const projectEvent = (input: unknown): GoogleEventRecord => {
     ...(event.attendees === undefined ? {} : { attendees: event.attendees.map((attendee) => ({
       ...(attendee.email === undefined ? {} : { email: attendee.email }),
       ...(attendee.displayName === undefined ? {} : { displayName: attendee.displayName }),
+      ...(attendee.self === undefined ? {} : { self: attendee.self }),
       ...(attendee.responseStatus === undefined ? {} : { responseStatus: attendee.responseStatus }),
     })) }),
     ...(event.recurringEventId === undefined ? {} : { recurringEventId: event.recurringEventId }),
@@ -247,13 +253,17 @@ export class GoogleCalendarHttpAdapter implements GoogleCalendarPort {
     const calendar = pathSegment(request.calendarId, CalendarIdSchema);
     const event = pathSegment(request.eventId, EventIdSchema);
     const sendUpdates = SendUpdatesSchema.safeParse(request.sendUpdates);
-    if (!sendUpdates.success || !validEtag(request.expectedEtag)) return fail("google_calendar_request_invalid");
-    const responseStatus = response.data === "tentative" ? "tentative" : response.data;
+    const attendeeEmail = AttendeeEmailSchema.safeParse(request.attendeeEmail);
+    if (!sendUpdates.success || !attendeeEmail.success || !validEtag(request.expectedEtag)) {
+      return fail("google_calendar_request_invalid");
+    }
     const url = new URL(`calendars/${calendar}/events/${event}`, API_BASE);
     url.searchParams.set("sendUpdates", sendUpdates.data);
+    // attendeesOmitted lets the PATCH carry only the caller's own attendee entry, so no other
+    // guest's state is rewritten; Google matches the entry by email.
     return projectEvent(await this.#json(accessToken, url, "PATCH", {
       attendeesOmitted: true,
-      attendees: [{ responseStatus }],
+      attendees: [{ email: attendeeEmail.data, responseStatus: response.data }],
     }, { "if-match": request.expectedEtag }));
   }
 
