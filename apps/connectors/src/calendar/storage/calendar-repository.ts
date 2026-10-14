@@ -403,10 +403,18 @@ export const createCalendarRepository = (): CalendarRepository => ({
     if (current === undefined || current.version !== input.expectedVersion || !input.from.includes(current.status)) {
       fail("calendar_proposal_transition_conflict");
     }
-    // A detached proposal may still be settled in a terminal state that names its own historical
-    // reference; that reference is neither required to be live nor re-attached.
-    const settlesDetached = input.eventRef !== undefined && TERMINAL_PROPOSAL_STATUSES.has(input.to) &&
-      current?.event_ref === null && current.retained_event_ref === input.eventRef;
+    const terminal = TERMINAL_PROPOSAL_STATUSES.has(input.to);
+    // A detached proposal never re-attaches: it may only reach a terminal state, naming no reference
+    // or its own historical one, which is neither required to be live nor written back.
+    const detached = current?.retained_event_ref !== null && current?.retained_event_ref !== undefined;
+    if (detached && (!terminal || (input.eventRef !== undefined && input.eventRef !== current?.retained_event_ref))) {
+      fail("calendar_proposal_detached");
+    }
+    // Event-bound operations cannot enter a non-terminal state without a live reference.
+    if (!terminal && current?.operation !== "create" && (current?.event_ref ?? input.eventRef) === undefined) {
+      fail("calendar_event_reference_not_found");
+    }
+    const settlesDetached = detached && input.eventRef !== undefined && current?.event_ref === null;
     if (!settlesDetached) requireOwnedEventReference(database, input.actorId, input.eventRef);
     const placeholders = input.from.map((_, index) => `:from${index}`).join(", ");
     const parameters: Record<string, string | number | null> = {

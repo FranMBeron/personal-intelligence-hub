@@ -820,22 +820,89 @@ describe("terminal transitions of detached proposals", () => {
     await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-detached"))).resolves.toMatchObject({ status: "conflict", version: 2 });
   });
 
-  it("still rejects a non-terminal transition onto a detached reference", async () => {
-    const { database } = await createDatabase();
+  const seedDetachedPending = async (database: ConnectorDatabase) => {
     await seedConnection(database);
     await database.transaction((db) => {
       repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
       repository.upsertEventReference(db, eventReference());
-      repository.insertProposal(db, proposal({ id: "proposal-pending-detached", eventRef: "event-ref-01" }), "idem-pending-detached", "hash-pending-detached");
+      repository.upsertEventReference(db, eventReference({ eventRef: "event-ref-other", providerEventBlindIndex: "blind-event-other" }));
+      repository.insertProposal(db, proposal({ id: "proposal-pending-detached", operation: "update", eventRef: "event-ref-01" }), "idem-pending-detached", "hash-pending-detached");
     });
-    await database.write((db) => {
-      db.prepare("UPDATE calendar_change_proposals SET retained_event_ref = event_ref, event_ref = NULL WHERE id = 'proposal-pending-detached'").run();
-      db.prepare("DELETE FROM calendar_event_refs WHERE event_ref = 'event-ref-01'").run();
+    // A pending row detached by a delete the application did not settle first (an older runtime, or retention).
+    await database.write((db) => db.prepare("DELETE FROM calendar_event_refs WHERE event_ref = 'event-ref-01'").run());
+  };
+
+  it("never lets a detached pending proposal become executable", async () => {
+    const { database } = await createDatabase();
+    await seedDetachedPending(database);
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-pending-detached")))
+      .resolves.toMatchObject({ status: "pending", version: 1, retainedEventRef: "event-ref-01" });
+
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-pending-detached", expectedVersion: 1, from: ["pending"], to: "executing",
+    }))).rejects.toThrow("calendar_proposal_detached");
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-pending-detached", expectedVersion: 1, from: ["pending"], to: "executing", eventRef: "event-ref-other",
+    }))).rejects.toThrow("calendar_proposal_detached");
+    // Even once the same opaque reference is observed again, the detached row stays detached.
+    await database.write((db) => repository.upsertEventReference(db, eventReference({ lastObservedAt: later })));
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-pending-detached", expectedVersion: 1, from: ["pending"], to: "executing", eventRef: "event-ref-01",
+    }))).rejects.toThrow("calendar_proposal_detached");
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-pending-detached", expectedVersion: 1, from: ["pending"], to: "pending",
+    }))).rejects.toThrow("calendar_proposal_detached");
+
+    const unchanged = await database.read((db) => repository.getProposal(db, actorId, "proposal-pending-detached"));
+    expect(unchanged).toMatchObject({ status: "pending", version: 1, retainedEventRef: "event-ref-01" });
+    expect(unchanged?.eventRef).toBeUndefined();
+  });
+
+  it("settles a detached proposal only under its own retained reference", async () => {
+    const { database } = await createDatabase();
+    await seedDetachedPending(database);
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-pending-detached", expectedVersion: 1, from: ["pending"], to: "rejected", eventRef: "event-ref-other",
+    }))).rejects.toThrow("calendar_proposal_detached");
+
+    const rejected = await database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-pending-detached", expectedVersion: 1, from: ["pending"], to: "rejected",
+      completedAt: later, safeReasonCode: "provider_state_changed",
+    }));
+    expect(rejected).toMatchObject({ status: "rejected", version: 2, retainedEventRef: "event-ref-01" });
+    expect(rejected.eventRef).toBeUndefined();
+  });
+
+  it("keeps a detached executing proposal from moving back to a non-terminal state", async () => {
+    const { database } = await createDatabase();
+    await seedExecuting(database);
+    await database.write((db) => db.prepare("DELETE FROM calendar_event_refs WHERE event_ref = 'event-ref-01'").run());
+
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-detached", expectedVersion: 1, from: ["executing"], to: "executing",
+    }))).rejects.toThrow("calendar_proposal_detached");
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-detached", expectedVersion: 1, from: ["executing"], to: "pending",
+    }))).rejects.toThrow("calendar_proposal_detached");
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-detached")))
+      .resolves.toMatchObject({ status: "executing", version: 1, retainedEventRef: "event-ref-01" });
+  });
+
+  it("requires a live event reference before an event-bound proposal becomes executable", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
+      repository.insertProposal(db, proposal({ id: "proposal-unbound-update", operation: "update" }), "idem-unbound-update", "hash-unbound-update");
+      repository.insertProposal(db, proposal({ id: "proposal-unbound-create", operation: "create" }), "idem-unbound-create", "hash-unbound-create");
     });
 
     await expect(database.transaction((db) => repository.transitionProposal(db, {
-      actorId, proposalId: "proposal-pending-detached", expectedVersion: 1, from: ["pending"], to: "executing", eventRef: "event-ref-01",
+      actorId, proposalId: "proposal-unbound-update", expectedVersion: 1, from: ["pending"], to: "executing",
     }))).rejects.toThrow("calendar_event_reference_not_found");
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-unbound-create", expectedVersion: 1, from: ["pending"], to: "executing",
+    }))).resolves.toMatchObject({ status: "executing", version: 2 });
   });
 });
 
