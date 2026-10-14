@@ -194,6 +194,34 @@ describe("Calendar selection service", () => {
     expect(await db.read((handle) => repository.listCalendars(handle, actorId))).toEqual([]);
   });
 
+  it("rejects an identical authorization replacement made while provider discovery is in flight", async () => {
+    const db = await openDb();
+    await seedConnection(db);
+    const primaryRef = (await makeService(db).service.discover(principal())).items.find((item) => item.isPrimary)!.calendarRef;
+    const before = await db.read((handle) => repository.getConnection(handle, actorId));
+    const auditsBefore = await auditCount(db);
+    const google = mockGoogle({
+      listCalendars: vi.fn(async () => {
+        const current = await db.read((handle) => repository.getConnection(handle, actorId));
+        await db.transaction((handle) => repository.replaceConnectionAuthorization(handle, current!));
+        return [primary, secondary];
+      }),
+    });
+    const { service } = makeService(db, google);
+    await expect(service.update(principal(), {
+      expectedVersion: 1,
+      calendars: [{ calendarRef: primaryRef, readEnabled: true, writeEnabled: true }],
+    })).rejects.toThrow("calendar_connection_changed");
+    expect(google.listCalendars).toHaveBeenCalledTimes(1);
+    const after = await db.read((handle) => repository.getConnection(handle, actorId));
+    expect(after!.authorizationId).not.toBe(before!.authorizationId);
+    const { authorizationId: _beforeId, ...beforeFields } = before!;
+    const { authorizationId: _afterId, ...afterFields } = after!;
+    expect(afterFields).toEqual(beforeFields);
+    expect(await auditCount(db)).toBe(auditsBefore);
+    expect(await db.read((handle) => repository.listCalendars(handle, actorId))).toEqual([]);
+  });
+
   it("rejects a stale token after a non-bootstrapped authorization is replaced with equal metadata", async () => {
     const db = await openDb();
     await seedConnection(db);
