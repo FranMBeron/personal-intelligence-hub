@@ -71,8 +71,6 @@ type Options = Readonly<{
   executor: CalendarChangeExecutor;
   reconciler: CalendarExecutionReconciler;
   locks: KeyedMutex;
-  /** Validated configuration range 300..1800; production value 900 (15 minutes). */
-  proposalTtlSeconds?: number;
 }>;
 
 type Built = Readonly<{
@@ -83,6 +81,9 @@ type Built = Readonly<{
 }>;
 
 const fail = (code: string): never => { throw new Error(code); };
+/** The specification fixes proposal lifetime at 15 minutes; it is deliberately not configurable. */
+export const PROPOSAL_TTL_SECONDS = 900;
+const PROPOSAL_TTL_MS = PROPOSAL_TTL_SECONDS * 1000;
 const IDEMPOTENCY_KEY = /^[\x21-\x7e]{8,128}$/u;
 const TERMINAL = new Set<ProposalRecord["status"]>(["completed", "rejected", "expired", "conflict", "failed"]);
 const sendUpdatesFor = (notification: "all" | "external_only" | "none"): SendUpdates =>
@@ -174,7 +175,6 @@ export class CalendarChangeProposalServiceImpl implements CalendarChangeProposal
   readonly #executor: CalendarChangeExecutor;
   readonly #reconciler: CalendarExecutionReconciler;
   readonly #locks: KeyedMutex;
-  readonly #ttlMs: number;
 
   constructor(options: Options) {
     this.#database = options.database;
@@ -187,9 +187,6 @@ export class CalendarChangeProposalServiceImpl implements CalendarChangeProposal
     this.#executor = options.executor;
     this.#reconciler = options.reconciler;
     this.#locks = options.locks;
-    const ttl = options.proposalTtlSeconds ?? 900;
-    if (!Number.isInteger(ttl) || ttl < 300 || ttl > 1800) fail("calendar_proposal_ttl_invalid");
-    this.#ttlMs = ttl * 1000;
   }
 
   async create(
@@ -220,7 +217,7 @@ export class CalendarChangeProposalServiceImpl implements CalendarChangeProposal
       ...(built.etag === undefined ? {} : { providerEtagCiphertext: sealProposalEtag(actorId, id, built.etag, this.#keyring) }),
       createdByActorType: principal.actorType,
       createdAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + this.#ttlMs).toISOString(),
+      expiresAt: new Date(now.getTime() + PROPOSAL_TTL_MS).toISOString(),
     };
     const stored = await this.#database.transaction((db) => {
       const connection = this.#repository.getConnection(db, actorId);
@@ -475,7 +472,6 @@ export type CalendarChangeServicesOptions = Readonly<{
   keyring: CalendarKeyring;
   clock: () => Date;
   idGenerator: () => string;
-  proposalTtlSeconds?: number;
 }>;
 
 /** Wires the proposal service, executor and reconciler around one shared per-proposal lock. */

@@ -53,7 +53,6 @@ export const buildServices = (db: ConnectorDatabase, google: FakeGoogleCalendar,
   const services = createCalendarChangeServices({
     database: db, repository, reader, google, keyring, clock: clock.now,
     idGenerator: () => `00000000-0000-4000-8000-${String(++counter).padStart(12, "0")}`,
-    proposalTtlSeconds: 900,
   });
   return { tokens, reader, ...services };
 };

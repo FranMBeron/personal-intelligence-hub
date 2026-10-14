@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { CalendarChangeProposalSchema, type DelegatedPrincipal } from "@personal-intelligence-hub/contracts";
+import { CalendarEventReader } from "./calendar-event-reader.js";
+import { PROPOSAL_TTL_SECONDS, createCalendarChangeServices } from "./change-proposal-service.js";
 import {
   centralPrincipal,
+  fakeTokens,
+  keyring,
   closeTestDatabases,
   humanPrincipal,
   otherActorId,
@@ -42,6 +46,17 @@ describe("Calendar change proposal policy", () => {
     expect(audit).toEqual([expect.objectContaining({ proposal_id: proposal.id, operation: "create", outcome: "proposed" })]);
     expect(JSON.stringify(audit)).not.toMatch(/Fictional|guest@|example\.test|Primary/u);
     expect(world.google.mutations).toHaveLength(0);
+  });
+
+  it("fixes the proposal TTL at 15 minutes regardless of wiring options", async () => {
+    expect(PROPOSAL_TTL_SECONDS).toBe(900);
+    const world = await createProposalWorld();
+    const reader = new CalendarEventReader({ database: world.db, repository, tokens: fakeTokens(world.db), google: world.google, keyring, clock: world.clock.now });
+    // A stale caller still passing a TTL cannot lengthen or shorten the window.
+    const legacyOptions = { database: world.db, repository, reader, google: world.google, keyring, clock: world.clock.now, idGenerator: () => "00000000-0000-4000-8000-0000000000aa", proposalTtlSeconds: 1800 };
+    const { proposals } = createCalendarChangeServices(legacyOptions);
+    const proposal = await proposals.create(centralPrincipal(), "fictional-key-0028", createBody(world.refs[PRIMARY]!));
+    expect(Date.parse(proposal.expiresAt) - Date.parse(proposal.createdAt)).toBe(15 * 60 * 1000);
   });
 
   it("denies proposing without calendar:propose and confirming or rejecting from anything but an authenticated PIH human", async () => {

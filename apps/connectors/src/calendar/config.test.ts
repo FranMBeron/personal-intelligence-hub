@@ -59,6 +59,8 @@ describe("Calendar provider configuration", () => {
     ["state TTL lower bound", { GOOGLE_CALENDAR_OAUTH_STATE_TTL_SECONDS: "59" }],
     ["state TTL upper bound", { GOOGLE_CALENDAR_OAUTH_STATE_TTL_SECONDS: "601" }],
     ["proposal TTL bound", { GOOGLE_CALENDAR_PROPOSAL_TTL_SECONDS: "1801" }],
+    ["proposal TTL pinned below 15 minutes", { GOOGLE_CALENDAR_PROPOSAL_TTL_SECONDS: "300" }],
+    ["proposal TTL pinned above 15 minutes", { GOOGLE_CALENDAR_PROPOSAL_TTL_SECONDS: "1800" }],
     ["retention TTL bound", { GOOGLE_CALENDAR_RETENTION_INTERVAL_SECONDS: "59" }],
     ["blank client ID", { GOOGLE_CALENDAR_CLIENT_ID: " " }],
   ])("rejects %s", (_label, override) => {
