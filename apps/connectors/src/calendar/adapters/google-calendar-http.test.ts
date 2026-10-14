@@ -90,8 +90,15 @@ describe("Google Calendar HTTP adapter", () => {
     expect(listUrl.searchParams.get("timeMin")).toBe(request.timeMin);
     expect(listUrl.searchParams.get("timeMax")).toBe(request.timeMax);
     expect(listUrl.searchParams.get("timeZone")).toBe(request.timeZone);
-    await port.updateEvent("fictional-token", { calendarId: request.calendarId, eventId: "event/one", expectedEtag: '"etag-1"', event: { summary: "Updated", start: { dateTime: request.timeMin }, end: { dateTime: request.timeMax } }, sendUpdates: "externalOnly" });
+    await port.updateEvent("fictional-token", { calendarId: request.calendarId, eventId: "event/one", expectedEtag: '"etag-1"', event: {
+      summary: "Updated", start: { dateTime: request.timeMin }, end: { dateTime: request.timeMax },
+      attendees: [{ email: "guest@example.test", responseStatus: "accepted" }, { email: "new@example.test", responseStatus: "needsAction" }],
+    }, sendUpdates: "externalOnly" });
     const updateInit = fetcher.mock.calls[1]?.[1];
+    // The full list goes out with each guest's existing response, so a PATCH never resets RSVPs.
+    expect(JSON.parse(String(updateInit?.body)).attendees).toEqual([
+      { email: "guest@example.test", responseStatus: "accepted" }, { email: "new@example.test", responseStatus: "needsAction" },
+    ]);
     expect(String(fetcher.mock.calls[1]?.[0])).toContain("event%2Fone");
     expect(new Headers(updateInit?.headers).get("if-match")).toBe('"etag-1"');
     expect(new URL(String(fetcher.mock.calls[1]?.[0])).searchParams.get("sendUpdates")).toBe("externalOnly");

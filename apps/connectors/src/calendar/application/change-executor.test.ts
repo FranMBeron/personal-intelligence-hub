@@ -75,6 +75,29 @@ describe("Calendar change executor", () => {
     }) }]);
   });
 
+  it("preserves existing guests' responses when an update sets attendees", async () => {
+    const world = await createProposalWorld();
+    world.google.put(PRIMARY, {
+      ...ownedEvent,
+      attendees: [
+        { email: SELF_EMAIL, self: true, responseStatus: "accepted" },
+        { email: "Guest@Example.test", responseStatus: "tentative" },
+        { email: "leaving@example.test", responseStatus: "declined" },
+      ],
+    });
+    const proposal = await world.proposals.create(centralPrincipal(), "exec-key-0015", {
+      operation: "update", eventRef: world.eventRefs["Owned planning"]!, recurrenceScope: "single", guestNotification: "all",
+      changes: { attendees: [{ email: "ME@example.test" }, { email: "guest@example.test" }, { email: "new@example.test" }] },
+    });
+    await expect(world.proposals.confirm(humanPrincipal(), proposal.id, { expectedVersion: 1 })).resolves.toMatchObject({ status: "completed" });
+    const sent = (world.google.mutations[0]?.request as { event: { attendees: unknown } }).event.attendees;
+    expect(sent).toEqual([
+      { email: SELF_EMAIL, responseStatus: "accepted" },
+      { email: "Guest@Example.test", responseStatus: "tentative" },
+      { email: "new@example.test", responseStatus: "needsAction" },
+    ]);
+  });
+
   it("turns a changed ETag into a conflict that requires a new proposal", async () => {
     const world = await createProposalWorld();
     const proposal = await world.proposals.create(centralPrincipal(), "exec-key-0004", update(world.eventRefs["Owned planning"]!));

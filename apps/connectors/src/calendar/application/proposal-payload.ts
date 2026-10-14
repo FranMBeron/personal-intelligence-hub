@@ -46,7 +46,10 @@ const PayloadSchema = z.object({
     location: z.string().optional(),
     start: TimeSchema,
     end: TimeSchema,
-    attendees: z.array(z.object({ email: z.string() }).strict()).optional(),
+    attendees: z.array(z.object({
+      email: z.string(),
+      responseStatus: z.enum(["needsAction", "declined", "tentative", "accepted"]).optional(),
+    }).strict()).optional(),
   }).strict().optional(),
   response: z.enum(["accepted", "declined", "tentative", "removed"]).optional(),
   attendeeEmail: z.string().optional(),

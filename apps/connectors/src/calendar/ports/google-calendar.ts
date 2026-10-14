@@ -47,8 +47,15 @@ export type GoogleWritableEvent = Readonly<{
   location?: string;
   start: Readonly<{ date?: string; dateTime?: string; timeZone?: string }>;
   end: Readonly<{ date?: string; dateTime?: string; timeZone?: string }>;
-  attendees?: readonly Readonly<{ email: string }>[];
+  /**
+   * Full attendee list (Google replaces the list). Existing guests carry their current
+   * responseStatus so an update never resets RSVPs; omitted responseStatus means needsAction.
+   */
+  attendees?: readonly WritableAttendee[];
 }>;
+
+export type WritableAttendee = Readonly<{ email: string; responseStatus?: AttendeeResponseStatus }>;
+export type AttendeeResponseStatus = "needsAction" | "declined" | "tentative" | "accepted";
 
 export type GoogleCreateEventRequest = Readonly<{
   calendarId: string;

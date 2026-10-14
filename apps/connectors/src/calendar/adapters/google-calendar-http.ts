@@ -72,7 +72,10 @@ const WritableEventSchema = z.object({
   location: z.string().max(2000).optional(),
   start: WritableEventTimeSchema,
   end: WritableEventTimeSchema,
-  attendees: z.array(z.object({ email: z.string().email().max(320) }).strict()).max(100).optional(),
+  attendees: z.array(z.object({
+    email: z.string().email().max(320),
+    responseStatus: z.enum(["needsAction", "declined", "tentative", "accepted"]).optional(),
+  }).strict()).max(100).optional(),
 }).strict();
 
 type Options = Readonly<{ fetch?: typeof fetch; timeoutMs?: number }>;

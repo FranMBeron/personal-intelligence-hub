@@ -17,7 +17,13 @@ import {
 import type { ConnectorDatabase } from "../../foundation/database.js";
 import type { CalendarKeyring } from "../crypto/envelope.js";
 import { mapGoogleEvent, sanitizeExternalText, toEventPreview } from "../domain/google-event-mapper.js";
-import type { GoogleCalendarPort, GoogleCalendarRecord, GoogleEventRecord, GoogleWritableEvent } from "../ports/google-calendar.js";
+import type {
+  GoogleCalendarPort,
+  GoogleCalendarRecord,
+  GoogleEventRecord,
+  GoogleWritableEvent,
+  WritableAttendee,
+} from "../ports/google-calendar.js";
 import type { CalendarRepository } from "../storage/calendar-repository.js";
 import type { CalendarRecord, ProposalRecord } from "../storage/records.js";
 import type { CalendarEventReader, OpenedCalendar } from "./calendar-event-reader.js";
@@ -112,6 +118,32 @@ const writableFromDraft = (draft: CalendarEventDraft): GoogleWritableEvent => ({
   ...googleTimes(draft.time),
   ...(draft.attendees.length === 0 ? {} : { attendees: draft.attendees.map((attendee) => ({ email: attendee.email })) }),
 });
+
+/**
+ * The requested attendee list merged with the event's current one by case-insensitive email:
+ * existing guests keep their provider email and responseStatus, new guests start at needsAction,
+ * and guests absent from the request are removed.
+ */
+const mergeAttendees = (
+  requested: readonly Readonly<{ email: string }>[], current: GoogleEventRecord["attendees"],
+): WritableAttendee[] => {
+  const existing = new Map<string, NonNullable<GoogleEventRecord["attendees"]>[number]>();
+  for (const attendee of current ?? []) {
+    if (attendee.email !== undefined && !existing.has(attendee.email.toLowerCase())) existing.set(attendee.email.toLowerCase(), attendee);
+  }
+  const seen = new Set<string>();
+  const merged: WritableAttendee[] = [];
+  for (const { email } of requested) {
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const known = existing.get(key);
+    merged.push(known?.email === undefined
+      ? { email, responseStatus: "needsAction" }
+      : { email: known.email, responseStatus: known.responseStatus ?? "needsAction" });
+  }
+  return merged;
+};
 
 /** Who may do what. Agent-generated text never reaches this decision: only the verified principal does. */
 const requirePropose = (principal: DelegatedPrincipal): void => {
@@ -386,7 +418,7 @@ export class CalendarChangeProposalServiceImpl implements CalendarChangeProposal
         ...(changes.time === undefined ? { start: event.start, end: event.end } : googleTimes(changes.time)),
         ...(changes.description === undefined ? {} : { description: changes.description }),
         ...(changes.location === undefined ? {} : { location: changes.location }),
-        ...(changes.attendees === undefined ? {} : { attendees: changes.attendees.map((attendee) => ({ email: attendee.email })) }),
+        ...(changes.attendees === undefined ? {} : { attendees: mergeAttendees(changes.attendees, event.attendees) }),
       };
       return {
         calendar: calendar.record, eventRef: target.eventRef!, etag: event.etag,
