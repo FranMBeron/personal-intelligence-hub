@@ -312,6 +312,18 @@ describe("calendar authorization start", () => {
     expect(await response.text()).not.toContain("other.example.test");
   });
 
+  it.each([
+    "https://evilgoogle.com/o/oauth2/v2/auth?client_id=fictional&state=fictional",
+    "https://accounts.google.com.evil.test/o/oauth2/v2/auth?client_id=fictional&state=fictional",
+  ])("refuses a look-alike Google host instead of matching by prefix or suffix: %s", async (authorizationUrl) => {
+    const gateway = gatewayStub({
+      startAuthorization: vi.fn(async () => ({ authorizationUrl, expiresAt: "2026-10-12T12:10:00.000Z" })),
+    });
+    const response = await createCalendarStartAuthorizationHandler(gateway, policy)(call("/oauth/authorizations", "POST"));
+    expect(response.status).toBe(502);
+    expect(await response.text()).not.toContain("evil");
+  });
+
   it("requires same Origin and a verified human", async () => {
     const gateway = gatewayStub();
     const foreign = await createCalendarStartAuthorizationHandler(gateway, policy)(
