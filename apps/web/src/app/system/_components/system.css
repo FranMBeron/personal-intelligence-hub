@@ -1,0 +1,51 @@
+/* Sistema component styles (Tasks 10-11). Page-level layout belongs to the page owner (Task 13). */
+
+/* Text colours meet WCAG AA (>= 4.5:1) on --surface: #5b554c is ~7:1, #8a3f27 ~6.6:1, #7a5a26 ~5.9:1, #3c5f47 ~6.9:1. */
+.system-status, .calendar-section, .calendar-proposal, .time-zone-preference {
+  --system-muted: #5b554c;
+  --system-danger: #8a3f27;
+  --system-warning: #7a5a26;
+  --system-positive: #3c5f47;
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.system-status { display: grid; gap: 12px; }
+.system-status__summary { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.system-status__icon { display: grid; width: 40px; height: 40px; flex: none; place-items: center; border-radius: 12px; background: var(--surface-quiet); color: var(--system-muted); font-weight: 900; }
+.system-status[data-tone="positive"] .system-status__icon { background: #e3eee6; color: var(--system-positive); }
+.system-status[data-tone="warning"] .system-status__icon { background: #f3ede2; color: var(--system-warning); }
+.system-status[data-tone="danger"] .system-status__icon { background: #f5e1d8; color: var(--system-danger); }
+.system-status__copy { flex: 1 1 220px; min-width: 0; }
+.system-status__copy h2 { margin: 0 0 4px; font-size: 16px; overflow-wrap: anywhere; }
+.system-status__copy p { margin: 0; color: var(--system-muted); font-size: 12px; line-height: 1.45; }
+.system-status__refresh, .calendar-section .button, .calendar-proposal .button, .time-zone-preference .button { min-height: 44px; }
+.system-status__error, .calendar-section__error, .calendar-proposal__error, .time-zone-preference__notice--alert { margin: 0; color: var(--system-danger); font-size: 12px; font-weight: 700; }
+.system-status__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 10px; }
+.system-status__telemetry { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 0; list-style: none; color: var(--system-muted); font-size: 12px; }
+.system-status__telemetry strong { color: var(--ink); }
+
+.source-status-card { display: grid; align-content: start; gap: 6px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.source-status-card[data-tone="danger"] { border-color: #e2b9a8; }
+.source-status-card[data-tone="warning"] { border-color: #e2d2b3; }
+.source-status-card__header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.source-status-card__header h3 { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.source-status-card p { margin: 0; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.source-status-card__verified { color: var(--system-positive); font-weight: 750; }
+.source-status-card__fact, .source-status-card__detail { color: var(--system-muted); }
+.source-status-card__reason, .source-status-card__stale { color: var(--system-warning); font-weight: 700; }
+.source-status-card[data-tone="danger"] .source-status-card__reason { color: var(--system-danger); }
+.source-status-card__capabilities { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.source-status-card__capabilities li { padding: 2px 8px; border-radius: 999px; background: var(--surface-quiet); color: var(--ink); font-size: 11px; overflow-wrap: anywhere; }
+
+.source-state__checked, .source-state__stale { margin: 2px 0 0; font-size: 11px; }
+.source-state__stale { font-weight: 750; }
+
+.time-zone-preference { display: grid; gap: 6px; }
+.time-zone-preference label { font-size: 12px; font-weight: 800; }
+.time-zone-preference__hint { margin: 0; color: var(--system-muted); font-size: 12px; overflow-wrap: anywhere; }
+.time-zone-preference__row { display: flex; flex-wrap: wrap; gap: 8px; }
+.time-zone-preference input { flex: 1 1 200px; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); font: inherit; }
+.time-zone-preference input[aria-invalid="true"] { border-color: var(--system-danger); }
+.time-zone-preference__notice { margin: 0; font-size: 12px; }
+.time-zone-preference__notice--status { color: var(--system-positive); font-weight: 700; }
