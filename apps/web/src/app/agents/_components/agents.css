@@ -1,0 +1,31 @@
+/* Agentes component styles (Task 8). Page-level layout belongs to the page owner. */
+
+/* Delegation ledger */
+.delegation-ledger { display: grid; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+.delegation-ledger__header { display: grid; gap: 4px; }
+.delegation-ledger__header h2 { margin: 0; font-size: 11px; font-weight: 900; letter-spacing: .075em; text-transform: uppercase; }
+.delegation-ledger__header p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.delegation-ledger__status, .delegation-ledger__note { margin: 0; color: var(--muted); font-size: 11px; }
+.delegation-ledger__list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.delegation-ledger__item { min-width: 0; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--surface-quiet); }
+.delegation-ledger__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "route badge" "summary time"; align-items: center; gap: 4px 10px; width: 100%; min-height: 44px; padding: 10px 12px; border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.delegation-ledger__row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.delegation-ledger__row[aria-expanded="true"] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; background: var(--surface-deep); }
+.delegation-ledger__route { grid-area: route; min-width: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 800; }
+.delegation-ledger__summary { grid-area: summary; min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 11px; }
+.delegation-ledger__row > .status-badge { grid-area: badge; justify-self: end; }
+.delegation-ledger__time { grid-area: time; justify-self: end; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.delegation-ledger__detail { display: grid; gap: 10px; padding: 12px; }
+.delegation-ledger__facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 8px; margin: 0; }
+.delegation-ledger__facts div { min-width: 0; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--surface); }
+.delegation-ledger__facts .delegation-ledger__wide { grid-column: 1 / -1; }
+.delegation-ledger__facts dt { color: var(--muted); font-size: 9px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.delegation-ledger__facts dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 12px; line-height: 1.4; }
+.delegation-ledger__origin { justify-self: start; margin: 0; color: var(--muted); font-size: 11px; }
+a.delegation-ledger__origin { color: inherit; }
+
+@media (max-width: 480px) {
+  .delegation-ledger { padding: 12px; }
+  .delegation-ledger__row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "route" "summary" "badge" "time"; }
+  .delegation-ledger__row > .status-badge, .delegation-ledger__time { justify-self: start; }
+}

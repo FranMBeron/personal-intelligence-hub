@@ -161,3 +161,8 @@ export const filterAgents = (agents: readonly AgentSummary[], filter: AgentFilte
 
 export const parseAgentFilter = (value: string | null): AgentFilter =>
   value === "active" || value === "attention" ? value : "all";
+
+const timeFormat = new Intl.DateTimeFormat("es", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
+
+/** Explicit UTC rendering until the actor time-zone preference is wired by its owner. */
+export const formatAgentTime = (iso: string): string => `${timeFormat.format(new Date(iso))} UTC`;
