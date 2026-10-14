@@ -21,3 +21,6 @@ export * from "./create-task.js";
 export * from "./link-card.js";
 export * from "./move-card.js";
 export * from "./tag-card.js";
+// Deliberately not part of createHermesTools: delegation is a separate, Central-only capability
+// (createCentralDelegationTool) that must never reach a specialist's tool set.
+export * from "./delegate-agent.js";

@@ -129,6 +129,34 @@ describe("HermesNativeClient", () => {
     expect(result).toEqual(accepted);
   });
 
+  it("forwards bounded image data URLs and rejects any other image reference", async () => {
+    const accepted = { run_id: "run_124", status: "queued", replayed: false };
+    const { client, requests } = clientFor(() => jsonResponse(accepted));
+    const dataUrl = "data:image/png;base64,iVBORw0KGgo=";
+    await client.createRun("specialist", {
+      sessionId: "pih_conversation-01",
+      idempotencyKey: "pih-5f352dc4cbb14251",
+      input: [{ role: "user", content: [
+        { type: "text", text: "Look" },
+        { type: "image_url", image_url: { url: dataUrl } },
+      ] }],
+    });
+    expect(JSON.parse(String(requests[0]?.init.body)).input[0].content[1]).toEqual({
+      type: "image_url", image_url: { url: dataUrl },
+    });
+    for (const url of [
+      "http://127.0.0.1:9/a.png", "file:///etc/passwd", "data:image/svg+xml;base64,PHN2Zy8+",
+      "data:text/html;base64,PGI+", "data:image/png;base64,not base64!",
+    ]) {
+      await expect(client.createRun("specialist", {
+        sessionId: "pih_conversation-01",
+        idempotencyKey: "pih-5f352dc4cbb14251",
+        input: [{ role: "user", content: [{ type: "image_url", image_url: { url } }] }],
+      })).rejects.toThrow("hermes_request_invalid");
+    }
+    expect(requests).toHaveLength(1);
+  });
+
   it("rejects unknown fields in accepted-run responses", async () => {
     const { client } = clientFor(() => jsonResponse({
       run_id: "run_123", status: "queued", replayed: false, provider_debug: "secret",

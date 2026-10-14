@@ -63,6 +63,22 @@ export class DelegationRepository {
     const hasNextPage=rows.length>query.limit;const page=rows.slice(0,query.limit);
     return DelegationListSchema.parse({items:page.map((row)=>{const {actorId:_actorId,upstreamSessionId:_session,idempotencyKey:_key,requestHash:_hash,upstreamRunId:_run,...item}=map(row);return item;}),pageInfo:{hasNextPage,nextCursor:hasNextPage&&page.length?encode(page[page.length-1]!.created_at,page[page.length-1]!.id):null}}) as DelegationList;
   }
+  getByIdempotency(connection:SqliteHandle,actorId:string,sourceAgentId:string,idempotencyKey:string):StoredDelegation|null {
+    const row=connection.prepare("SELECT "+columns+" FROM hermes_delegations WHERE actor_id=:actorId AND source_agent_id=:sourceAgentId AND idempotency_key=:idempotencyKey").get<Row>({actorId,sourceAgentId,idempotencyKey});
+    return row===undefined?null:map(row);
+  }
+  /** Oldest-first page of queued or running delegations for background reconciliation; `after` continues strictly past a prior row (keyset). */
+  listOpen(connection:SqliteHandle,limit:number,after?:Readonly<{createdAt:string;id:string}>):readonly StoredDelegation[] {
+    if(!Number.isInteger(limit)||limit<1||limit>500)fail("hermes_delegation_limit_invalid");
+    if(after===undefined)return connection.prepare("SELECT "+columns+" FROM hermes_delegations WHERE state IN ('queued','running') ORDER BY created_at,id LIMIT :limit").all<Row>({limit}).map(map);
+    return connection.prepare("SELECT "+columns+" FROM hermes_delegations WHERE state IN ('queued','running') AND (created_at,id)>(:createdAt,:id) ORDER BY created_at,id LIMIT :limit")
+      .all<Row>({limit,createdAt:after.createdAt,id:after.id}).map(map);
+  }
+  /** The owner's direct conversation in the source profile bound to an upstream session, if any. */
+  findSourceConversation(connection:SqliteHandle,actorId:string,sourceAgentId:string,upstreamSessionId:string):string|null {
+    const row=connection.prepare("SELECT id FROM hermes_conversations WHERE actor_id=:actorId AND agent_id=:sourceAgentId AND upstream_session_id=:upstreamSessionId AND provision_state='ready'").get<{id:string}>({actorId,sourceAgentId,upstreamSessionId});
+    return row?.id??null;
+  }
   getOwned(connection:SqliteHandle,actorId:string,id:string):StoredDelegation|null {
     const row=connection.prepare("SELECT "+columns+" FROM hermes_delegations WHERE actor_id=:actorId AND id=:id").get<Row>({actorId,id});
     return row===undefined?null:map(row);

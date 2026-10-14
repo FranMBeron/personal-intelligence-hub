@@ -24,10 +24,21 @@ const SessionPatchSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   archived: z.boolean().optional(),
 }).strict().refine((patch) => patch.title !== undefined || patch.archived !== undefined);
+/** Base64 of the 10 MiB configured ceiling plus the data URL prefix. */
+const MAX_IMAGE_DATA_URL_LENGTH = 14_000_000;
+const MAX_IMAGES_PER_RUN = 3;
+const ImageDataUrlSchema = z.string().max(MAX_IMAGE_DATA_URL_LENGTH)
+  .regex(/^data:image\/(?:png|jpeg|webp);base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u);
+const ContentPartSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("text"), text: z.string().min(1).max(20_000) }).strict(),
+  z.object({ type: z.literal("image_url"), image_url: z.object({ url: ImageDataUrlSchema }).strict() }).strict(),
+]);
 const MessageInputSchema = z.array(z.object({
   role: z.literal("user"),
-  content: z.array(z.object({ type: z.literal("text"), text: z.string().min(1).max(20_000) }).strict()).min(1).max(100),
-}).strict()).min(1).max(100);
+  content: z.array(ContentPartSchema).min(1).max(100),
+}).strict()).min(1).max(100).refine(
+  (messages) => messages.flatMap(({ content }) => content).filter(({ type }) => type === "image_url").length <= MAX_IMAGES_PER_RUN,
+);
 const CreateRunSchema = z.object({
   sessionId: SafeIdentifierSchema,
   idempotencyKey: z.string().min(8).max(255).regex(/^[A-Za-z0-9._:-]+$/u),

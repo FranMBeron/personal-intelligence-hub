@@ -293,16 +293,46 @@ describe("Hermes repositories", () => {
     }))).rejects.toThrow();
   });
 
-  it("deletes expired uploads and returns storage paths for cleanup", async () => {
+  it("purges only expired releasable uploads and never an in-flight claim", async () => {
     const database = await configuredDatabase();
     await createConversation(database);
     const repository = new UploadRepository();
-    await database.write((db) => repository.insert(db, {
-      reference: "expired-upload", actorId, conversationId, originalName: "fictional.webp",
-      mimeType: "image/webp", sizeBytes: 50, storagePath: "/tmp/expired-upload",
-      expiresAt: "2026-10-12T11:00:00.000Z",
-    }));
-    await expect(database.write((db) => repository.deleteExpired(db, now))).resolves.toEqual(["/tmp/expired-upload"]);
+    const expired = { actorId, conversationId, originalName: "fictional.webp", mimeType: "image/webp", sizeBytes: 50, expiresAt: "2026-10-12T11:00:00.000Z" };
+    await database.write((db) => {
+      repository.insert(db, { ...expired, reference: "expired-upload", storagePath: "/tmp/expired-upload" });
+      repository.insert(db, { ...expired, reference: "claimed-upload", storagePath: "/tmp/claimed-upload" });
+      db.prepare("UPDATE hermes_uploads SET claimed_by_admission='admission-01' WHERE reference='claimed-upload'").run({});
+    });
+    // Only the claim-aware purge exists; an unrestricted delete would release an in-flight claim.
+    expect("deleteExpired" in repository).toBe(false);
+    await expect(database.transaction((db) => repository.deleteExpiredReleasable(db, now, 10))).resolves.toEqual(["/tmp/expired-upload"]);
+    await expect(database.read((db) => repository.getClaimed(db, {
+      actorId, conversationId, reference: "claimed-upload", admissionId: "admission-01",
+    }))).resolves.toMatchObject({ reference: "claimed-upload" });
+  });
+
+  it("purges only expired terminal idempotency records, never a live reserved or admitted one", async () => {
+    const database = await configuredDatabase();
+    await createConversation(database);
+    const messages = new MessageRepository();
+    const repository = new IdempotencyRepository();
+    const expiresAt = "2026-10-12T12:30:00.000Z";
+    await database.transaction((db) => {
+      for (const key of ["reserved", "admitted", "terminal"]) {
+        messages.insert(db, storedMessage({ id: `message-${key}` }));
+        messages.insert(db, storedMessage({ id: `assistant-${key}`, role: "assistant", deliveryState: "sending" }));
+        repository.reserve(db, {
+          actorId, conversationId, idempotencyKey: `key-${key}`, requestHash: "hash-01",
+          messageId: `message-${key}`, assistantMessageId: `assistant-${key}`, createdAt: now, expiresAt,
+        });
+      }
+      repository.attachRun(db, { actorId, conversationId, idempotencyKey: "key-admitted", runId: "run-admitted" });
+      repository.attachRun(db, { actorId, conversationId, idempotencyKey: "key-terminal", runId: "run-terminal" });
+      repository.markTerminalIfState(db, { actorId, conversationId, idempotencyKey: "key-terminal" }, "admitted");
+    });
+    await expect(database.transaction((db) => repository.deleteExpired(db, "2026-10-14T12:00:00.000Z"))).resolves.toBe(1);
+    await expect(database.read((db) => repository.listByState(db, "reserved", 10))).resolves.toHaveLength(1);
+    await expect(database.read((db) => repository.listByState(db, "admitted", 10))).resolves.toHaveLength(1);
   });
 
   it("filters delegation reads by actor and supports state transitions", async () => {
