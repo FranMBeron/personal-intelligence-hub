@@ -7,6 +7,7 @@ export interface IdempotencyReservation {
 export interface AttachRun { readonly actorId: string; readonly conversationId: string; readonly idempotencyKey: string; readonly runId: string; }
 export interface IdempotencyLookup { readonly actorId: string; readonly conversationId: string; readonly idempotencyKey: string; }
 export type MarkIdempotencyTerminal = IdempotencyLookup;
+export type IdempotencyKeysetCursor = IdempotencyLookup & Readonly<{ createdAt: string }>;
 export interface StoredIdempotency extends IdempotencyReservation { readonly runId?: string; readonly state: "reserved" | "admitted" | "terminal"; }
 interface Row { actor_id:string; conversation_id:string; idempotency_key:string; request_hash:string; message_id:string; assistant_message_id:string; run_id:string|null; state:"reserved"|"admitted"|"terminal"; created_at:string; expires_at:string; }
 const mapRow=(r:Row):StoredIdempotency=>({ actorId:r.actor_id, conversationId:r.conversation_id, idempotencyKey:r.idempotency_key, requestHash:r.request_hash,
@@ -41,11 +42,21 @@ export class IdempotencyRepository {
     return connection.prepare("UPDATE hermes_idempotency SET state='terminal' WHERE actor_id=:actorId AND conversation_id=:conversationId AND idempotency_key=:idempotencyKey AND state=:expectedState")
       .run({...input,expectedState}).changes===1;
   }
-  /** Oldest-first page of records in one state, for bounded startup and background reconciliation. */
-  listByState(connection: SqliteHandle, state: "reserved" | "admitted", limit: number): readonly StoredIdempotency[] {
+  /**
+   * Oldest-first page of records in one state, for bounded startup and background
+   * reconciliation. `after` continues strictly past a prior record in the same
+   * total order (keyset), so a rotating caller visits every record in turn.
+   */
+  listByState(connection: SqliteHandle, state: "reserved" | "admitted", limit: number, after?: IdempotencyKeysetCursor): readonly StoredIdempotency[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) fail("hermes_idempotency_limit_invalid");
-    return connection.prepare("SELECT * FROM hermes_idempotency WHERE state=:state ORDER BY created_at, actor_id, conversation_id, idempotency_key LIMIT :limit")
-      .all<Row>({ state, limit }).map(mapRow);
+    const order = "ORDER BY created_at, actor_id, conversation_id, idempotency_key LIMIT :limit";
+    if (after === undefined) {
+      return connection.prepare("SELECT * FROM hermes_idempotency WHERE state=:state " + order).all<Row>({ state, limit }).map(mapRow);
+    }
+    return connection.prepare("SELECT * FROM hermes_idempotency WHERE state=:state AND " +
+      "(created_at, actor_id, conversation_id, idempotency_key) > (:createdAt, :actorId, :conversationId, :idempotencyKey) " + order)
+      .all<Row>({ state, limit, createdAt: after.createdAt, actorId: after.actorId, conversationId: after.conversationId, idempotencyKey: after.idempotencyKey })
+      .map(mapRow);
   }
   /**
    * Purge expired records that are already terminal. A reserved or admitted record

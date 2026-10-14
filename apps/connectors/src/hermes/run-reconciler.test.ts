@@ -268,3 +268,74 @@ describe("RunReconciler lifecycle", () => {
     }
   });
 });
+
+describe("RunReconciler age caps and fairness", () => {
+  const HOUR = 3_600_000;
+
+  it.each(["running", "queued", "stopping", "an_unknown_state"])("terminalizes an admitted run still reading %s past 6h", async (value) => {
+    const { harness, native, reconciler, state } = await setup();
+    native.runStatus.mockResolvedValue(status({ status: value as HermesRunStatus["status"] }));
+    const worker = reconciler();
+    harness.clock.advance(6 * HOUR - 1_000);
+    expect(await worker.reconcileOnce(10)).toBe(0);
+    harness.clock.advance(1_001);
+    expect(await worker.reconcileOnce(10)).toBe(1);
+    const current = await state();
+    expect(current.idempotency).toEqual(["terminal"]);
+    expect(current.events.at(-1)?.payload).toMatchObject({ type: "message.failed", code: "provider_result_ambiguous", retryable: true });
+  });
+
+  it("keeps a run waiting for approval past 6h, then expires it after the 24h approval cap", async () => {
+    const { harness, native, reconciler, state } = await setup();
+    native.runStatus.mockResolvedValue(status({ status: "waiting_for_approval" }));
+    const worker = reconciler();
+    harness.clock.advance(23 * HOUR);
+    expect(await worker.reconcileOnce(10)).toBe(0);
+    expect(worker.attentionProfiles()).toEqual([specialistAId]);
+    harness.clock.advance(HOUR + 1);
+    expect(await worker.reconcileOnce(10)).toBe(1);
+    expect(worker.attentionProfiles()).toEqual([]);
+    expect((await state()).events.at(-1)?.payload).toMatchObject({ type: "message.failed", code: "provider_approval_expired", retryable: true });
+  });
+
+  it("closes the admission of a conversation that no longer resolves once past 6h", async () => {
+    const { harness, native, state } = await setup();
+    const repositories = { messages: new MessageRepository(), idempotency: new IdempotencyRepository(), events: new EventRepository() };
+    const worker = new RunReconciler({
+      database: harness.database, profiles: harness.profiles, nativeClient: native, conversations: { getOwned: () => null } as never,
+      ...repositories, clock: harness.clock, streamDeltas: false,
+    });
+    expect(await worker.reconcileOnce(10)).toBe(0);
+    harness.clock.advance(6 * HOUR + 1);
+    expect(await worker.reconcileOnce(10)).toBe(1);
+    expect((await state()).idempotency).toEqual(["terminal"]);
+    expect(native.runStatus).not.toHaveBeenCalled();
+  });
+
+  it("a long waiting_for_approval head does not starve a newer completed run", async () => {
+    let n = 0;
+    const harness = await createHermesHarness();
+    await harness.seedConversation();
+    const repos = { messages: new MessageRepository(), idempotency: new IdempotencyRepository(), events: new EventRepository(), uploads: new UploadRepository() };
+    const service = new MessageService({
+      database: harness.database, profiles: harness.profiles,
+      nativeClient: { createRun: async () => ({ run_id: `run_fictional_0${++n}`, status: "queued", replayed: false }) },
+      conversations: harness.conversations, ...repos,
+      uploadService: { readClaimedAsDataUrls: async () => [], removeStoredFiles: async () => undefined },
+      clock: harness.clock, idGenerator: harness.ids,
+    });
+    await service.send(principalFor(), "conversation-01", "client-key-0001", { parts: [{ kind: "text", text: "uno" }] });
+    harness.clock.advance(1_000);
+    await service.send(principalFor(), "conversation-01", "client-key-0002", { parts: [{ kind: "text", text: "dos" }] });
+    const runStatus = vi.fn(async (_profile: string, runId: string): Promise<HermesRunStatus> => runId === "run_fictional_01"
+      ? { run_id: runId, session_id: "pih_conversation-01", status: "waiting_for_approval" }
+      : { run_id: runId, session_id: "pih_conversation-01", status: "completed", output: "listo" });
+    const reconciler = new RunReconciler({
+      database: harness.database, profiles: harness.profiles, nativeClient: { runStatus, messages: vi.fn(), runEvents: vi.fn() },
+      conversations: harness.conversations, ...repos, clock: harness.clock, streamDeltas: false, batchSize: 1,
+    });
+    for (let pass = 0; pass < 5; pass += 1) await reconciler.reconcileOnce(1);
+    expect(runStatus).toHaveBeenCalledWith(specialistAId, "run_fictional_02");
+    expect(await harness.database.read((db) => repos.idempotency.listByState(db, "admitted", 10))).toHaveLength(1);
+  });
+});

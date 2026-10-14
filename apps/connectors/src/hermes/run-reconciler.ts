@@ -6,7 +6,7 @@ import type { HermesNativeClient } from "./native-client.js";
 import type { HermesProfileRegistry } from "./profile-registry.js";
 import type { ConversationRepository, StoredConversation } from "./storage/conversation-repository.js";
 import type { EventRepository } from "./storage/event-repository.js";
-import type { IdempotencyRepository, StoredIdempotency } from "./storage/idempotency-repository.js";
+import type { IdempotencyKeysetCursor, IdempotencyRepository, StoredIdempotency } from "./storage/idempotency-repository.js";
 import type { MessageRepository } from "./storage/message-repository.js";
 
 type Clock = Readonly<{ now(): Date }>;
@@ -34,10 +34,20 @@ const MAX_TEXT_PART_CHARS = 20_000;
 const MAX_FRAME_CHARS = 64 * 1024;
 const TRANSCRIPT_PAGE_LIMIT = 200;
 /**
- * An admitted run whose status stays unreadable this long is failed as ambiguous,
- * well inside the minimum 24h idempotency retention, so no reply stays open forever.
+ * Age cap, measured from admission, for every non-terminal outcome except approval:
+ * an unreadable status, queued/running/stopping, an unknown state, a session
+ * mismatch, or a conversation that no longer resolves. Past it the run is failed
+ * as ambiguous (retryable), so no reply stays open forever.
  */
-const ADMITTED_MAX_AGE_MS = 6 * 60 * 60 * 1_000;
+export const ADMITTED_MAX_AGE_MS = 6 * 60 * 60 * 1_000;
+/**
+ * Longer cap for a run waiting for human approval: an approval can legitimately
+ * wait overnight, but one still pending a full day later is stale. 24h equals the
+ * minimum idempotency retention, so a client retrying its key inside that window
+ * always observes the terminal outcome. Terminal and live idempotency records are
+ * never purged before this worker closes them.
+ */
+export const APPROVAL_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 
 /** Closed terminal reasons with fixed, content-free client text. */
 const failures = {
@@ -46,6 +56,7 @@ const failures = {
   provider_run_failed: { detail: "The agent could not complete this reply. Try again.", retryable: true },
   provider_run_cancelled: { detail: "The agent's reply was cancelled.", retryable: false },
   provider_run_interrupted: { detail: "The agent was interrupted before replying. Try again.", retryable: true },
+  provider_approval_expired: { detail: "The agent's reply waited too long for approval. Try again.", retryable: true },
 } as const;
 export type RunFailureCode = keyof typeof failures;
 
@@ -90,6 +101,8 @@ export class RunReconciler {
   #pass: Promise<unknown> | undefined;
   #started = false;
   #stopped = false;
+  /** Keyset position of the last record polled; passes rotate through every admitted run so none starves. */
+  #cursor: IdempotencyKeysetCursor | undefined;
 
   constructor(options: Options) {
     this.#database = options.database;
@@ -135,10 +148,24 @@ export class RunReconciler {
     return [...new Set(this.#attention.values())].sort();
   }
 
-  /** Reconcile at most `limit` admitted runs; returns how many this worker terminalized. */
+  /**
+   * Reconcile at most `limit` admitted runs; returns how many this worker terminalized.
+   * Each pass continues after the previous pass's last record and wraps to the
+   * oldest, so long-lived open runs at the head can never starve newer ones.
+   */
   async reconcileOnce(limit: number): Promise<number> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("hermes_reconcile_limit_invalid");
-    const records = await this.#database.read((db) => this.#idempotency.listByState(db, "admitted", limit));
+    const records = await this.#database.read((db) => {
+      const page = this.#idempotency.listByState(db, "admitted", limit, this.#cursor);
+      if (page.length === limit || this.#cursor === undefined) return page;
+      const seen = new Set(page.map((record) => this.#key(record)));
+      const head = this.#idempotency.listByState(db, "admitted", limit).filter((record) => !seen.has(this.#key(record)));
+      return [...page, ...head].slice(0, limit);
+    });
+    const last = records.at(-1);
+    this.#cursor = last === undefined ? undefined : {
+      createdAt: last.createdAt, actorId: last.actorId, conversationId: last.conversationId, idempotencyKey: last.idempotencyKey,
+    };
     let terminalized = 0;
     for (const record of records) {
       if (this.#halt.signal.aborted && this.#stopped) break;
@@ -165,18 +192,30 @@ export class RunReconciler {
     });
   }
 
+  #key(record: StoredIdempotency): string {
+    return `${record.actorId}\0${record.conversationId}\0${record.idempotencyKey}`;
+  }
+
   async #reconcile(record: StoredIdempotency): Promise<boolean> {
     const runId = record.runId;
-    if (runId === undefined) return false;
+    const attentionKey = this.#key(record);
+    const age = Date.parse(this.#timestamp()) - Date.parse(record.createdAt);
+    const expired = age > ADMITTED_MAX_AGE_MS;
     const conversation = await this.#database.read((db) => this.#conversations.getOwned(db, record.actorId, record.conversationId));
-    if (conversation === null) return false;
+    if (runId === undefined || conversation === null) {
+      // Nothing left to poll or publish to: close the admission itself once past the cap.
+      if (!expired) return false;
+      this.#attention.delete(attentionKey);
+      return this.#database.transaction((db) => this.#idempotency.markTerminalIfState(db, {
+        actorId: record.actorId, conversationId: record.conversationId, idempotencyKey: record.idempotencyKey,
+      }, "admitted"));
+    }
     const target: Target = { record: { ...record, runId }, conversation };
-    const attentionKey = `${record.actorId}\0${record.conversationId}\0${record.idempotencyKey}`;
     let status;
     try {
       status = await this.#native.runStatus(conversation.agentId, runId);
     } catch (error) {
-      if (Date.parse(this.#timestamp()) - Date.parse(record.createdAt) > ADMITTED_MAX_AGE_MS) {
+      if (expired) {
         this.#attention.delete(attentionKey);
         return this.#fail(target, "provider_result_ambiguous");
       }
@@ -189,13 +228,18 @@ export class RunReconciler {
     switch (status.status) {
       case "queued":
         this.#attention.delete(attentionKey);
-        return false;
+        return expired ? this.#fail(target, "provider_result_ambiguous") : false;
       case "waiting_for_approval":
+        if (age > APPROVAL_MAX_AGE_MS) {
+          this.#attention.delete(attentionKey);
+          return this.#fail(target, "provider_approval_expired");
+        }
         this.#attention.set(attentionKey, conversation.agentId);
         return false;
       case "running":
       case "stopping":
         this.#attention.delete(attentionKey);
+        if (expired) return this.#fail(target, "provider_result_ambiguous");
         if (await this.#markStreaming(target) && this.#streamDeltas && !this.#halt.signal.aborted) this.#attach(target);
         return false;
       case "completed": {
@@ -221,7 +265,9 @@ export class RunReconciler {
         this.#attention.delete(attentionKey);
         return this.#fail(target, "provider_run_interrupted");
       default:
-        return false;
+        // Unknown state: retryable degradation until the cap, then ambiguous.
+        this.#attention.delete(attentionKey);
+        return expired ? this.#fail(target, "provider_result_ambiguous") : false;
     }
   }
 

@@ -67,10 +67,12 @@ export class DelegationRepository {
     const row=connection.prepare("SELECT "+columns+" FROM hermes_delegations WHERE actor_id=:actorId AND source_agent_id=:sourceAgentId AND idempotency_key=:idempotencyKey").get<Row>({actorId,sourceAgentId,idempotencyKey});
     return row===undefined?null:map(row);
   }
-  /** Oldest-first page of queued or running delegations for background reconciliation. */
-  listOpen(connection:SqliteHandle,limit:number):readonly StoredDelegation[] {
+  /** Oldest-first page of queued or running delegations for background reconciliation; `after` continues strictly past a prior row (keyset). */
+  listOpen(connection:SqliteHandle,limit:number,after?:Readonly<{createdAt:string;id:string}>):readonly StoredDelegation[] {
     if(!Number.isInteger(limit)||limit<1||limit>500)fail("hermes_delegation_limit_invalid");
-    return connection.prepare("SELECT "+columns+" FROM hermes_delegations WHERE state IN ('queued','running') ORDER BY created_at,id LIMIT :limit").all<Row>({limit}).map(map);
+    if(after===undefined)return connection.prepare("SELECT "+columns+" FROM hermes_delegations WHERE state IN ('queued','running') ORDER BY created_at,id LIMIT :limit").all<Row>({limit}).map(map);
+    return connection.prepare("SELECT "+columns+" FROM hermes_delegations WHERE state IN ('queued','running') AND (created_at,id)>(:createdAt,:id) ORDER BY created_at,id LIMIT :limit")
+      .all<Row>({limit,createdAt:after.createdAt,id:after.id}).map(map);
   }
   /** The owner's direct conversation in the source profile bound to an upstream session, if any. */
   findSourceConversation(connection:SqliteHandle,actorId:string,sourceAgentId:string,upstreamSessionId:string):string|null {

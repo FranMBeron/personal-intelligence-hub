@@ -17,8 +17,14 @@ type Options = Readonly<{
 export const MAX_RESULT_SUMMARY_CHARS = 2_000;
 /** A queued delegation that never obtained a run (its caller stopped retrying) is failed after this long. */
 const QUEUED_MAX_AGE_MS = 60 * 60 * 1_000;
-/** A running delegation whose status stays unreadable this long is failed as ambiguous. */
+/**
+ * Age cap for every non-terminal delegation with a run, except approval: an
+ * unreadable status, queued/running/stopping, an unknown state, or a target
+ * profile that is no longer configured. Past it the delegation fails as ambiguous.
+ */
 const RUNNING_MAX_AGE_MS = 6 * 60 * 60 * 1_000;
+/** Longer cap for a delegated run waiting for human approval (same 24h rationale as RunReconciler). */
+const APPROVAL_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 // C0/C1 controls except tab and newline never belong in a plain-text summary.
 const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu;
 
@@ -50,6 +56,8 @@ export class DelegationReconciler {
   #timer: ReturnType<typeof setTimeout> | undefined;
   #pass: Promise<unknown> | undefined;
   #started = false;
+  /** Keyset position of the last delegation polled; passes rotate so an open head never starves newer rows. */
+  #cursor: Readonly<{ createdAt: string; id: string }> | undefined;
 
   constructor(options: Options) {
     this.#database = options.database;
@@ -85,7 +93,14 @@ export class DelegationReconciler {
   /** Reconcile at most `limit` open delegations; returns how many this worker terminalized. */
   async reconcileOnce(limit: number): Promise<number> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("hermes_reconcile_limit_invalid");
-    const open = await this.#database.read((db) => this.#delegations.listOpen(db, limit));
+    const open = await this.#database.read((db) => {
+      const page = this.#delegations.listOpen(db, limit, this.#cursor);
+      if (page.length === limit || this.#cursor === undefined) return page;
+      const seen = new Set(page.map(({ id }) => id));
+      return [...page, ...this.#delegations.listOpen(db, limit).filter(({ id }) => !seen.has(id))].slice(0, limit);
+    });
+    const last = open.at(-1);
+    this.#cursor = last === undefined ? undefined : { createdAt: last.createdAt, id: last.id };
     let terminalized = 0;
     for (const delegation of open) {
       try {
@@ -144,8 +159,11 @@ export class DelegationReconciler {
         return { state: "failed", reason: "delegation_interrupted" };
       case "cancelled":
         return { state: "cancelled", reason: "delegation_cancelled" };
+      case "waiting_for_approval":
+        return age > APPROVAL_MAX_AGE_MS ? { state: "failed", reason: "delegation_approval_expired" } : null;
       default:
-        return null;
+        // queued, running, stopping, or an unknown state: still open until the cap.
+        return age > RUNNING_MAX_AGE_MS ? { state: "failed", reason: "delegation_result_ambiguous" } : null;
     }
   }
 

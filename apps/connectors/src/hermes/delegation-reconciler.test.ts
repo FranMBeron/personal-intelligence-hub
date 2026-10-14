@@ -131,3 +131,44 @@ describe("DelegationReconciler lifecycle", () => {
     expect(native.runStatus.mock.calls.length).toBe(calls);
   });
 });
+
+describe("DelegationReconciler age caps and fairness", () => {
+  const HOUR = 3_600_000;
+
+  it.each(["running", "queued", "stopping", "an_unknown_state"])("terminalizes a delegation still reading %s past 6h", async (value) => {
+    const { harness, native, reconciler, row } = await setup();
+    native.runStatus.mockResolvedValue(status({ status: value as HermesRunStatus["status"] }));
+    const worker = reconciler();
+    harness.clock.advance(6 * HOUR - 1_000);
+    expect(await worker.reconcileOnce(10)).toBe(0);
+    harness.clock.advance(1_001);
+    expect(await worker.reconcileOnce(10)).toBe(1);
+    expect(await row()).toMatchObject({ state: "failed", safe_summary: "delegation_result_ambiguous" });
+  });
+
+  it("keeps a delegation waiting for approval past 6h, then expires it after 24h", async () => {
+    const { harness, native, reconciler, row } = await setup();
+    native.runStatus.mockResolvedValue(status({ status: "waiting_for_approval" }));
+    const worker = reconciler();
+    harness.clock.advance(23 * HOUR);
+    expect(await worker.reconcileOnce(10)).toBe(0);
+    harness.clock.advance(HOUR + 1);
+    expect(await worker.reconcileOnce(10)).toBe(1);
+    expect(await row()).toMatchObject({ state: "failed", safe_summary: "delegation_approval_expired" });
+  });
+
+  it("an open head delegation does not starve newer ones", async () => {
+    const { harness, service, peer, createRun, native, reconciler } = await setup();
+    createRun.mockResolvedValueOnce({ run_id: "run_delegation_02", status: "queued", replayed: false });
+    harness.clock.advance(1_000);
+    await service.start(peer, "delegation-key-0002", { targetAgentId: specialistAId, message: "Otra" });
+    native.runStatus.mockImplementation(async (_profile, runId) => runId === "run_delegation_01"
+      ? status({ status: "waiting_for_approval" })
+      : status({ run_id: runId, status: "completed", output: "Hecho" }));
+    const worker = reconciler();
+    for (let pass = 0; pass < 4; pass += 1) await worker.reconcileOnce(1);
+    expect(native.runStatus).toHaveBeenCalledWith(specialistAId, "run_delegation_02");
+    const states = await harness.database.read((db) => db.prepare("SELECT state FROM hermes_delegations ORDER BY created_at, id").all<{ state: string }>());
+    expect(states.map(({ state }) => state)).toEqual(["running", "completed"]);
+  });
+});
