@@ -80,6 +80,16 @@ export interface PatchOwnedConversation {
   readonly updatedAt: string;
 }
 
+export interface RestoreOwnedConversation {
+  readonly actorId: string;
+  readonly id: string;
+  /** Version written by the patch being compensated; restore only applies if it is still current. */
+  readonly appliedVersion: number;
+  readonly title: string;
+  readonly archived: boolean;
+  readonly updatedAt: string;
+}
+
 export interface EnsureSelection {
   readonly actorId: string;
   readonly agentId: string;
@@ -155,6 +165,22 @@ export class ConversationRepository {
     ).run({ actorId: input.actorId, id: input.id, expectedVersion: input.expectedVersion, title: input.title ?? null, archived: input.archived === undefined ? null : input.archived ? 1 : 0, updatedAt: input.updatedAt });
     if (updated.changes !== 1) fail("hermes_conversation_version_conflict");
     return this.getOwned(connection, input.actorId, input.id) ?? fail("hermes_conversation_missing");
+  }
+
+  /**
+   * Compensate a locally applied patch whose upstream mirror failed. Restores the
+   * previous title/archived values with a fresh (monotonic) version, and only if no
+   * other writer has moved the row past the compensated version.
+   */
+  restoreOwned(connection: SqliteHandle, input: RestoreOwnedConversation): boolean {
+    const result = connection.prepare(
+      "UPDATE hermes_conversations SET title = :title, archived = :archived, version = version + 1, updated_at = :updatedAt " +
+      "WHERE actor_id = :actorId AND id = :id AND version = :appliedVersion",
+    ).run({
+      actorId: input.actorId, id: input.id, appliedVersion: input.appliedVersion,
+      title: input.title, archived: input.archived ? 1 : 0, updatedAt: input.updatedAt,
+    });
+    return result.changes === 1;
   }
 
   ensureSelection(connection: SqliteHandle, input: EnsureSelection): StoredSelection {

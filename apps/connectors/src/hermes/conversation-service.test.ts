@@ -46,6 +46,7 @@ const createHarness = async (options: {
   directConversations?: boolean;
   createSession?: (profile: string, input: { id: string; title: string; source: string }) => Promise<unknown>;
   getSession?: (profile: string, id: string) => Promise<unknown>;
+  patchSession?: (profile: string, id: string, patch: { title?: string; archived?: boolean }) => Promise<unknown>;
 } = {}) => {
   const directory = await mkdtemp(join(tmpdir(), "pih-hermes-conversation-service-"));
   directories.push(directory);
@@ -64,9 +65,9 @@ const createHarness = async (options: {
     getSession: vi.fn(options.getSession ?? (async (_profile, id) => ({
       id, source: "pih", title: "provider title", archived: false,
     }))),
-    patchSession: vi.fn(async (_profile, id, patch) => ({
+    patchSession: vi.fn(options.patchSession ?? (async (_profile, id, patch) => ({
       id, source: "pih", title: patch.title ?? "Fitness Coach", archived: patch.archived ?? false,
-    })),
+    }))),
     messages: vi.fn(async () => []),
   };
   const repository = new ConversationRepository();
@@ -239,6 +240,66 @@ describe("Hermes ConversationService", () => {
     const { service, native } = await createHarness();
     await service.selection(principal(), "fitness");
     expect(native.createSession).not.toHaveBeenCalled();
+  });
+
+  it("applies only one of two concurrent patches upstream when both carry the same expected version", async () => {
+    const { service, native } = await createHarness();
+    const conversation = await service.create(principal(), { agentId: "fitness" });
+    const results = await Promise.allSettled([
+      service.patch(principal(), conversation.id, { title: "First", expectedVersion: 1 }),
+      service.patch(principal(), conversation.id, { archived: true, expectedVersion: 1 }),
+    ]);
+    expect(results.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(results.find(({ status }) => status === "rejected")).toMatchObject({
+      reason: { code: "version_conflict" },
+    });
+    expect(native.patchSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not archive upstream when the conversation is selected while the upstream patch is in flight", async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const upstreamEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const patchSession = vi.fn(async (_profile: string, id: string, patch: { title?: string; archived?: boolean }) => {
+      entered();
+      await new Promise<void>((resolve) => { release = resolve; });
+      return { id, source: "pih", title: patch.title ?? "Fitness Coach", archived: patch.archived ?? false };
+    });
+    const { service, native } = await createHarness({ patchSession });
+    const conversation = await service.create(principal(), { agentId: "fitness" });
+    const archiving = service.patch(principal(), conversation.id, { archived: true, expectedVersion: 1 })
+      .then((value) => ({ ok: true as const, value }), (reason: unknown) => ({ ok: false as const, reason }));
+    await upstreamEntered;
+    const selecting = await service.putSelection(principal(), "fitness", {
+      conversationId: conversation.id, expectedVersion: 0,
+    }).then(() => "selected", (error: { code?: string }) => error.code);
+    release();
+    const archived = await archiving;
+    const archivedUpstream = native.patchSession.mock.calls.some(([, , patch]) => patch.archived === true);
+    // Local and upstream must agree: if Hermes archived the session, PIH must
+    // have archived it and refused the concurrent selection.
+    expect(archivedUpstream).toBe(true);
+    expect(archived).toMatchObject({ ok: true, value: { archived: true, version: 2 } });
+    expect(selecting).toBe("not_found");
+    expect(await service.selection(principal(), "fitness")).toMatchObject({ conversationId: null, version: 0 });
+  });
+
+  it("rolls back the local patch when the upstream patch fails", async () => {
+    const { service, native } = await createHarness({
+      patchSession: async () => { throw new Error("transport details with fictional-secret-token"); },
+    });
+    const conversation = await service.create(principal(), { agentId: "fitness", title: "Original" });
+    await expect(service.patch(principal(), conversation.id, { title: "Renamed", archived: true, expectedVersion: 1 }))
+      .rejects.toMatchObject({ code: "hermes_upstream_unavailable" });
+    expect(native.patchSession).toHaveBeenCalledTimes(1);
+    const current = await service.get(principal(), conversation.id);
+    expect(current).toMatchObject({ title: "Original", archived: false });
+    // A later patch against the version the caller observes must still work.
+    native.patchSession.mockImplementation(async (_profile: string, id: string, patch: { title?: string }) => ({
+      id, source: "pih", title: patch.title ?? "Original", archived: false,
+    }));
+    await expect(service.patch(principal(), conversation.id, { title: "Again", expectedVersion: current.version }))
+      .resolves.toMatchObject({ title: "Again" });
   });
 
   it("raises typed, content-free error codes from a closed set", async () => {

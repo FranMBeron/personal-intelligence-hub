@@ -208,21 +208,16 @@ export class ConversationService {
     const current = await this.#getReady(principal.actorId, conversationId);
     if (current.version !== patch.expectedVersion) return fail("version_conflict");
     const profile = this.#requireDirectProfile(current.agentId);
-    if (patch.archived === true && await this.#isSelected(principal.actorId, current.agentId, current.id)) {
-      return fail("hermes_active_conversation_selected");
-    }
 
+    // Ordering: commit the local compare-and-set first, then mirror upstream.
+    // The local transaction is the only place the version and the "selected
+    // conversations cannot be archived" invariant can be enforced atomically
+    // (putSelection refuses archived candidates in its own transaction), so a
+    // concurrent patch or selection loses locally before Hermes is touched.
+    // If the upstream mirror fails, the local change is compensated below.
+    let applied: StoredConversation;
     try {
-      const upstream = await this.#native.patchSession(profile.id, current.upstreamSessionId, {
-        ...(patch.title === undefined ? {} : { title: patch.title }),
-        ...(patch.archived === undefined ? {} : { archived: patch.archived }),
-      });
-      if (upstream.id !== current.upstreamSessionId || upstream.source !== "pih") return fail("hermes_conflict");
-    } catch (error) {
-      throw upstreamError(error);
-    }
-    try {
-      const updated = await this.#database.transaction((db) => {
+      applied = await this.#database.transaction((db) => {
         if (patch.archived === true && this.#isSelectedInDatabase(db, principal.actorId, current.agentId, current.id)) {
           return fail("hermes_active_conversation_selected");
         }
@@ -235,11 +230,40 @@ export class ConversationService {
           updatedAt: this.#now(),
         });
       });
-      return this.#publicConversation(updated);
     } catch (error) {
-      if (hasCode(error, "hermes_active_conversation_selected")) throw error;
+      if (hasCode(error, "hermes_active_conversation_selected", "hermes_clock_invalid")) throw error;
       if (error instanceof Error && error.message === "hermes_conversation_version_conflict") return fail("version_conflict");
       return fail("hermes_conversation_update_failed");
+    }
+
+    try {
+      const upstream = await this.#native.patchSession(profile.id, current.upstreamSessionId, {
+        ...(patch.title === undefined ? {} : { title: patch.title }),
+        ...(patch.archived === undefined ? {} : { archived: patch.archived }),
+      });
+      if (upstream.id !== current.upstreamSessionId || upstream.source !== "pih") {
+        throw new HermesConversationError("hermes_conflict");
+      }
+    } catch (error) {
+      await this.#restore(principal.actorId, current, applied.version);
+      throw upstreamError(error);
+    }
+    return this.#publicConversation(applied);
+  }
+
+  async #restore(actorId: string, previous: StoredConversation, appliedVersion: number): Promise<void> {
+    try {
+      await this.#database.transaction((db) => this.#conversations.restoreOwned(db, {
+        actorId,
+        id: previous.id,
+        appliedVersion,
+        title: previous.title,
+        archived: previous.archived,
+        updatedAt: this.#now(),
+      }));
+    } catch {
+      // Best effort: the caller still receives the upstream failure. A failed or
+      // superseded compensation leaves the local row ahead of Hermes.
     }
   }
 
@@ -430,10 +454,6 @@ export class ConversationService {
     if (conversation === null || conversation.provisionState !== "ready") return fail("not_found");
     this.#requireDirectProfile(conversation.agentId);
     return conversation;
-  }
-
-  async #isSelected(actorId: string, agentId: string, conversationId: string): Promise<boolean> {
-    return this.#database.read((db) => this.#isSelectedInDatabase(db, actorId, agentId, conversationId));
   }
 
   #isSelectedInDatabase(database: SqliteHandle, actorId: string, agentId: string, conversationId: string): boolean {
