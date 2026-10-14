@@ -69,6 +69,28 @@ export class MessageRepository {
     if (result.changes !== 1) fail("hermes_message_not_found");
   }
 
+  getOwned(connection: SqliteHandle, actorId: string, conversationId: string, id: string): Message | null {
+    const row = connection.prepare(
+      "SELECT m.* FROM hermes_messages m JOIN hermes_conversations c ON c.id = m.conversation_id " +
+      "WHERE m.id = :id AND m.conversation_id = :conversationId AND c.actor_id = :actorId",
+    ).get<MessageRow>({ actorId, conversationId, id });
+    return row === undefined ? null : toMessage(row);
+  }
+
+  /** Replace the parts and delivery state of an owned message (used to finalize an assistant placeholder). */
+  replaceContent(connection: SqliteHandle, input: MessageStateUpdate & Readonly<{ parts: readonly MessagePart[] }>): void {
+    const parts = MessagePartSchema.array().min(1).parse(input.parts);
+    const result = connection.prepare(
+      "UPDATE hermes_messages SET parts_json = :partsJson, delivery_state = :deliveryState, updated_at = :updatedAt " +
+      "WHERE id = :id AND conversation_id = :conversationId " +
+      "AND EXISTS (SELECT 1 FROM hermes_conversations c WHERE c.id = hermes_messages.conversation_id AND c.actor_id = :actorId)",
+    ).run({
+      actorId: input.actorId, conversationId: input.conversationId, id: input.id, updatedAt: input.updatedAt,
+      partsJson: JSON.stringify(parts), deliveryState: MessageDeliveryStateSchema.parse(input.deliveryState),
+    });
+    if (result.changes !== 1) fail("hermes_message_not_found");
+  }
+
   snapshot(connection: SqliteHandle, input: MessageSnapshotQuery): MessageHistory {
     const query = MessagePageQuerySchema.parse(input.query);
     const cursor = query.cursor === undefined ? undefined : readCursor(query.cursor);

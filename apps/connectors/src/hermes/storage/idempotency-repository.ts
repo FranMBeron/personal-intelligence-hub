@@ -41,6 +41,12 @@ export class IdempotencyRepository {
     return connection.prepare("UPDATE hermes_idempotency SET state='terminal' WHERE actor_id=:actorId AND conversation_id=:conversationId AND idempotency_key=:idempotencyKey AND state=:expectedState")
       .run({...input,expectedState}).changes===1;
   }
+  /** Oldest-first page of records in one state, for bounded startup and background reconciliation. */
+  listByState(connection: SqliteHandle, state: "reserved" | "admitted", limit: number): readonly StoredIdempotency[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) fail("hermes_idempotency_limit_invalid");
+    return connection.prepare("SELECT * FROM hermes_idempotency WHERE state=:state ORDER BY created_at, actor_id, conversation_id, idempotency_key LIMIT :limit")
+      .all<Row>({ state, limit }).map(mapRow);
+  }
   deleteExpired(connection: SqliteHandle, now: string): number {
     return connection.prepare("DELETE FROM hermes_idempotency WHERE expires_at<=:now").run({now}).changes;
   }

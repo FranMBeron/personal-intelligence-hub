@@ -55,13 +55,13 @@ export class UploadRepository {
   /** Every unconsumed upload claimed by one admission, in a stable order. */
   listClaimedByAdmission(connection:SqliteHandle,input:Readonly<{actorId:string;conversationId:string;admissionId:string}>):readonly StoredUpload[] {
     return connection.prepare("SELECT "+uploadColumns+" FROM hermes_uploads WHERE actor_id=:actorId AND conversation_id=:conversationId AND claimed_by_admission=:admissionId AND consumed_at IS NULL ORDER BY reference")
-      .all<Row>(input).map(mapRow);
+      .all<Row>({actorId:input.actorId,conversationId:input.conversationId,admissionId:input.admissionId}).map(mapRow);
   }
   /** Mark every upload claimed by one admission consumed (expiry-independent) and return them for file removal. */
   consumeAdmission(connection:SqliteHandle,input:Readonly<{actorId:string;conversationId:string;admissionId:string;consumedAt:string}>):readonly StoredUpload[] {
     const claimed=this.listClaimedByAdmission(connection,input);
     connection.prepare("UPDATE hermes_uploads SET consumed_at=:consumedAt WHERE actor_id=:actorId AND conversation_id=:conversationId AND claimed_by_admission=:admissionId AND consumed_at IS NULL")
-      .run(input);
+      .run({actorId:input.actorId,conversationId:input.conversationId,admissionId:input.admissionId,consumedAt:input.consumedAt});
     return claimed;
   }
   /** Delete at most `limit` expired rows that no in-flight admission holds; returns their opaque storage names. */
