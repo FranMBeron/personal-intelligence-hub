@@ -3,9 +3,33 @@
 import type { HermesCapabilities } from "@personal-intelligence-hub/contracts";
 import { useState } from "react";
 
-import { Conversation } from "../../_components/conversation/conversation";
+import { ThreadWorkspace } from "../../_components/conversation/thread-workspace";
 
+export const unavailableNote = (capabilities: HermesCapabilities | null): string | null =>
+  capabilities === null
+    ? "La conversación no está disponible ahora."
+    : capabilities.agentConversations
+      ? null
+      : "Las conversaciones por agente no están habilitadas.";
+
+/** Direct, persistent threads with one profile. Never lists delegations. */
+export function DirectConversations({
+  agentId,
+  agentName,
+  capabilities,
+}: Readonly<{
+  agentId: string;
+  agentName: string;
+  capabilities: HermesCapabilities | null;
+}>) {
+  const note = unavailableNote(capabilities);
+  if (note !== null) return <p className="agent-card__conversation-note">{note}</p>;
+  return <ThreadWorkspace key={agentId} agentId={agentId} agentName={agentName} capabilities={capabilities} />;
+}
+
+/** Inline toggle kept for the current page until the roster section is mounted. */
 export function AgentConversation({
+  agentId,
   agentName,
   capabilities,
 }: Readonly<{
@@ -14,13 +38,8 @@ export function AgentConversation({
   capabilities: HermesCapabilities | null;
 }>) {
   const [open, setOpen] = useState(false);
-
-  if (capabilities === null) {
-    return <p className="agent-card__conversation-note">La conversación no está disponible ahora.</p>;
-  }
-  if (!capabilities.agentConversations) {
-    return <p className="agent-card__conversation-note">Las conversaciones por agente no están habilitadas.</p>;
-  }
+  const note = unavailableNote(capabilities);
+  if (note !== null) return <p className="agent-card__conversation-note">{note}</p>;
 
   return (
     <div className="agent-conversation">
@@ -34,7 +53,7 @@ export function AgentConversation({
       </button>
       {open ? (
         <div className="agent-conversation__panel">
-          <Conversation capabilities={capabilities} agentName={agentName} />
+          <DirectConversations agentId={agentId} agentName={agentName} capabilities={capabilities} />
         </div>
       ) : null}
     </div>

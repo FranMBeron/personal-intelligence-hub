@@ -146,4 +146,21 @@ describe("Conversation event stream", () => {
     expect(screen.queryByText(/intentando reconectar/u)).toBeNull();
     expect(eventCalls).toBe(1);
   });
+
+  it("shows the stopped state instead of looping when the stream keeps closing at the same cursor", async () => {
+    vi.useFakeTimers();
+    let eventCalls = 0;
+    const malformedKnown = `id: e8\ndata: ${JSON.stringify({ id: "e8", type: "heartbeat" })}\n\n`;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL): Promise<Response> => {
+      const path = String(input);
+      if (path.includes("/messages?limit=50")) return Promise.resolve(Response.json({ items: [], pageInfo, streamCursor: "7" }));
+      if (path.endsWith("/events")) { eventCalls += 1; return Promise.resolve(new Response(malformedKnown, { headers: { "content-type": "text/event-stream" } })); }
+      return Promise.reject(new Error(`Unexpected request ${path}`));
+    }));
+    render(<Conversation conversationId="thread-1" capabilities={capabilities} onResolveMain={unused} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(600_000); });
+    expect(eventCalls).toBe(2);
+    expect(screen.getByText("La actualización en tiempo real se detuvo. Recarga la página para continuar.")).toBeTruthy();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });

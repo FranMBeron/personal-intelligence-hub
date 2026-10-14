@@ -1,7 +1,8 @@
 import type { AgentSummary, HermesCapabilities } from "@personal-intelligence-hub/contracts";
 
 import { StatusBadge } from "../../_components/status-badge";
-import { AgentConversation } from "./agent-conversation";
+import { formatAgentTime } from "../_lib/agents-view";
+import { AgentConversation, unavailableNote } from "./agent-conversation";
 
 type Tone = "positive" | "accent" | "warning" | "danger" | "neutral";
 type Label = Readonly<{ label: string; tone: Tone }>;
@@ -33,18 +34,25 @@ const attention: Readonly<Record<AgentSummary["attention"], Label>> = {
   unknown,
 };
 
-const checkedFormat = new Intl.DateTimeFormat("es", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
-
-export const formatCheckedAt = (checkedAt: string): string => `${checkedFormat.format(new Date(checkedAt))} UTC`;
+export const formatCheckedAt = formatAgentTime;
 
 export function AgentCard({
   agent,
   capabilities,
+  headingLevel = 2,
+  selected = false,
+  onOpen,
 }: Readonly<{
   agent: AgentSummary;
   capabilities: HermesCapabilities | null;
+  headingLevel?: 2 | 3;
+  selected?: boolean;
+  /** When provided, the card only selects the profile; the workspace renders outside the card. */
+  onOpen?: (agentId: string) => void;
 }>) {
+  const Heading = headingLevel === 3 ? "h3" : "h2";
   const presence = availability[agent.availability];
+  const conversationNote = unavailableNote(capabilities);
   const initials = agent.displayName
     .split(/\s+/u)
     .slice(0, 2)
@@ -53,11 +61,11 @@ export function AgentCard({
     .toUpperCase();
 
   return (
-    <article className="agent-card surface">
+    <article className="agent-card surface" data-selected={selected ? "true" : undefined}>
       <header className="agent-card__header">
         <span className="agent-card__avatar" aria-hidden="true">{initials}</span>
         <div>
-          <h2>{agent.displayName}</h2>
+          <Heading>{agent.displayName}</Heading>
           <p className="agent-card__id">{agent.id}</p>
         </div>
         <StatusBadge tone={presence.tone}>{presence.label}</StatusBadge>
@@ -68,11 +76,39 @@ export function AgentCard({
         <div><dt>Atención</dt><dd><StatusBadge tone={attention[agent.attention].tone}>{attention[agent.attention].label}</StatusBadge></dd></div>
         <div><dt>Comprobado</dt><dd><time dateTime={agent.checkedAt}>{formatCheckedAt(agent.checkedAt)}</time></dd></div>
       </dl>
-      <AgentConversation
-        agentId={agent.id}
-        agentName={agent.displayName}
-        capabilities={capabilities}
-      />
+      {onOpen === undefined ? (
+        <AgentConversation
+          agentId={agent.id}
+          agentName={agent.displayName}
+          capabilities={capabilities}
+        />
+      ) : conversationNote !== null ? (
+        // Without direct conversations the workspace still opens, read-only, for the delegation ledger.
+        <div className="agent-conversation">
+          <p className="agent-card__conversation-note">{conversationNote}</p>
+          <button
+            className="button button--quiet"
+            type="button"
+            aria-pressed={selected}
+            data-agent-open={agent.id}
+            onClick={() => onOpen(agent.id)}
+          >
+            {`Ver delegaciones de ${agent.displayName}`}
+          </button>
+        </div>
+      ) : (
+        <div className="agent-conversation">
+          <button
+            className="button button--quiet"
+            type="button"
+            aria-pressed={selected}
+            data-agent-open={agent.id}
+            onClick={() => onOpen(agent.id)}
+          >
+            {`Conversar con ${agent.displayName}`}
+          </button>
+        </div>
+      )}
     </article>
   );
 }

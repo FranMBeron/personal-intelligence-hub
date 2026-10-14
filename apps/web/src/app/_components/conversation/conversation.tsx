@@ -29,6 +29,7 @@ const sendErrorMessage = (error: unknown): string => {
 
 const historyErrorMessage = "No se pudo cargar el historial de esta conversación.";
 const historyStoppedMessage = "No se pudo cargar el historial de esta conversación. Recarga la página para intentarlo de nuevo.";
+const streamStoppedMessage = "La actualización en tiempo real se detuvo. Recarga la página para continuar.";
 const maxHistoryAttempts = 5;
 
 type PendingSend = {
@@ -163,11 +164,12 @@ export function Conversation({
           onCursorExpired: () => { expired = true; },
           onAccessDenied: () => setOperationError("Las actualizaciones en tiempo real se detuvieron porque la sesión no tiene acceso. Vuelve a iniciar sesión."),
           onUnavailable: () => setOperationError("La actualización en tiempo real está intentando reconectar."),
+          onStalled: () => setOperationError(streamStoppedMessage),
         });
         if (!expired || signal.aborted) return;
         expiriesWithoutProgress += 1;
         if (expiriesWithoutProgress > 1) {
-          setOperationError("La actualización en tiempo real se detuvo. Recarga la página para continuar.");
+          setOperationError(streamStoppedMessage);
           return;
         }
         rebaseCursor = true;
