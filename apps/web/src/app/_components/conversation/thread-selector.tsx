@@ -102,8 +102,11 @@ export function ThreadSelector({
                         <button className="button button--quiet" type="button" aria-label={`Restaurar ${item.title}`} onClick={() => void run(item.id, () => onRestore(item.id))} disabled={busyId !== null}>Restaurar</button>
                       ) : (
                         <>
-                          <button className="button button--quiet" type="button" aria-label={`Archivar ${item.title}`} aria-describedby={item.isMain ? archiveHelpId : undefined} disabled={busyId !== null || item.isMain} onClick={() => void run(item.id, () => onArchive(item.id))}>Archivar</button>
-                          {item.isMain ? <span id={archiveHelpId} className="sr-only">La conversación principal no se puede archivar.</span> : null}
+                          {/* Main thread: aria-disabled keeps the control focusable so its visible explanation stays reachable. */}
+                          <button className="button button--quiet" type="button" aria-label={`Archivar ${item.title}`} aria-describedby={item.isMain ? archiveHelpId : undefined}
+                            aria-disabled={item.isMain ? true : undefined} disabled={busyId !== null && !item.isMain}
+                            onClick={() => { if (!item.isMain) void run(item.id, () => onArchive(item.id)); }}>Archivar</button>
+                          {item.isMain ? <span id={archiveHelpId} className="thread-selector__hint">La conversación principal no se puede archivar.</span> : null}
                         </>
                       )}
                     </div>

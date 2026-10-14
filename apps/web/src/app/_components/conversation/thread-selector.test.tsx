@@ -43,18 +43,27 @@ describe("ThreadSelector", () => {
     await waitFor(() => expect(handlers.onArchive).toHaveBeenCalledWith("thread-2"));
     fireEvent.click(screen.getByRole("button", { name: "Restaurar Archivada" }));
     await waitFor(() => expect(handlers.onRestore).toHaveBeenCalledWith("thread-3"));
-    expect(screen.getByRole("button", { name: "Archivar Principal" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Archivar Principal" }).getAttribute("aria-disabled")).toBe("true");
   });
 
   it("surfaces async callback errors and disables archive for the main thread with an explanation", async () => {
     const main = conversationFixture({ id: "main-thread", isMain: true, title: "Principal" });
+    const onArchive = vi.fn(async () => undefined);
     render(<ThreadSelector items={[main]} selectedId={null} loading={false}
       onSelect={async () => { throw new Error("conflict"); }} onCreate={async () => undefined}
-      onRename={async () => undefined} onArchive={async () => undefined} onRestore={async () => undefined} />);
+      onRename={async () => undefined} onArchive={onArchive} onRestore={async () => undefined} />);
 
     const archive = screen.getByRole("button", { name: "Archivar Principal" });
-    expect(archive.hasAttribute("disabled")).toBe(true);
-    expect(archive.getAttribute("aria-describedby")).toBeTruthy();
+    // Focusable (no native disabled) so keyboard and screen-reader users reach the explanation.
+    expect(archive.hasAttribute("disabled")).toBe(false);
+    expect(archive.getAttribute("aria-disabled")).toBe("true");
+    archive.focus();
+    expect(document.activeElement).toBe(archive);
+    const help = document.getElementById(archive.getAttribute("aria-describedby") ?? "");
+    expect(help?.textContent).toBe("La conversación principal no se puede archivar.");
+    expect(help?.classList.contains("sr-only")).toBe(false);
+    fireEvent.click(archive);
+    expect(onArchive).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Seleccionar Principal" }));
     expect(await screen.findByRole("alert")).toBeTruthy();
   });
