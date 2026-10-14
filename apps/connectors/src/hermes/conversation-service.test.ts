@@ -349,6 +349,76 @@ describe("Hermes ConversationService", () => {
     await expect(service.list(principal(), { limit: 50, agentId: "fitness" })).resolves.toMatchObject({ items: [] });
   });
 
+  it("retries a failed create on the same reservation and upstream session ID", async () => {
+    const createSession = vi.fn()
+      .mockRejectedValueOnce(new Error("transport details with fictional-secret-token"))
+      .mockImplementation(async (_profile: string, input: { id: string; title: string; source: string }) => ({
+        id: input.id, source: "pih", title: input.title, archived: false,
+      }));
+    const { service, native, database } = await createHarness({ createSession });
+    await expect(service.create(principal(), { agentId: "fitness", title: "Training" }))
+      .rejects.toMatchObject({ code: "hermes_upstream_unavailable" });
+    const created = await service.create(principal(), { agentId: "fitness", title: "Training" });
+    expect(native.createSession.mock.calls.map(([, input]) => input.id)).toEqual([
+      `pih_${created.id}`, `pih_${created.id}`,
+    ]);
+    const count = await database.read((db) => db.prepare("SELECT COUNT(*) AS count FROM hermes_conversations").get<{ count: number }>());
+    expect(count?.count).toBe(1);
+  });
+
+  it("adopts the deterministic upstream session when finishing a create failed locally", async () => {
+    const createSession = vi.fn()
+      .mockImplementationOnce(async (_profile: string, input: { id: string; title: string; source: string }) => ({
+        id: input.id, source: "pih", title: input.title, archived: false,
+      }))
+      .mockRejectedValue(new Error("hermes_conflict"));
+    const { service, native, database, repository } = await createHarness({ createSession });
+    const markReady = vi.spyOn(repository, "markReady").mockImplementationOnce(() => {
+      throw new Error("database is locked");
+    });
+    await expect(service.create(principal(), { agentId: "fitness" }))
+      .rejects.toMatchObject({ code: "hermes_conversation_unavailable" });
+    markReady.mockRestore();
+    const created = await service.create(principal(), { agentId: "fitness" });
+    expect(native.createSession).toHaveBeenCalledTimes(2);
+    expect(native.getSession).toHaveBeenCalledWith("fitness", `pih_${created.id}`);
+    expect(native.createSession.mock.calls[0]?.[1].id).toBe(`pih_${created.id}`);
+    const rows = await database.read((db) => db.prepare(
+      "SELECT provision_state AS state FROM hermes_conversations",
+    ).all<{ state: string }>());
+    expect(rows).toEqual([{ state: "ready" }]);
+  });
+
+  it("does not reuse a pending reservation that belongs to another actor, profile, or title", async () => {
+    const createSession = vi.fn()
+      .mockRejectedValueOnce(new Error("hermes_upstream_unavailable"))
+      .mockImplementation(async (_profile: string, input: { id: string; title: string; source: string }) => ({
+        id: input.id, source: "pih", title: input.title, archived: false,
+      }));
+    const { service } = await createHarness({ createSession });
+    await expect(service.create(principal(), { agentId: "fitness", title: "Training" })).rejects.toThrow();
+    const foreign = await service.create(principal(foreignActorId), { agentId: "fitness", title: "Training" });
+    const otherTitle = await service.create(principal(), { agentId: "fitness", title: "Nutrition" });
+    expect(foreign.id).not.toBe("33333333-3333-4333-8333-000000000001");
+    expect(otherTitle.id).not.toBe("33333333-3333-4333-8333-000000000001");
+  });
+
+  it("characterizes ensureMain returning an archived main conversation (product question)", async () => {
+    // Current behavior, intentionally pinned while the product decision is open:
+    // once the main thread is archived, ensureMain returns it as-is (archived)
+    // instead of unarchiving it or provisioning a new main thread.
+    const { service, native } = await createHarness();
+    const main = await service.ensureMain(principal(), "fitness");
+    const other = await service.create(principal(), { agentId: "fitness", title: "Other" });
+    const selection = await service.selection(principal(), "fitness");
+    await service.putSelection(principal(), "fitness", { conversationId: other.id, expectedVersion: selection.version });
+    const archived = await service.patch(principal(), main.id, { archived: true, expectedVersion: main.version });
+    const again = await service.ensureMain(principal(), "fitness");
+    expect(again).toEqual(archived);
+    expect(again).toMatchObject({ id: main.id, isMain: true, archived: true });
+    expect(native.createSession).toHaveBeenCalledTimes(2);
+  });
+
   it("raises typed, content-free error codes from a closed set", async () => {
     const { service } = await createHarness();
     const own = await service.create(principal(), { agentId: "fitness", title: "Private title" });

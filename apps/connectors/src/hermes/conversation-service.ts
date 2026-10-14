@@ -159,23 +159,33 @@ export class ConversationService {
     if (!parsed.success) return fail("hermes_conversation_request_invalid");
     const profile = this.#requireDirectProfile(parsed.data.agentId);
     const timestamp = this.#now();
-    const id = this.#ids.generate();
+    const title = parsed.data.title ?? profile.displayName;
     let reservation: StoredConversation;
     try {
-      reservation = await this.#database.transaction((db) => this.#conversations.reserve(db, {
-        id,
-        actorId: principal.actorId,
-        agentId: profile.id,
-        title: parsed.data.title ?? profile.displayName,
-        isMain: false,
-        upstreamSessionId: "pih_" + id,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }));
+      // Retry safety: resume an unfinished reservation for the same actor, profile
+      // and title (its upstream ID is deterministic, and #provision adopts an
+      // already-created PIH session), rather than orphaning it with a new row.
+      reservation = await this.#database.transaction((db) =>
+        this.#conversations.findPendingAdditional(db, principal.actorId, profile.id, title) ??
+        this.#reserveAdditional(db, principal.actorId, profile.id, title, timestamp));
     } catch {
       return fail("hermes_conversation_unavailable");
     }
     return this.#provision(principal.actorId, reservation);
+  }
+
+  #reserveAdditional(db: SqliteHandle, actorId: string, agentId: string, title: string, timestamp: string): StoredConversation {
+    const id = this.#ids.generate();
+    return this.#conversations.reserve(db, {
+      id,
+      actorId,
+      agentId,
+      title,
+      isMain: false,
+      upstreamSessionId: "pih_" + id,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
   }
 
   async ensureMain(principal: DelegatedPrincipal, agentId: string): Promise<Conversation> {

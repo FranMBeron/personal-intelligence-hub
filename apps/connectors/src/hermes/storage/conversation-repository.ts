@@ -131,6 +131,19 @@ export class ConversationRepository {
     return this.getById(connection, input.id) ?? fail("hermes_conversation_missing");
   }
 
+  /**
+   * Oldest unfinished additional-thread reservation for the same actor, profile and
+   * title. Reusing it makes a retried create resume the same deterministic upstream
+   * session ID instead of leaving an orphaned pending row behind.
+   */
+  findPendingAdditional(connection: SqliteHandle, actorId: string, agentId: string, title: string): StoredConversation | null {
+    const row = connection.prepare(
+      "SELECT * FROM hermes_conversations WHERE actor_id = :actorId AND agent_id = :agentId AND title = :title " +
+      "AND is_main = 0 AND provision_state = 'pending' ORDER BY created_at, id LIMIT 1",
+    ).get<ConversationRow>({ actorId, agentId, title });
+    return row === undefined ? null : mapConversation(row);
+  }
+
   markReady(connection: SqliteHandle, actorId: string, id: string): void {
     const result = connection.prepare("UPDATE hermes_conversations SET provision_state = 'ready' WHERE actor_id = :actorId AND id = :id AND provision_state = 'pending'")
       .run({ actorId, id });
