@@ -68,8 +68,9 @@ const reserveInput = (overrides: Partial<ReserveConversation> = {}): ReserveConv
 const createConversation = async (database: ConnectorDatabase, overrides: Partial<ReserveConversation> = {}) => {
   const repository = new ConversationRepository();
   await database.transaction((db) => {
-    repository.reserve(db, reserveInput(overrides));
-    repository.markReady(db, overrides.actorId ?? actorId, overrides.id ?? conversationId);
+    const input = reserveInput(overrides);
+    repository.reserve(db, input);
+    repository.markReady(db, input.actorId, input.id, 1, input.upstreamSessionId);
   });
   return repository;
 };
@@ -138,11 +139,11 @@ describe("Hermes repositories", () => {
     const repository = new ConversationRepository();
     await database.transaction((db) => {
       repository.reserve(db, reserveInput({ id: "conversation-a", isMain: false, updatedAt: now }));
-      repository.markReady(db, actorId, "conversation-a");
+      repository.markReady(db, actorId, "conversation-a", 1, "session-conversation-a");
       repository.reserve(db, reserveInput({ id: "conversation-b", isMain: false, updatedAt: later }));
-      repository.markReady(db, actorId, "conversation-b");
+      repository.markReady(db, actorId, "conversation-b", 1, "session-conversation-b");
       repository.reserve(db, reserveInput({ id: "conversation-foreign", actorId: otherActor, isMain: false }));
-      repository.markReady(db, otherActor, "conversation-foreign");
+      repository.markReady(db, otherActor, "conversation-foreign", 1, "session-conversation-foreign");
     });
     const first = await database.read((db) => repository.listOwned(db, actorId, query(1)));
     expect(first.items.map(({ id }) => id)).toEqual(["conversation-b"]);
@@ -216,9 +217,9 @@ describe("Hermes repositories", () => {
     const repository = new ConversationRepository();
     await database.transaction((db) => {
       repository.reserve(db, reserveInput({ id: conversationId }));
-      repository.markReady(db, actorId, conversationId);
+      repository.markReady(db, actorId, conversationId, 1, `session-${conversationId}`);
       repository.reserve(db, reserveInput({ id: "conversation-other", actorId: otherActor, isMain: false }));
-      repository.markReady(db, otherActor, "conversation-other");
+      repository.markReady(db, otherActor, "conversation-other", 1, "session-conversation-other");
     });
     await expect(database.transaction((db) => new MessageRepository().insert(db, storedMessage({
       id: "message-cross-actor", conversationId: "conversation-other",
@@ -329,12 +330,34 @@ describe("Hermes repositories", () => {
     const database = await configuredDatabase();
     const repository = new ConversationRepository();
     await database.transaction((db) => repository.reserve(db, reserveInput({ actorId: otherActor })));
-    await expect(database.transaction((db) => repository.markReady(db, actorId, conversationId))).rejects.toThrow();
+    await expect(database.transaction((db) => repository.markReady(db, actorId, conversationId, 1, `session-${conversationId}`))).rejects.toThrow();
     await expect(database.read((db) => repository.getOwned(db, otherActor, conversationId)))
       .resolves.toMatchObject({ provisionState: "pending" });
-    await database.transaction((db) => repository.markReady(db, otherActor, conversationId));
+    await database.transaction((db) => repository.markReady(db, otherActor, conversationId, 1, `session-${conversationId}`));
     await expect(database.read((db) => repository.getOwned(db, otherActor, conversationId)))
       .resolves.toMatchObject({ provisionState: "ready" });
+  });
+
+  it("ignores mark-failed and mark-ready from a superseded provisioning attempt", async () => {
+    const database = await configuredDatabase();
+    const repository = new ConversationRepository();
+    const upstreamSessionId = `session-${conversationId}`;
+    const state = () => database.read((db) => repository.getOwned(db, actorId, conversationId));
+    await database.transaction((db) => repository.reserve(db, reserveInput({ isMain: false })));
+    // A newer attempt claims the row (version 2) while the first attempt (version 1) is still running.
+    await database.transaction((db) => repository.claimForRetry(db, actorId, conversationId, later));
+    await database.transaction((db) => repository.markFailed(db, actorId, conversationId, 1));
+    await expect(state()).resolves.toMatchObject({ provisionState: "pending", version: 2 });
+    await expect(database.transaction((db) => repository.markReady(db, actorId, conversationId, 1, upstreamSessionId)))
+      .resolves.toBe("superseded");
+    await expect(state()).resolves.toMatchObject({ provisionState: "pending", version: 2 });
+    await expect(database.transaction((db) => repository.markReady(db, actorId, conversationId, 2, upstreamSessionId)))
+      .resolves.toBe("ready");
+    // Once ready, a late finish for the same upstream session is an idempotent success.
+    await expect(database.transaction((db) => repository.markReady(db, actorId, conversationId, 1, upstreamSessionId)))
+      .resolves.toBe("ready");
+    await database.transaction((db) => repository.markFailed(db, actorId, conversationId, 2));
+    await expect(state()).resolves.toMatchObject({ provisionState: "ready", version: 2 });
   });
 
   it("binds event append and replay to the owning actor", async () => {

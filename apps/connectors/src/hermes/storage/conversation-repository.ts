@@ -166,16 +166,40 @@ export class ConversationRepository {
     return this.getOwned(connection, actorId, id) ?? fail("hermes_conversation_missing");
   }
 
-  /** Record that a provisioning attempt ended without the row becoming ready. */
-  markFailed(connection: SqliteHandle, actorId: string, id: string): void {
-    connection.prepare("UPDATE hermes_conversations SET provision_state = 'failed' WHERE actor_id = :actorId AND id = :id AND provision_state = 'pending'")
-      .run({ actorId, id });
+  /**
+   * Record that a provisioning attempt ended without the row becoming ready.
+   * `attemptVersion` is the version the attempt reserved or claimed; once a newer
+   * attempt has claimed the row (bumping its version) this is a no-op, so a
+   * superseded attempt can never fail a live claim.
+   */
+  markFailed(connection: SqliteHandle, actorId: string, id: string, attemptVersion: number): void {
+    connection.prepare(
+      "UPDATE hermes_conversations SET provision_state = 'failed' " +
+      "WHERE actor_id = :actorId AND id = :id AND provision_state = 'pending' AND version = :attemptVersion",
+    ).run({ actorId, id, attemptVersion });
   }
 
-  markReady(connection: SqliteHandle, actorId: string, id: string): void {
-    const result = connection.prepare("UPDATE hermes_conversations SET provision_state = 'ready' WHERE actor_id = :actorId AND id = :id AND provision_state IN ('pending', 'failed')")
-      .run({ actorId, id });
-    if (result.changes !== 1) fail("hermes_conversation_state_conflict");
+  /**
+   * Mark the row ready for the attempt that reserved or claimed `attemptVersion`.
+   * Returns "ready" when this attempt made it ready, or when the row is already
+   * ready for the same upstream session (idempotent). Returns "superseded" when a
+   * newer attempt owns the row, which is then left untouched.
+   */
+  markReady(
+    connection: SqliteHandle,
+    actorId: string,
+    id: string,
+    attemptVersion: number,
+    upstreamSessionId: string,
+  ): "ready" | "superseded" {
+    const result = connection.prepare(
+      "UPDATE hermes_conversations SET provision_state = 'ready' " +
+      "WHERE actor_id = :actorId AND id = :id AND provision_state IN ('pending', 'failed') AND version = :attemptVersion",
+    ).run({ actorId, id, attemptVersion });
+    if (result.changes === 1) return "ready";
+    const current = this.getOwned(connection, actorId, id);
+    if (current === null) return fail("hermes_conversation_state_conflict");
+    return current.provisionState === "ready" && current.upstreamSessionId === upstreamSessionId ? "ready" : "superseded";
   }
 
   getOwned(connection: SqliteHandle, actorId: string, id: string): StoredConversation | null {

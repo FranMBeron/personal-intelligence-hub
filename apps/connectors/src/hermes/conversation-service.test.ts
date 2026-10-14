@@ -229,7 +229,7 @@ describe("Hermes ConversationService", () => {
         isMain: false, upstreamSessionId: "pih_33333333-3333-4333-8333-000000000099",
         createdAt: now.toISOString(), updatedAt: now.toISOString(),
       });
-      repository.markReady(db, actorId, "33333333-3333-4333-8333-000000000099");
+      repository.markReady(db, actorId, "33333333-3333-4333-8333-000000000099", 1, "pih_33333333-3333-4333-8333-000000000099");
     });
     await expect(service.get(principal(), "33333333-3333-4333-8333-000000000099"))
       .rejects.toThrow("hermes_direct_conversations_disabled");
@@ -381,7 +381,7 @@ describe("Hermes ConversationService", () => {
           id, actorId, agentId, title: "Thread", isMain: false,
           upstreamSessionId: `pih_${id}`, createdAt: at, updatedAt: at,
         });
-        repository.markReady(db, actorId, id);
+        repository.markReady(db, actorId, id, 1, `pih_${id}`);
       }
     });
     await expect(service.list(principal(), { limit: 1 })).resolves.toEqual({
@@ -459,6 +459,73 @@ describe("Hermes ConversationService", () => {
     await reserve("000000000902", "2026-10-12T11:58:00.000Z");
     const resumed = await service.create(principal(), { agentId: "fitness", title: "Training" });
     expect(resumed.id).toBe("33333333-3333-4333-8333-000000000902");
+  });
+
+  type Deferred = Readonly<{ promise: Promise<void>; resolve: () => void; reject: (error: Error) => void }>;
+  const deferred = (): Deferred => {
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((onResolve, onReject) => { resolve = onResolve; reject = onReject; });
+    return { promise, resolve, reject };
+  };
+  /** createSession whose Nth call blocks on gates[N] and signals entered(N). */
+  const gatedCreateSession = () => {
+    const gates: Deferred[] = [];
+    const entries = [deferred(), deferred()];
+    const createSession = vi.fn(async (_profile: string, input: { id: string; title: string; source: string }) => {
+      const gate = deferred();
+      gates.push(gate);
+      entries[gates.length - 1]?.resolve();
+      await gate.promise;
+      return { id: input.id, source: "pih", title: input.title, archived: false };
+    });
+    return { createSession, gates, entered: (index: number) => entries[index]!.promise };
+  };
+  const supersededHarness = async () => {
+    const gated = gatedCreateSession();
+    const harness = await createHarness({ createSession: gated.createSession });
+    const rows = () => harness.database.read((db) => db.prepare(
+      "SELECT id, provision_state AS state, version FROM hermes_conversations",
+    ).all<{ id: string; state: string; version: number }>());
+    const first = harness.service.create(principal(), { agentId: "fitness", title: "Training" });
+    const firstOutcome = first.then((value) => ({ value }), (error: unknown) => ({ error }));
+    await gated.entered(0);
+    // The first attempt outlives the stale threshold, so a second create claims its row.
+    await harness.database.transaction((db) => db.prepare("UPDATE hermes_conversations SET updated_at = :at")
+      .run({ at: "2026-10-12T11:50:00.000Z" }));
+    const second = harness.service.create(principal(), { agentId: "fitness", title: "Training" });
+    await gated.entered(1);
+    expect(await rows()).toEqual([{ id: "33333333-3333-4333-8333-000000000001", state: "pending", version: 2 }]);
+    return { ...harness, gated, rows, firstOutcome, second };
+  };
+
+  it("does not let a superseded attempt's failure flip a newer claim to failed", async () => {
+    const { gated, rows, firstOutcome, second } = await supersededHarness();
+    gated.gates[0]!.reject(new Error("hermes_request_timeout"));
+    expect(await firstOutcome).toMatchObject({ error: { code: "hermes_request_timeout" } });
+    expect(await rows()).toEqual([{ id: "33333333-3333-4333-8333-000000000001", state: "pending", version: 2 }]);
+    gated.gates[1]!.resolve();
+    await expect(second).resolves.toMatchObject({ id: "33333333-3333-4333-8333-000000000001" });
+    expect(await rows()).toEqual([{ id: "33333333-3333-4333-8333-000000000001", state: "ready", version: 2 }]);
+  });
+
+  it("does not let a superseded attempt mark a newer claim ready or return it", async () => {
+    const { gated, rows, firstOutcome, second } = await supersededHarness();
+    gated.gates[0]!.resolve();
+    expect(await firstOutcome).toMatchObject({ error: { name: "HermesConversationError", code: "hermes_conversation_unavailable" } });
+    expect(await rows()).toEqual([{ id: "33333333-3333-4333-8333-000000000001", state: "pending", version: 2 }]);
+    gated.gates[1]!.resolve();
+    await expect(second).resolves.toMatchObject({ id: "33333333-3333-4333-8333-000000000001", version: 2 });
+    expect(await rows()).toEqual([{ id: "33333333-3333-4333-8333-000000000001", state: "ready", version: 2 }]);
+  });
+
+  it("returns the ready row when a superseded attempt finishes after the newer claim completed", async () => {
+    const { gated, rows, firstOutcome, second } = await supersededHarness();
+    gated.gates[1]!.resolve();
+    const completed = await second;
+    gated.gates[0]!.resolve();
+    expect(await firstOutcome).toEqual({ value: completed });
+    expect(await rows()).toEqual([{ id: completed.id, state: "ready", version: 2 }]);
   });
 
   it("retries a failed create on the same reservation and upstream session ID", async () => {

@@ -439,7 +439,9 @@ export class ConversationService {
       return await this.#provisionAttempt(actorId, reservation, selectMain);
     } catch (error) {
       try {
-        await this.#database.transaction((db) => this.#conversations.markFailed(db, actorId, reservation.id));
+        await this.#database.transaction((db) => this.#conversations.markFailed(
+          db, actorId, reservation.id, reservation.version,
+        ));
       } catch {
         // Best effort: an unmarked row stays pending and becomes reusable once stale.
       }
@@ -472,7 +474,14 @@ export class ConversationService {
       completed = await this.#database.transaction((db) => {
         const latest = this.#conversations.getOwned(db, actorId, reservation.id);
         if (latest === null) return fail("not_found");
-        if (latest.provisionState !== "ready") this.#conversations.markReady(db, actorId, latest.id);
+        // A newer attempt may have claimed the row while this one awaited Hermes;
+        // never mark ready or return a claim this attempt does not own. A row
+        // that is already ready is returned as-is (same deterministic session).
+        if (latest.provisionState !== "ready" && this.#conversations.markReady(
+          db, actorId, latest.id, reservation.version, reservation.upstreamSessionId,
+        ) === "superseded") {
+          return fail("hermes_conversation_unavailable");
+        }
         // Another writer may have finished and archived the main thread meanwhile;
         // a selected thread must never be archived, so do not select it then.
         if (selectMain && latest.isMain && !latest.archived) {
