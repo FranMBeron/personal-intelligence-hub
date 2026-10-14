@@ -74,7 +74,7 @@ Every BFF-to-connectors call requires both:
 1. a service credential that maps to a configured service identity; and
 2. a short-lived signed delegated principal containing actor, audience, scopes, expiry, and request ID.
 
-The service identity is derived from the validated token or issuer/key mapping, never from a self-asserted claim. One installation-wide audience, `personal-intelligence-hub-connectors`, is used consistently. Each configured service has an allowlist of delegated actor types and maximum scopes: the PIH web service may delegate verified humans; Central may delegate only its agent identity and cannot configure or confirm Calendar changes; Telegram has no Calendar scopes; the deployer can read readiness only.
+The service identity is derived from the validated token or issuer/key mapping, never from a self-asserted claim. One installation-wide audience, `personal-intelligence-hub-connectors`, is used consistently. Each configured service has an allowlist of delegated actor types and maximum scopes: the PIH web service may delegate verified humans; Central may delegate only its agent actor type, acting for exactly one owner, and cannot configure or confirm Calendar changes; Telegram has no Calendar scopes; the deployer can read readiness only.
 
 The web BFF authenticates the human through exactly one configured mode: OIDC validation or Tailscale LocalAPI identity lookup behind an allowlisted same-host proxy. Each mode fails closed; unverified identity headers are ignored. Every endpoint validates resource ownership in addition to possession of an identifier. Upstream URLs come only from static private configuration. Provider errors are normalized before returning to the BFF.
 
@@ -91,7 +91,9 @@ calendar:confirm
 calendar:configure
 ```
 
-Central may receive `calendar:read` and `calendar:propose`. It never receives `calendar:confirm` or `calendar:configure`. Fitness and Finanzas do not receive Calendar access in the first version.
+Central may receive `calendar:read` and `calendar:propose`. It never receives `calendar:confirm` or `calendar:configure`.
+
+Every service credential whose allowed actor types include `agent` is bound in private configuration to exactly one `boundActorId` (a UUID naming the human owner it acts for). Configuration validation rejects an agent-capable credential without that binding, and rejects a binding on human- or service-only credentials. Authorization rejects, with `403 forbidden` before any route handler runs, a delegated principal whose `actorId` differs from the bound actor. The principal keeps `actorType: agent`, so providers can record that an agent created a record while scoping it to the owner. Human-delegating services such as the PIH web BFF are unaffected: their `actorId` comes from verified human identity. Fitness and Finanzas do not receive Calendar access in the first version.
 
 ## 5. Hermes integration
 
