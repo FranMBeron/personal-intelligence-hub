@@ -244,6 +244,8 @@ export class ConversationService {
     // (putSelection refuses archived candidates in its own transaction), so a
     // concurrent patch or selection loses locally before Hermes is touched.
     // If the upstream mirror fails, the local change is compensated below.
+    // Known trade-off: the optimistic local patch is visible to readers (get,
+    // list) before Hermes confirms it, and briefly reverts if compensation runs.
     let applied: StoredConversation;
     try {
       applied = await this.#database.transaction((db) => {
