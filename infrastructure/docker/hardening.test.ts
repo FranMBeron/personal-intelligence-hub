@@ -66,6 +66,22 @@ describe.each([
   });
 });
 
+describe("web peer-aware Next host", () => {
+  it("starts the production app through the socket-peer adapter", async () => {
+    const dockerfile = await read("infrastructure/docker/web.Dockerfile");
+    const packageJson = JSON.parse(await read("apps/web/package.json")) as { scripts: { start: string } };
+    const peerServer = await read("apps/web/peer-server.mjs");
+    const peerDispatch = await read("apps/web/peer-http-server.mjs");
+
+    expect(packageJson.scripts.start).toBe("node peer-server.mjs");
+    expect(dockerfile).toContain("COPY --chown=node:node apps/web/peer-server.mjs apps/web/peer-http-server.mjs ./apps/web/");
+    expect(dockerfile).toContain('CMD ["node", "apps/web/peer-server.mjs"]');
+    expect(peerServer).toContain("dispatchWithSocketPeer(request");
+    expect(peerDispatch).toContain("request.socket?.remoteAddress");
+    expect(peerDispatch).not.toContain("x-forwarded-for");
+  });
+});
+
 describe("production network boundary", () => {
   it("requires a release-specific PostgreSQL image", async () => {
     const { services } = await readCompose("infrastructure/docker/compose.production.yaml");

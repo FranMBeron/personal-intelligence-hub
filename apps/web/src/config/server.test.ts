@@ -89,3 +89,92 @@ describe("loadServerConfig", () => {
     ).toThrow(/origin without a path/u);
   });
 });
+
+describe("private connector configuration", () => {
+  const oidcEnvironment = {
+    CONNECTORS_ENABLED: "true",
+    CONNECTORS_SERVICE_TOKEN: "fictional-connectors-service-token",
+    CONNECTORS_DELEGATED_JWT_KEY: Buffer.alloc(32, 7).toString("base64url"),
+    CONNECTORS_HUMAN_AUTH_MODE: "oidc",
+    CONNECTORS_OIDC_ISSUER: "https://identity.example.test/",
+    CONNECTORS_OIDC_AUDIENCE: "fictional-web-audience",
+    CONNECTORS_OIDC_JWKS_URI: "https://identity.example.test/jwks",
+  };
+
+  it("requires the Foundation 32-byte base64url delegated key format", () => {
+    const validKey = Buffer.alloc(32, 9).toString("base64url");
+    const tooLongKey = Buffer.alloc(33, 9).toString("base64url");
+    expect(loadServerConfig({ ...oidcEnvironment, CONNECTORS_DELEGATED_JWT_KEY: validKey }).connectors?.delegatedJwtKey).toEqual(new Uint8Array(32).fill(9));
+    expect(() => loadServerConfig({ ...oidcEnvironment, CONNECTORS_DELEGATED_JWT_KEY: tooLongKey })).toThrow();
+  });
+
+  it("rejects legacy Hermes TCP credentials when the private connectors transport is enabled", () => {
+    expect(() => loadServerConfig({
+      ...oidcEnvironment,
+      HERMES_INTERNAL_URL: "https://hermes.example.test",
+      HERMES_SERVICE_TOKEN: "fictional-legacy-hermes-token",
+    })).toThrow(/cannot be combined/u);
+  });
+
+  it("does not enable connectors or select a default socket unless explicitly enabled", () => {
+    expect(loadServerConfig({})).not.toHaveProperty("connectors");
+  });
+
+  it("loads the complete OIDC mode and defaults only its private Unix socket", () => {
+    expect(loadServerConfig(oidcEnvironment).connectors).toEqual({
+      socketPath: "/run/pih-connectors/connectors.sock",
+      serviceToken: "fictional-connectors-service-token",
+      delegatedJwtKey: new Uint8Array(32).fill(7),
+      humanAuthMode: "oidc",
+      oidc: {
+        issuer: "https://identity.example.test/",
+        audience: "fictional-web-audience",
+        jwksUri: "https://identity.example.test/jwks",
+      },
+    });
+  });
+
+  it("loads only the selected Tailscale LocalAPI configuration", () => {
+    expect(loadServerConfig({
+      CONNECTORS_ENABLED: "true",
+      PIH_INTERNAL_AUTH_KEY: "fictional-second-brain-internal-key-at-least-32-bytes",
+      CONNECTORS_SERVICE_TOKEN: "fictional-connectors-service-token",
+      CONNECTORS_DELEGATED_JWT_KEY: Buffer.alloc(32, 7).toString("base64url"),
+      CONNECTORS_HUMAN_AUTH_MODE: "tailscale-localapi",
+      CONNECTORS_SOCKET_PATH: "/run/pih-connectors/connectors.sock",
+      CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR: "172.30.0.0/16",
+      CONNECTORS_TAILSCALE_LOCALAPI_SOCKET: "/var/run/tailscale/tailscaled.sock",
+      CONNECTORS_TAILSCALE_ALLOWED_USERS: "allowed@example.test=a03f7492-09f0-4e8f-95d0-12b7c616aaea",
+    }).connectors).toMatchObject({
+      humanAuthMode: "tailscale-localapi",
+      tailscale: {
+        trustedProxyCidr: "172.30.0.0/16",
+        localApiSocketPath: "/var/run/tailscale/tailscaled.sock",
+        allowedUsers: {
+          "allowed@example.test": "a03f7492-09f0-4e8f-95d0-12b7c616aaea",
+        },
+      },
+    });
+  });
+
+  it.each([
+    { CONNECTORS_ENABLED: "true" },
+    { ...oidcEnvironment, CONNECTORS_OIDC_JWKS_URI: undefined },
+    { ...oidcEnvironment, CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR: "172.30.0.0/16" },
+    { ...oidcEnvironment, CONNECTORS_SOCKET_PATH: "relative.sock" },
+    { ...oidcEnvironment, CONNECTORS_OIDC_JWKS_URI: "http://identity.example.test/jwks" },
+    {
+      ...oidcEnvironment,
+      PIH_INTERNAL_AUTH_KEY: "7".repeat(32),
+      CONNECTORS_DELEGATED_JWT_KEY: Buffer.from("7".repeat(32), "utf8").toString("base64url"),
+    },
+  ])("rejects partial, mixed-mode, or unsafe connector configuration", (environment) => {
+    expect(() => loadServerConfig(environment)).toThrow();
+  });
+
+  it("rejects connector settings when the installation has not enabled connectors", () => {
+    expect(() => loadServerConfig({
+      CONNECTORS_SERVICE_TOKEN: "fictional-connectors-service-token",
+    })).toThrow();
+  });
+});

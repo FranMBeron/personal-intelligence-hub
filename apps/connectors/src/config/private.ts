@@ -5,6 +5,7 @@ import type {
 } from "@personal-intelligence-hub/contracts";
 import {
   ActorTypeSchema,
+  DelegatedJwtKeySchema,
   ConnectorScopeSchema,
   ConnectorServiceIdSchema,
 } from "@personal-intelligence-hub/contracts";
@@ -101,23 +102,7 @@ const RESERVED_PROVIDER_NAMES = new Set([
   "prototype",
 ]);
 
-const DelegatedKeySchema = z
-  .string()
-  .regex(/^[A-Za-z0-9_-]+$/)
-  .transform((encoded, context) => {
-    const decoded = Buffer.from(encoded, "base64url");
-    if (
-      decoded.byteLength !== 32 ||
-      decoded.toString("base64url") !== encoded
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "delegatedKey must be exactly 32 base64url-encoded bytes",
-      });
-      return z.NEVER;
-    }
-    return new Uint8Array(decoded);
-  });
+const DelegatedKeySchema = DelegatedJwtKeySchema;
 
 const EncodedCredentialSchema = z
   .object({

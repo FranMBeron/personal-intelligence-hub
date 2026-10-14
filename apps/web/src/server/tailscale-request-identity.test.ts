@@ -55,6 +55,16 @@ describe("Tailscale request identity", () => {
       iat: 1_790_337_600,
       exp: 1_790_337_630,
     });
+    await expect(jwtVerify(
+      token,
+      new TextEncoder().encode(signingKey),
+      {
+        algorithms: ["HS256"],
+        audience: "personal-intelligence-hub-connectors",
+        issuer: "personal-intelligence-hub-web",
+        currentDate: now,
+      },
+    )).rejects.toThrow();
   });
 
   it("distinguishes missing proxy identity from a disallowed user", async () => {

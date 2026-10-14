@@ -2,173 +2,133 @@ import "server-only";
 
 import {
   AgentSummarySchema,
+  ConversationListQuerySchema,
+  ConversationListSchema,
   ConversationSchema,
+  ConversationSelectionSchema,
+  CreateConversationBodySchema,
+  DelegationListQuerySchema,
+  DelegationListSchema,
+  DelegationSchema,
   HermesCapabilitiesSchema,
+  MessageHistorySchema,
+  MessagePageQuerySchema,
   MessageSchema,
-  UploadedMediaSchema,
+  PatchConversationBodySchema,
+  PutConversationSelectionBodySchema,
+  SendMessageBodySchema,
   type AgentSummary,
   type Conversation,
+  type ConversationList,
+  type ConversationListQuery,
+  type ConversationSelection,
   type CreateConversationBody,
+  type Delegation,
+  type DelegationList,
+  type DelegationListQuery,
   type HermesCapabilities,
   type Message,
+  type MessageHistory,
+  type MessagePageQuery,
+  type PatchConversationBody,
+  type PutConversationSelectionBody,
   type SendMessageBody,
   type UploadedMedia,
 } from "@personal-intelligence-hub/contracts";
 import { z } from "zod";
 
 import type { RequestContext } from "../context";
+import { GatewayError } from "../problems";
 import type { HermesGateway } from "../ports/hermes-gateway";
-import { GatewayError, dependencyUnavailable } from "../problems";
+import type { ConnectorsHttp } from "./connectors-http";
 
-type Options = Readonly<{
-  baseUrl: string;
-  serviceToken: string;
-  fetcher?: typeof fetch;
-  timeoutMs?: number;
-}>;
+const queryPath = (path: string, values: Readonly<Record<string, string | number | boolean | undefined>>): string => {
+  const parameters = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined) parameters.set(key, String(value));
+  }
+  const query = parameters.toString();
+  return query === "" ? path : path + "?" + query;
+};
 
-type JsonMethod = "GET" | "POST";
+const uploadUnavailable = (context: RequestContext, status: 400 | 422 = 422): GatewayError => new GatewayError({
+  type: "about:blank",
+  title: "Invalid upload",
+  status,
+  detail: "An existing conversation and a supported image attachment are required.",
+  instance: "/api/ui/v1",
+  code: status === 400 ? "validation_failed" : "validation_failed",
+  requestId: context.requestId,
+});
 
 export class HttpHermesGateway implements HermesGateway {
-  readonly #baseUrl: string;
-  readonly #serviceToken: string;
-  readonly #fetcher: typeof fetch;
-  readonly #timeoutMs: number;
+  constructor(private readonly http: Pick<ConnectorsHttp, "json" | "stream" | "upload">) {}
 
-  constructor({ baseUrl, serviceToken, fetcher = fetch, timeoutMs = 2_000 }: Options) {
-    this.#baseUrl = baseUrl;
-    this.#serviceToken = serviceToken;
-    this.#fetcher = fetcher;
-    this.#timeoutMs = timeoutMs;
+  capabilities(context: RequestContext, signal?: AbortSignal): Promise<HermesCapabilities> {
+    return this.http.json(context, { path: "/v1/capabilities", method: "GET", schema: HermesCapabilitiesSchema, scope: "hermes:agents:read", signal });
   }
 
-  #headers(context: RequestContext): Headers {
-    return new Headers({
-      accept: "application/json",
-      authorization: `Bearer ${this.#serviceToken}`,
-      "x-delegated-authorization": context.authorization,
-      "x-request-id": context.requestId,
+  async agents(context: RequestContext, signal?: AbortSignal): Promise<readonly AgentSummary[]> {
+    return this.http.json(context, { path: "/v1/agents", method: "GET", schema: z.array(AgentSummarySchema), scope: "hermes:agents:read", signal });
+  }
+
+  upload(context: RequestContext, file: File, kind: "attachment" | "voice", conversationId?: string, signal?: AbortSignal): Promise<UploadedMedia> {
+    if (kind !== "attachment" || conversationId === undefined || conversationId.trim() === "") {
+      return Promise.reject(uploadUnavailable(context));
+    }
+    return this.http.upload(context, conversationId, file, signal);
+  }
+
+  createConversation(context: RequestContext, body: CreateConversationBody, signal?: AbortSignal): Promise<Conversation> {
+    return this.http.json(context, { path: "/v1/conversations", method: "POST", schema: ConversationSchema, body: CreateConversationBodySchema.parse(body), scope: "hermes:conversations:write", signal });
+  }
+
+  listConversations(context: RequestContext, query: ConversationListQuery, signal?: AbortSignal): Promise<ConversationList> {
+    const parsed = ConversationListQuerySchema.parse({ ...query, archived: query.archived === undefined ? undefined : String(query.archived) });
+    return this.http.json(context, {
+      path: queryPath("/v1/conversations", parsed), method: "GET", schema: ConversationListSchema, scope: "hermes:conversations:read", signal,
     });
   }
 
-  async #json<T>(
-    context: RequestContext,
-    path: string,
-    schema: z.ZodType<T>,
-    method: JsonMethod = "GET",
-    body?: unknown,
-    extraHeaders?: Readonly<Record<string, string>>,
-  ): Promise<T> {
-    try {
-      const headers = this.#headers(context);
-      for (const [name, value] of Object.entries(extraHeaders ?? {})) {
-        headers.set(name, value);
-      }
-      if (body !== undefined) headers.set("content-type", "application/json");
-      const requestInit: RequestInit = {
-        method,
-        cache: "no-store",
-        headers,
-        signal: AbortSignal.timeout(this.#timeoutMs),
-      };
-      if (body !== undefined) requestInit.body = JSON.stringify(body);
-      const response = await this.#fetcher(
-        new Request(new URL(path, this.#baseUrl), requestInit),
-      );
-      if (!response.ok) throw dependencyUnavailable("Hermes", context.requestId);
-      return schema.parse(await response.json());
-    } catch (error) {
-      if (error instanceof GatewayError) throw error;
-      throw dependencyUnavailable("Hermes", context.requestId, error);
-    }
+  getConversation(context: RequestContext, conversationId: string, signal?: AbortSignal): Promise<Conversation> {
+    return this.http.json(context, { path: "/v1/conversations/" + encodeURIComponent(conversationId), method: "GET", schema: ConversationSchema, scope: "hermes:conversations:read", signal });
   }
 
-  capabilities(context: RequestContext): Promise<HermesCapabilities> {
-    return this.#json(context, "/v1/capabilities", HermesCapabilitiesSchema);
+  updateConversation(context: RequestContext, conversationId: string, body: PatchConversationBody, signal?: AbortSignal): Promise<Conversation> {
+    return this.http.json(context, { path: "/v1/conversations/" + encodeURIComponent(conversationId), method: "PATCH", schema: ConversationSchema, body: PatchConversationBodySchema.parse(body), scope: "hermes:conversations:write", signal });
   }
 
-  agents(context: RequestContext): Promise<readonly AgentSummary[]> {
-    return this.#json(context, "/v1/agents", z.array(AgentSummarySchema));
+  resolveMainConversation(context: RequestContext, agentId: string, signal?: AbortSignal): Promise<Conversation> {
+    return this.http.json(context, { path: "/v1/agents/" + encodeURIComponent(agentId) + "/main-conversation", method: "PUT", schema: ConversationSchema, scope: "hermes:conversations:write", signal });
   }
 
-  async upload(
-    context: RequestContext,
-    file: File,
-    kind: "attachment" | "voice",
-  ): Promise<UploadedMedia> {
-    try {
-      const form = new FormData();
-      form.set("kind", kind);
-      form.set("media", file);
-      const response = await this.#fetcher(
-        new Request(new URL("/v1/uploads", this.#baseUrl), {
-          method: "POST",
-          cache: "no-store",
-          headers: this.#headers(context),
-          body: form,
-          signal: AbortSignal.timeout(this.#timeoutMs),
-        }),
-      );
-      if (!response.ok) throw dependencyUnavailable("Hermes", context.requestId);
-      return UploadedMediaSchema.parse(await response.json());
-    } catch (error) {
-      if (error instanceof GatewayError) throw error;
-      throw dependencyUnavailable("Hermes", context.requestId, error);
-    }
+  getConversationSelection(context: RequestContext, agentId: string, signal?: AbortSignal): Promise<ConversationSelection> {
+    return this.http.json(context, { path: "/v1/agents/" + encodeURIComponent(agentId) + "/conversation-selection", method: "GET", schema: ConversationSelectionSchema, scope: "hermes:conversations:read", signal });
   }
 
-  createConversation(
-    context: RequestContext,
-    body: CreateConversationBody,
-  ): Promise<Conversation> {
-    return this.#json(
-      context,
-      "/v1/conversations",
-      ConversationSchema,
-      "POST",
-      body,
-    );
+  selectConversation(context: RequestContext, agentId: string, body: PutConversationSelectionBody, signal?: AbortSignal): Promise<ConversationSelection> {
+    return this.http.json(context, { path: "/v1/agents/" + encodeURIComponent(agentId) + "/conversation-selection", method: "PUT", schema: ConversationSelectionSchema, body: PutConversationSelectionBodySchema.parse(body), scope: "hermes:conversations:write", signal });
   }
 
-  sendMessage(
-    context: RequestContext,
-    conversationId: string,
-    idempotencyKey: string,
-    body: SendMessageBody,
-  ): Promise<Message> {
-    return this.#json(
-      context,
-      `/v1/conversations/${encodeURIComponent(conversationId)}/messages`,
-      MessageSchema,
-      "POST",
-      body,
-      { "idempotency-key": idempotencyKey },
-    );
+  history(context: RequestContext, conversationId: string, query: MessagePageQuery, signal?: AbortSignal): Promise<MessageHistory> {
+    const parsed = MessagePageQuerySchema.parse(query);
+    return this.http.json(context, { path: queryPath("/v1/conversations/" + encodeURIComponent(conversationId) + "/messages", parsed), method: "GET", schema: MessageHistorySchema, scope: "hermes:conversations:read", signal });
   }
 
-  async events(
-    context: RequestContext,
-    conversationId: string,
-    lastEventId?: string,
-  ): Promise<Response> {
-    try {
-      const headers = this.#headers(context);
-      headers.set("accept", "text/event-stream");
-      if (lastEventId !== undefined) headers.set("last-event-id", lastEventId);
-      const response = await this.#fetcher(
-        new Request(
-          new URL(
-            `/v1/conversations/${encodeURIComponent(conversationId)}/events`,
-            this.#baseUrl,
-          ),
-          { cache: "no-store", headers },
-        ),
-      );
-      if (!response.ok) throw dependencyUnavailable("Hermes", context.requestId);
-      return response;
-    } catch (error) {
-      if (error instanceof GatewayError) throw error;
-      throw dependencyUnavailable("Hermes", context.requestId, error);
-    }
+  sendMessage(context: RequestContext, conversationId: string, idempotencyKey: string, body: SendMessageBody, signal?: AbortSignal): Promise<Message> {
+    return this.http.json(context, { path: "/v1/conversations/" + encodeURIComponent(conversationId) + "/messages", method: "POST", schema: MessageSchema, body: SendMessageBodySchema.parse(body), scope: "hermes:conversations:write", idempotencyKey, signal });
+  }
+
+  events(context: RequestContext, conversationId: string, lastEventId?: string, signal?: AbortSignal): Promise<Response> {
+    return this.http.stream(context, "/v1/conversations/" + encodeURIComponent(conversationId) + "/events", lastEventId, signal);
+  }
+
+  listDelegations(context: RequestContext, query: DelegationListQuery, signal?: AbortSignal): Promise<DelegationList> {
+    const parsed = DelegationListQuerySchema.parse(query);
+    return this.http.json(context, { path: queryPath("/v1/delegations", parsed), method: "GET", schema: DelegationListSchema, scope: "hermes:delegations:read", signal });
+  }
+
+  getDelegation(context: RequestContext, delegationId: string, signal?: AbortSignal): Promise<Delegation> {
+    return this.http.json(context, { path: "/v1/delegations/" + encodeURIComponent(delegationId), method: "GET", schema: DelegationSchema, scope: "hermes:delegations:read", signal });
   }
 }
