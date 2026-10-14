@@ -8,6 +8,7 @@ import { Conversation } from "./conversation";
 import { ThreadSelector } from "./thread-selector";
 
 const pageLimit = 50;
+const staleAgentMessage = "Cambiaste de agente antes de terminar; el mensaje no se envió.";
 const selectionConflictMessage = "La selección se actualizó en otro lugar. Se cargó el valor más reciente; vuelve a elegir la conversación.";
 
 export function ThreadWorkspace({ agentId, agentName, capabilities, client: suppliedClient }: Readonly<{
@@ -31,6 +32,15 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
   const cursorRef = useRef<ConversationList["pageInfo"]["nextCursor"]>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const listGeneration = useRef(0);
+  const agentGeneration = useRef(0);
+  const agentRef = useRef(agentId);
+  agentRef.current = agentId;
+  // Captures the agent session at call time; the returned predicate stays true only while that session is current.
+  const captureAgent = useCallback(() => {
+    const generation = agentGeneration.current;
+    const requested = agentRef.current;
+    return () => generation === agentGeneration.current && requested === agentRef.current;
+  }, []);
 
   const readSelection = useCallback((signal?: AbortSignal) => client.getConversationSelection(agentId, signal), [agentId, client]);
   const loadLists = useCallback(async (signal?: AbortSignal, append = false) => {
@@ -43,6 +53,7 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
     setItems((previous) => {
       const next = append ? [...previous] : [];
       for (const item of [...active.items, ...archived.items]) {
+        if (item.agentId !== agentId) continue;
         const existing = next.findIndex((candidate) => candidate.id === item.id);
         if (existing < 0) next.push(item); else next[existing] = item;
       }
@@ -53,19 +64,22 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
     cursorRef.current = active.pageInfo.nextCursor;
   }, [agentId, client]);
 
-  const reloadPersistedSelection = useCallback(async () => {
+  const reloadPersistedSelection = useCallback(async (isCurrent: () => boolean) => {
     const current = await readSelection();
+    if (!isCurrent() || current.agentId !== agentId) return current;
     setSelection(current);
     setSelectedId(current.conversationId);
     return current;
-  }, [readSelection]);
+  }, [agentId, readSelection]);
 
   useEffect(() => {
     const controller = new AbortController();
+    agentGeneration.current += 1;
     setLoadedAgentId(agentId);
     setLoading(true); setError(null); setItems([]); setSelectedId(null); setSelection(null); setCursor(null); cursorRef.current = null; setHasMore(false);
     void Promise.all([loadLists(controller.signal), readSelection(controller.signal)]).then(([, persisted]) => {
       if (controller.signal.aborted) return;
+      if (persisted.agentId !== agentId) throw new Error("Selection belongs to another agent.");
       setSelection(persisted); setSelectedId(persisted.conversationId); setLoading(false);
     }).catch(() => {
       if (controller.signal.aborted) return;
@@ -74,56 +88,57 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
     return () => { controller.abort(); listGeneration.current += 1; };
   }, [agentId, loadLists, readSelection]);
 
+  // Applies a selection write only while the agent session that issued it is still current.
+  const writeSelection = useCallback(async (isCurrent: () => boolean, conversationId: string, expectedVersion: number) => {
+    try {
+      const next = await client.selectConversation(agentId, { conversationId, expectedVersion });
+      if (!isCurrent()) return null;
+      if (next.agentId !== agentId) throw new Error("Selection belongs to another agent.");
+      setSelection(next); setSelectedId(next.conversationId); setError(null);
+      return next;
+    } catch (cause) {
+      if (!isCurrent()) return null;
+      if (cause instanceof ConversationClientError && cause.status === 409) {
+        try { await reloadPersistedSelection(isCurrent); } catch { /* keep the explicit conflict notice below */ }
+        if (!isCurrent()) return null;
+        setError(selectionConflictMessage);
+        throw new Error(selectionConflictMessage);
+      }
+      throw cause;
+    }
+  }, [agentId, client, reloadPersistedSelection]);
+
   const selectThread = useCallback(async (id: string) => {
     if (!isCurrentAgent || selection === null) return;
-    try {
-      const next = await client.selectConversation(agentId, { conversationId: id, expectedVersion: selection.version });
-      setSelection(next); setSelectedId(next.conversationId); setError(null);
-    } catch (cause) {
-      if (cause instanceof ConversationClientError && cause.status === 409) {
-        try { await reloadPersistedSelection(); } catch { /* keep the explicit conflict notice below */ }
-        setError(selectionConflictMessage);
-        throw new Error(selectionConflictMessage);
-      }
-      throw cause;
-    }
-  }, [agentId, client, isCurrentAgent, reloadPersistedSelection, selection]);
+    await writeSelection(captureAgent(), id, selection.version);
+  }, [captureAgent, isCurrentAgent, selection, writeSelection]);
 
-  const persistSelection = useCallback(async (conversation: ConversationRecord) => {
+  const persistSelection = useCallback(async (conversation: ConversationRecord, isCurrent: () => boolean) => {
+    if (conversation.agentId !== agentId) throw new Error("Conversation belongs to another agent.");
     const current = selection ?? await readSelection();
-    try {
-      const next = await client.selectConversation(agentId, { conversationId: conversation.id, expectedVersion: current.version });
-      setSelection(next); setSelectedId(next.conversationId);
-      setItems((previous) => [conversation, ...previous.filter((item) => item.id !== conversation.id)]);
-      return conversation;
-    } catch (cause) {
-      if (cause instanceof ConversationClientError && cause.status === 409) {
-        try { await reloadPersistedSelection(); } catch { /* keep the explicit conflict notice below */ }
-        setError(selectionConflictMessage);
-        throw new Error(selectionConflictMessage);
-      }
-      throw cause;
-    }
-  }, [agentId, client, readSelection, reloadPersistedSelection, selection]);
+    if (!isCurrent()) throw new Error(staleAgentMessage);
+    const next = await writeSelection(isCurrent, conversation.id, current.version);
+    if (next === null) throw new Error(staleAgentMessage);
+    setItems((previous) => [conversation, ...previous.filter((item) => item.id !== conversation.id)]);
+    return conversation;
+  }, [agentId, readSelection, selection, writeSelection]);
 
-  const resolveMainForSend = useCallback(async () => persistSelection(await client.mainConversation(agentId)), [agentId, client, persistSelection]);
+  const resolveMainForSend = useCallback(async () => {
+    const isCurrent = captureAgent();
+    const main = await client.mainConversation(agentId);
+    if (!isCurrent()) throw new Error(staleAgentMessage);
+    return persistSelection(main, isCurrent);
+  }, [agentId, captureAgent, client, persistSelection]);
 
   const createThread = useCallback(async () => {
     if (!isCurrentAgent || selection === null) return;
+    const isCurrent = captureAgent();
     const created = await client.createConversation({ agentId });
+    if (!isCurrent()) return;
+    if (created.agentId !== agentId) throw new Error("Conversation belongs to another agent.");
     setItems((previous) => [created, ...previous.filter((item) => item.id !== created.id)]);
-    try {
-      const next = await client.selectConversation(agentId, { conversationId: created.id, expectedVersion: selection?.version ?? 0 });
-      setSelection(next); setSelectedId(next.conversationId); setError(null);
-    } catch (cause) {
-      if (cause instanceof ConversationClientError && cause.status === 409) {
-        try { await reloadPersistedSelection(); } catch { /* preserve the conflict below */ }
-        setError(selectionConflictMessage);
-        throw new Error(selectionConflictMessage);
-      }
-      throw cause;
-    }
-  }, [agentId, client, isCurrentAgent, reloadPersistedSelection, selection]);
+    await writeSelection(isCurrent, created.id, selection.version);
+  }, [agentId, captureAgent, client, isCurrentAgent, selection, writeSelection]);
 
   const mutateThread = useCallback(async (id: string, patch: (item: ConversationRecord) => Promise<ConversationRecord>) => {
     const item = items.find((candidate) => candidate.id === id);

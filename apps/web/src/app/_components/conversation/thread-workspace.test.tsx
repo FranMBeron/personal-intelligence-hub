@@ -197,6 +197,64 @@ describe("ThreadWorkspace", () => {
     expect(fetcher.mock.calls.some(([, init]) => init?.method === "PUT" || init?.method === "POST")).toBe(false);
   });
 
+  const crossAgentFetcher = (deferredPut: { release?: (response: Response) => void }, extra?: (path: string, init?: RequestInit) => Promise<Response> | undefined) => {
+    const research = conversationFixture({ id: "research-main", agentId: "research", isMain: true, title: "Research main" });
+    const researchOther = conversationFixture({ id: "research-other", agentId: "research", isMain: false, title: "Research other" });
+    const planning = conversationFixture({ id: "planning-main", agentId: "planning", isMain: true, title: "Planning main" });
+    return vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const path = String(input);
+      const agentId = path.includes("/agents/planning/") || path.includes("agentId=planning") ? "planning" : "research";
+      const custom = extra?.(path, init);
+      if (custom !== undefined) return custom;
+      if (path.endsWith("/conversation-selection") && init?.method === "PUT" && agentId === "research") {
+        return new Promise((resolve) => { deferredPut.release = resolve; });
+      }
+      if (path.endsWith("/conversation-selection")) return Promise.resolve(Response.json(selectionFixture({
+        agentId, conversationId: agentId === "research" ? research.id : planning.id, version: 1,
+      })));
+      if (path.includes("/conversations?agentId=")) return Promise.resolve(Response.json({
+        items: path.includes("archived=true") ? [] : agentId === "research" ? [research, researchOther] : [planning], pageInfo: emptyList.pageInfo,
+      }));
+      if (path.includes("/messages?limit=50")) return Promise.resolve(Response.json(history));
+      return Promise.reject(new Error(`Unexpected request ${path}`));
+    });
+  };
+
+  it("drops a late selection response from the previous agent instead of binding it to the new workspace", async () => {
+    const deferred: { release?: (response: Response) => void } = {};
+    const fetcher = crossAgentFetcher(deferred);
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Seleccionar Research other" }));
+    await waitFor(() => expect(deferred.release).toBeDefined());
+    view.rerender(<ThreadWorkspace agentId="planning" agentName="Planning" capabilities={capabilities} />);
+    await screen.findByRole("button", { name: "Seleccionar Planning main" });
+    deferred.release?.(Response.json(selectionFixture({ agentId: "research", conversationId: "research-other", version: 2 })));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes("/research-other/messages"))).toBe(false);
+    expect(screen.getByRole("button", { name: "Seleccionar Planning main" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("drops a late create response from the previous agent", async () => {
+    const deferred: { release?: (response: Response) => void } = {};
+    let releaseCreate: ((response: Response) => void) | undefined;
+    const fetcher = crossAgentFetcher(deferred, (path, init) => path === "/api/ui/v1/conversations" && init?.method === "POST"
+      ? new Promise((resolve) => { releaseCreate = resolve; })
+      : undefined);
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    await screen.findByRole("button", { name: "Seleccionar Research other" });
+    fireEvent.click(screen.getByRole("button", { name: "Nueva conversación" }));
+    await waitFor(() => expect(releaseCreate).toBeDefined());
+    view.rerender(<ThreadWorkspace agentId="planning" agentName="Planning" capabilities={capabilities} />);
+    await screen.findByRole("button", { name: "Seleccionar Planning main" });
+    releaseCreate?.(Response.json(conversationFixture({ id: "research-late", agentId: "research", isMain: false, title: "Research tardía" }), { status: 201 }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("button", { name: "Seleccionar Research tardía" })).toBeNull();
+    expect(fetcher.mock.calls.some(([input, init]) => String(input).includes("/agents/research/conversation-selection") && init?.method === "PUT")).toBe(false);
+    expect(screen.getByRole("button", { name: "Seleccionar Planning main" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("isolates and aborts conversation state when switching agents", async () => {
     const research = conversationFixture({ id: "research-main", agentId: "research", isMain: true, title: "Research main" });
     const planning = conversationFixture({ id: "planning-main", agentId: "planning", isMain: true, title: "Planning main" });
