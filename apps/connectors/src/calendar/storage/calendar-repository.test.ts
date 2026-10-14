@@ -271,6 +271,19 @@ describe("Calendar repository", () => {
     await expect(database.read((db) => repository.getProposal(db, otherActor, "proposal-01"))).resolves.toBeNull();
   });
 
+  it("refuses a transition guarded by expiry once expires_at has passed", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await database.transaction((db) => repository.insertProposal(db, proposal(), "idempotency-hash-expiry", "request-hash-expiry"));
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-01", expectedVersion: 1, from: ["pending"], to: "executing", unexpiredAt: "2026-10-12T13:00:00.000Z",
+    }))).rejects.toThrow("calendar_proposal_expired");
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "pending", version: 1 });
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-01", expectedVersion: 1, from: ["pending"], to: "executing", unexpiredAt: "2026-10-12T12:59:59.999Z",
+    }))).resolves.toMatchObject({ status: "executing", version: 2 });
+  });
+
   it("enumerates executing proposals in stable order with a strict bound", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);

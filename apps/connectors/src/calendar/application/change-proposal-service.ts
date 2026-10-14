@@ -230,14 +230,22 @@ export class CalendarChangeProposalServiceImpl implements CalendarChangeProposal
       }
       if (record.version !== parsed.data.expectedVersion) return fail("calendar_proposal_version_conflict");
       const token = await this.#reader.token(principal.actorId);
-      const executing = await this.#database.transaction((db) => {
-        // Compare-and-swap on the authorization that issued the token, then on the proposal itself.
-        const connection = this.#repository.getConnection(db, principal.actorId);
-        if (connection === null || connection.authorizationId !== token.authorizationId) return fail("calendar_connection_changed");
-        return this.#repository.transitionProposal(db, {
-          actorId: principal.actorId, proposalId, expectedVersion: record.version, from: ["pending"], to: "executing",
+      // Taken after the token refresh: a proposal that expired meanwhile never starts executing.
+      const unexpiredAt = this.#clock().toISOString();
+      let executing: ProposalRecord;
+      try {
+        executing = await this.#database.transaction((db) => {
+          // Compare-and-swap on the authorization that issued the token, then on the proposal itself.
+          const connection = this.#repository.getConnection(db, principal.actorId);
+          if (connection === null || connection.authorizationId !== token.authorizationId) return fail("calendar_connection_changed");
+          return this.#repository.transitionProposal(db, {
+            actorId: principal.actorId, proposalId, expectedVersion: record.version, from: ["pending"], to: "executing", unexpiredAt,
+          });
         });
-      });
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "calendar_proposal_expired") throw error;
+        return this.#view(await this.#expireIfDue(record, principal.requestId, new Date(unexpiredAt)));
+      }
       return this.#view(await this.#executor.execute(executing, token, principal.requestId));
     });
   }
@@ -289,8 +297,8 @@ export class CalendarChangeProposalServiceImpl implements CalendarChangeProposal
   }
 
   /** pending -> expired at the injected clock, with one content-free audit row. */
-  async #expireIfDue(record: ProposalRecord, requestId: string): Promise<ProposalRecord> {
-    if (record.status !== "pending" || Date.parse(record.expiresAt) > this.#clock().getTime()) return record;
+  async #expireIfDue(record: ProposalRecord, requestId: string, at = this.#clock()): Promise<ProposalRecord> {
+    if (record.status !== "pending" || Date.parse(record.expiresAt) > at.getTime()) return record;
     return this.#database.transaction((db) => {
       const current = this.#repository.getProposal(db, record.actorId, record.id);
       if (current === null || current.status !== "pending") return current ?? record;

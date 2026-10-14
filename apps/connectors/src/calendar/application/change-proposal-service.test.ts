@@ -85,6 +85,21 @@ describe("Calendar change proposal policy", () => {
     expect((await auditRows(world.db)).map((row) => row.outcome)).toEqual(["proposed", "expired"]);
   });
 
+  it("enforces expiry at the executing compare-and-set, after the token refresh", async () => {
+    const world = await createProposalWorld();
+    const proposal = await world.proposals.create(centralPrincipal(), "fictional-key-0027", createBody(world.refs[PRIMARY]!));
+    const getToken = world.tokens.getAuthorizedAccessToken.bind(world.tokens);
+    // A slow refresh: the proposal was still pending when confirm began, but expires before the compare-and-set.
+    world.tokens.getAuthorizedAccessToken = async (actor: string) => {
+      world.clock.advance(15 * 60 * 1000);
+      return getToken(actor);
+    };
+    const result = await world.proposals.confirm(humanPrincipal(), proposal.id, { expectedVersion: 1 });
+    expect(result).toMatchObject({ status: "expired", safeReasonCode: "proposal_expired", version: 2 });
+    expect(world.google.mutations).toHaveLength(0);
+    expect((await auditRows(world.db)).map((row) => row.outcome)).toEqual(["proposed", "expired"]);
+  });
+
   it("executes once and replays the stored terminal result on retry", async () => {
     const world = await createProposalWorld();
     const proposal = await world.proposals.create(centralPrincipal(), "fictional-key-0008", createBody(world.refs[PRIMARY]!));

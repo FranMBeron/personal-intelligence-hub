@@ -424,6 +424,9 @@ export const createCalendarRepository = (): CalendarRepository => ({
     if (current === undefined || current.version !== input.expectedVersion || !input.from.includes(current.status)) {
       fail("calendar_proposal_transition_conflict");
     }
+    if (input.unexpiredAt !== undefined && Date.parse(current!.expires_at) <= Date.parse(input.unexpiredAt)) {
+      fail("calendar_proposal_expired");
+    }
     const terminal = TERMINAL_PROPOSAL_STATUSES.has(input.to);
     // A detached proposal never re-attaches: it may only reach a terminal state, naming no reference
     // or its own historical one, which is neither required to be live nor written back.
@@ -443,9 +446,11 @@ export const createCalendarRepository = (): CalendarRepository => ({
       to: input.to, eventRef: settlesDetached ? null : input.eventRef ?? null, completedAt: input.completedAt ?? null,
       safeReasonCode: input.safeReasonCode ?? null,
     };
+    const unexpired = input.unexpiredAt === undefined ? "" : " AND expires_at > :unexpiredAt";
+    if (input.unexpiredAt !== undefined) parameters.unexpiredAt = input.unexpiredAt;
     input.from.forEach((status, index) => { parameters[`from${index}`] = status; });
     const updated = database.prepare(
-      `UPDATE calendar_change_proposals SET status = :to, version = version + 1, event_ref = COALESCE(:eventRef, event_ref), completed_at = COALESCE(:completedAt, completed_at), safe_reason_code = :safeReasonCode WHERE actor_id = :actorId AND id = :proposalId AND version = :expectedVersion AND status IN (${placeholders})`,
+      `UPDATE calendar_change_proposals SET status = :to, version = version + 1, event_ref = COALESCE(:eventRef, event_ref), completed_at = COALESCE(:completedAt, completed_at), safe_reason_code = :safeReasonCode WHERE actor_id = :actorId AND id = :proposalId AND version = :expectedVersion AND status IN (${placeholders})${unexpired}`,
     ).run(parameters);
     requireChanges(updated.changes, "calendar_proposal_transition_conflict");
     const result = mapProposal(selectProposal(database, input.actorId, input.proposalId));
