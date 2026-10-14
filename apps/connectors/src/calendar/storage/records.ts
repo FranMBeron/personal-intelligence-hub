@@ -54,7 +54,10 @@ export type ProposalRecord = Readonly<{
   version: number;
   status: CalendarProposalStatus;
   operation: "create" | "update" | "cancel" | "respond_invitation";
+  /** Live event reference; absent once the reference is detached (purged or its calendar deselected). */
   eventRef?: string;
+  /** Historical opaque reference kept after detachment. Never executable and never re-attached. */
+  retainedEventRef?: string;
   encryptedPayload?: string;
   payloadPurgedAt?: string;
   providerEtagCiphertext?: string;

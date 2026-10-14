@@ -332,11 +332,11 @@ describe("Calendar repository", () => {
 
     await expect(database.write((db) => repository.purgeStaleEventReferences(db, "2026-10-10T00:00:00.000Z"))).resolves.toBe(1);
     await expect(database.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.toBeNull();
-    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "completed", eventRef: "event-ref-01" });
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "completed", retainedEventRef: "event-ref-01" });
     await expect(count(database, "calendar_idempotency")).resolves.toBe(1);
   });
 
-  it("preserves proposals and idempotency when their calendar is deselected", async () => {
+  it("makes live proposals non-executable and keeps them detached when their calendar is deselected and reselected", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);
     const primary = calendar();
@@ -344,14 +344,41 @@ describe("Calendar repository", () => {
     await database.transaction((db) => {
       repository.replaceCalendarSelection(db, actorId, 1, [primary, secondary], authorizationIdOf(db));
       repository.upsertEventReference(db, eventReference({ calendarRef: "calendar-ref-02" }));
-      repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idempotency-deselect", "request-deselect");
+      repository.insertProposal(db, proposal({ id: "proposal-pending", eventRef: "event-ref-01" }), "idem-deselect-pending", "hash-deselect-pending");
+      repository.insertProposal(db, proposal({ id: "proposal-executing", status: "executing", eventRef: "event-ref-01" }), "idem-deselect-executing", "hash-deselect-executing");
+      repository.insertProposal(db, proposal({ id: "proposal-done", status: "completed", completedAt: now, eventRef: "event-ref-01" }), "idem-deselect-done", "hash-deselect-done");
     });
 
     await database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 2, [primary], authorizationIdOf(db)));
 
     await expect(database.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.toBeNull();
-    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "pending", eventRef: "event-ref-01" });
-    await expect(count(database, "calendar_idempotency")).resolves.toBe(1);
+    const pending = await database.read((db) => repository.getProposal(db, actorId, "proposal-pending"));
+    expect(pending).toMatchObject({ status: "rejected", version: 2, safeReasonCode: "provider_state_changed", retainedEventRef: "event-ref-01" });
+    expect(pending?.eventRef).toBeUndefined();
+    expect(pending?.completedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
+    const executing = await database.read((db) => repository.getProposal(db, actorId, "proposal-executing"));
+    expect(executing).toMatchObject({ status: "conflict", version: 2, safeReasonCode: "provider_state_changed", retainedEventRef: "event-ref-01" });
+    expect(executing?.eventRef).toBeUndefined();
+    const done = await database.read((db) => repository.getProposal(db, actorId, "proposal-done"));
+    expect(done).toMatchObject({ status: "completed", version: 1, completedAt: now, retainedEventRef: "event-ref-01" });
+    expect(done?.eventRef).toBeUndefined();
+    expect(done?.safeReasonCode).toBeUndefined();
+
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-pending", expectedVersion: 1, from: ["pending"], to: "executing",
+    }))).rejects.toThrow("calendar_proposal_transition_conflict");
+    await expect(database.transaction((db) => repository.transitionProposal(db, {
+      actorId, proposalId: "proposal-pending", expectedVersion: 2, from: ["pending"], to: "executing",
+    }))).rejects.toThrow("calendar_proposal_transition_conflict");
+
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 3, [primary, secondary], authorizationIdOf(db));
+      repository.upsertEventReference(db, eventReference({ calendarRef: "calendar-ref-02" }));
+    });
+    const reselected = await database.read((db) => repository.getProposal(db, actorId, "proposal-pending"));
+    expect(reselected).toMatchObject({ status: "rejected", version: 2, retainedEventRef: "event-ref-01" });
+    expect(reselected?.eventRef).toBeUndefined();
+    await expect(count(database, "calendar_idempotency")).resolves.toBe(3);
     await expect(database.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
   });
 
@@ -476,7 +503,7 @@ describe("Calendar repository", () => {
     }));
     await expect(upgraded.write((db) => repository.purgeStaleEventReferences(db, "2026-10-13T00:00:00.000Z"))).resolves.toBe(1);
     await expect(upgraded.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({
-      eventRef: "event-ref-01", status: "rejected",
+      retainedEventRef: "event-ref-01", status: "rejected",
     });
     await expect(count(upgraded, "calendar_idempotency")).resolves.toBe(1);
     const migrated = await upgraded.read((db) => repository.getConnection(db, actorId));
@@ -532,11 +559,17 @@ describe("Calendar repository", () => {
     await expect(count(database, "calendar_change_proposals")).resolves.toBe(2);
     await expect(count(database, "calendar_idempotency")).resolves.toBe(2);
     await expect(database.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
+    // The detach trigger already moved both live proposals out of pending and
+    // bumped their version, so the older runtime's stale compare-and-set loses.
     await expect(database.transaction((db) => db.prepare(
-      "UPDATE calendar_change_proposals SET status = 'rejected', version = version + 1 WHERE actor_id = :actorId AND id = 'proposal-01' AND version = 1",
-    ).run({ actorId }).changes)).resolves.toBe(1);
-    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ eventRef: "event-ref-01", status: "rejected" });
-    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-02"))).resolves.toMatchObject({ eventRef: "event-ref-02", status: "pending" });
+      "UPDATE calendar_change_proposals SET status = 'executing', version = version + 1 WHERE actor_id = :actorId AND id = 'proposal-02' AND version = 1",
+    ).run({ actorId }).changes)).resolves.toBe(0);
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({
+      retainedEventRef: "event-ref-01", status: "rejected", version: 2, safeReasonCode: "provider_state_changed",
+    });
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-02"))).resolves.toMatchObject({
+      retainedEventRef: "event-ref-02", status: "rejected", version: 2, safeReasonCode: "provider_state_changed",
+    });
   });
 
   it("assigns a fresh authorization id on every replacement, even with identical metadata", async () => {
