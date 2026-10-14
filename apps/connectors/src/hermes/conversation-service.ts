@@ -446,7 +446,9 @@ export class ConversationService {
         const latest = this.#conversations.getOwned(db, actorId, reservation.id);
         if (latest === null) return fail("not_found");
         if (latest.provisionState !== "ready") this.#conversations.markReady(db, actorId, latest.id);
-        if (selectMain && latest.isMain) {
+        // Another writer may have finished and archived the main thread meanwhile;
+        // a selected thread must never be archived, so do not select it then.
+        if (selectMain && latest.isMain && !latest.archived) {
           const timestamp = this.#now();
           db.prepare(
             "INSERT INTO hermes_conversation_selection(actor_id, agent_id, conversation_id, version, updated_at) " +

@@ -166,6 +166,18 @@ describe("Hermes repositories", () => {
     }))).rejects.toThrow();
   });
 
+  it("refuses to select an archived conversation", async () => {
+    const database = await configuredDatabase();
+    const repository = await createConversation(database);
+    await database.transaction((db) => repository.patchOwned(db, {
+      actorId, id: conversationId, expectedVersion: 1, archived: true, updatedAt: later,
+    }));
+    await database.transaction((db) => repository.ensureSelection(db, { actorId, agentId: profileId, updatedAt: now }));
+    await expect(database.transaction((db) => repository.putSelection(db, {
+      actorId, agentId: profileId, conversationId, expectedVersion: 1, updatedAt: later,
+    }))).rejects.toThrow("hermes_conversation_not_found");
+  });
+
   it("restores the title but keeps a selected conversation unarchived", async () => {
     const database = await configuredDatabase();
     const repository = await createConversation(database);

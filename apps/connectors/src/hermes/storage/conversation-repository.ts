@@ -237,7 +237,7 @@ export class ConversationRepository {
   }
 
   putSelection(connection: SqliteHandle, input: PutSelection): StoredSelection {
-    const owned = connection.prepare("SELECT 1 AS found FROM hermes_conversations WHERE actor_id = :actorId AND agent_id = :agentId AND id = :conversationId")
+    const owned = connection.prepare("SELECT 1 AS found FROM hermes_conversations WHERE actor_id = :actorId AND agent_id = :agentId AND id = :conversationId AND archived = 0")
       .get({ actorId: input.actorId, agentId: input.agentId, conversationId: input.conversationId });
     if (owned === undefined) fail("hermes_conversation_not_found");
     const existing = this.selection(connection, input.actorId, input.agentId);
