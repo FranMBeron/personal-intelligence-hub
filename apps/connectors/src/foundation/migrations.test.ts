@@ -14,10 +14,6 @@ import {
 } from "./migrations.js";
 
 const databases: ConnectorDatabase[] = [];
-// Synthetic "future" migrations use a 9xxx prefix so they always sort after
-// every packaged migration, independent of how the packaged set grows.
-const packagedNames = (): readonly string[] =>
-  loadMigrations().map(({ name }) => name);
 const directories: string[] = [];
 
 const createDatabase = async (): Promise<ConnectorDatabase> => {
@@ -75,17 +71,16 @@ describe("connector migrations", () => {
   it("loads SQL files in lexical order with lowercase SHA-256 checksums", () => {
     const loaded = loadMigrations();
 
-    expect(loaded.map(({ name }) => name)).toEqual(["0000_foundation", "0100_hermes"]);
-    expect(loaded.every(({ sha256 }) => /^[0-9a-f]{64}$/u.test(sha256))).toBe(true);
+    expect(loaded.map(({ name }) => name)).toEqual(["0000_foundation"]);
     expect(loaded[0]?.sha256).toMatch(/^[0-9a-f]{64}$/u);
   });
 
   it("applies later migrations in lexical order regardless of input order", async () => {
     const database = await createDatabase();
     const future = migrations({
-      "9200_second":
+      "0200_second":
         "INSERT INTO migration_order(position, name) VALUES(2, 'second');",
-      "9100_first":
+      "0100_first":
         "CREATE TABLE migration_order(position INTEGER PRIMARY KEY, name TEXT NOT NULL);" +
         "INSERT INTO migration_order(position, name) VALUES(1, 'first');",
     });
@@ -101,9 +96,9 @@ describe("connector migrations", () => {
       ),
     ).toEqual(["first", "second"]);
     expect(await migrationNames(database)).toEqual([
-      ...packagedNames(),
-      "9100_first",
-      "9200_second",
+      "0000_foundation",
+      "0100_first",
+      "0200_second",
     ]);
   });
 
@@ -119,7 +114,7 @@ describe("connector migrations", () => {
         database,
         migrations({
           "0000_foundation": foundationSql + "\n-- changed",
-          "9100_future": "CREATE TABLE future(id TEXT PRIMARY KEY);",
+          "0100_future": "CREATE TABLE future(id TEXT PRIMARY KEY);",
         }),
       ),
     ).rejects.toMatchObject({ code: "migration_checksum_mismatch" });
@@ -141,9 +136,9 @@ describe("connector migrations", () => {
       applyMigrations(database, [
         ...loadMigrations(),
         ...migrations({
-          "9100_committed":
+          "0100_committed":
             "CREATE TABLE committed_first(id TEXT PRIMARY KEY);",
-          "9200_broken":
+          "0200_broken":
             "CREATE TABLE must_rollback(id TEXT PRIMARY KEY);" +
             "INSERT INTO absent_table(id) VALUES('failure');",
         }),
@@ -153,15 +148,15 @@ describe("connector migrations", () => {
     expect(await tableExists(database, "committed_first")).toBe(true);
     expect(await tableExists(database, "must_rollback")).toBe(false);
     expect(await migrationNames(database)).toEqual([
-      ...packagedNames(),
-      "9100_committed",
+      "0000_foundation",
+      "0100_committed",
     ]);
   });
 
   it("serializes concurrent migration runners without applying a stale plan", async () => {
     const database = await createDatabase();
     const future = migrations({
-      "9100_concurrent":
+      "0100_concurrent":
         "CREATE TABLE concurrent_migration(id TEXT PRIMARY KEY);",
     });
 
@@ -172,8 +167,8 @@ describe("connector migrations", () => {
       ]),
     ).resolves.toEqual([undefined, undefined]);
     expect(await migrationNames(database)).toEqual([
-      ...packagedNames(),
-      "9100_concurrent",
+      "0000_foundation",
+      "0100_concurrent",
     ]);
   });
 
@@ -185,8 +180,8 @@ describe("connector migrations", () => {
     const v2 = [
       ...v1,
       ...migrations({
-        "9001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT NOT NULL);",
-        "9002_additive_tags": "CREATE TABLE tags(id TEXT PRIMARY KEY, label TEXT NOT NULL);",
+        "0001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY, body TEXT NOT NULL);",
+        "0002_additive_tags": "CREATE TABLE tags(id TEXT PRIMARY KEY, label TEXT NOT NULL);",
       }),
     ];
     const first = openConnectorDatabase(path, v1);
@@ -207,19 +202,19 @@ describe("connector migrations", () => {
     databases.push(newerRuntime);
     await expect(newerRuntime.read((handle) =>
       handle.prepare("SELECT name FROM connector_migrations ORDER BY name").all<{name:string}>().map(({name})=>name),
-    )).resolves.toEqual([...packagedNames(), "9001_additive_notes", "9002_additive_tags"]);
+    )).resolves.toEqual(["0000_foundation", "0001_additive_notes", "0002_additive_tags"]);
   });
 
   it("rejects an altered future checksum when the migration record and compatibility ledger disagree", async () => {
     const database = await createDatabase();
     const future = migrations({
-      "9001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY);",
+      "0001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY);",
     });
     await applyMigrations(database, [...loadMigrations(), ...future]);
     const databasePath = join(directories.at(-1)!, "connectors.sqlite");
     await database.write((handle) => {
       handle.prepare("UPDATE connector_migrations SET sha256 = :sha WHERE name = :name")
-        .run({ name: "9001_additive_notes", sha: "f".repeat(64) });
+        .run({ name: "0001_additive_notes", sha: "f".repeat(64) });
     });
     await database.close();
     const reopened = openConnectorDatabase(databasePath, loadMigrations());
@@ -232,7 +227,7 @@ describe("connector migrations", () => {
     await applyMigrations(database, [
       ...loadMigrations(),
       ...migrations({
-        "9001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY);",
+        "0001_additive_notes": "CREATE TABLE notes(id TEXT PRIMARY KEY);",
       }),
     ]);
     await database.write((handle) => {
@@ -281,7 +276,7 @@ describe("connector migrations", () => {
   it("does not expose mutable migration definitions", () => {
     const loaded = loadMigrations();
     const generated = migrations({
-      "9100_future": "CREATE TABLE future(id TEXT PRIMARY KEY);",
+      "0100_future": "CREATE TABLE future(id TEXT PRIMARY KEY);",
     });
 
     expect(Object.isFrozen(loaded)).toBe(true);

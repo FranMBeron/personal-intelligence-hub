@@ -10,7 +10,6 @@ import {
   type SqlValue,
   type SqliteHandle,
 } from "./database.js";
-import { loadMigrations } from "./migrations.js";
 
 const databases: ConnectorDatabase[] = [];
 const directories: string[] = [];
@@ -89,7 +88,7 @@ describe("connector database", () => {
           .all<{ name: string }>()
           .map(({ name }) => name),
       ),
-    ).toEqual(loadMigrations().map(({ name }) => name));
+    ).toEqual(["0000_foundation"]);
     expect((await stat(databasePath)).mode & 0o777).toBe(0o600);
   });
 
