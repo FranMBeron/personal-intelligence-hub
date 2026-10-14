@@ -321,20 +321,22 @@ export class ConversationService {
   async selection(principal: DelegatedPrincipal, agentId: string): Promise<ConversationSelection> {
     this.#requireScope(principal, "hermes:conversations:read");
     this.#requireDirectProfile(agentId);
-    const row = await this.#read((db) => selectionFromDatabase(db, principal.actorId, agentId));
-    if (row === undefined) {
-      return ConversationSelectionSchema.parse({
-        agentId,
-        conversationId: null,
-        version: 0,
-        updatedAt: this.#now(),
+    // Parse inside #read so a malformed stored row maps to a closed code.
+    const stored = await this.#read((db) => {
+      const row = selectionFromDatabase(db, principal.actorId, agentId);
+      return row === undefined ? null : ConversationSelectionSchema.parse({
+        agentId: row.agent_id,
+        conversationId: row.conversation_id,
+        version: row.version,
+        updatedAt: row.updated_at,
       });
-    }
+    });
+    if (stored !== null) return stored;
     return ConversationSelectionSchema.parse({
-      agentId: row.agent_id,
-      conversationId: row.conversation_id,
-      version: row.version,
-      updatedAt: row.updated_at,
+      agentId,
+      conversationId: null,
+      version: 0,
+      updatedAt: this.#now(),
     });
   }
 

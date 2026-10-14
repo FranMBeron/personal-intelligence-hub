@@ -618,6 +618,18 @@ describe("Hermes ConversationService", () => {
     expect(String((upstream as Error).message)).not.toContain("fictional-secret-token");
   });
 
+  it("maps a malformed stored selection to a closed code without schema details", async () => {
+    const { service, database } = await createHarness();
+    await database.transaction((db) => db.prepare(
+      "INSERT INTO hermes_conversation_selection(actor_id, agent_id, conversation_id, version, updated_at) " +
+      "VALUES(:actorId, 'fitness', NULL, 1, 'not-a-timestamp')",
+    ).run({ actorId }));
+    const error = await service.selection(principal(), "fitness").then(() => null, (reason: unknown) => reason);
+    expect(error).toMatchObject({ name: "HermesConversationError", code: "hermes_conversation_unavailable" });
+    expect(String((error as Error).message)).toBe("hermes_conversation_unavailable");
+    expect(JSON.stringify(error)).not.toMatch(/ZodError|invalid_|not-a-timestamp/);
+  });
+
   it("hides raw SQLite errors behind closed codes on every public method", async () => {
     const { service, database } = await createHarness();
     const conversation = await service.create(principal(), { agentId: "fitness" });
