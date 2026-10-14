@@ -26,7 +26,14 @@
 .agents-roster__item > .agent-card { flex: 1; min-height: 0; }
 .agents-roster__item .agent-card h3 { margin: 0; overflow-wrap: anywhere; font-size: 13px; }
 .agent-card[data-selected="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.agent-card .agent-conversation > .button[aria-pressed="true"] { background: var(--accent-strong); }
+/* Colours are declared here for every state so `.button--quiet` (and its hover) can never leak
+   low-contrast text onto the dark fill, whatever order the stylesheets load in. */
+.agent-card .agent-conversation > .button { border-color: var(--accent); background: var(--accent); color: var(--surface); }
+.agent-card .agent-conversation > .button[aria-pressed="true"] { border-color: var(--accent-strong); background: var(--accent-strong); color: var(--surface); }
+@media (hover: hover) and (pointer: fine) {
+  .agent-card .agent-conversation > .button:hover,
+  .agent-card .agent-conversation > .button[aria-pressed="true"]:hover { border-color: var(--accent-strong); background: var(--accent-strong); color: var(--surface); }
+}
 .agent-card .agent-conversation > .button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 @container (min-width: 420px) {
