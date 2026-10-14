@@ -45,3 +45,9 @@ END;
 -- BEFORE INSERT guard cannot tell REPLACE from an ON CONFLICT DO UPDATE upsert
 -- (both fire it before conflict resolution), so the repository tests enforce
 -- this rule instead.
+
+-- The trigger above and the retention purge's live-proposal check look up
+-- proposals by (actor_id, event_ref); without this index each deleted event
+-- reference scans the actor's proposals.
+CREATE INDEX IF NOT EXISTS calendar_change_proposals_event_ref_idx
+ON calendar_change_proposals(actor_id, event_ref);

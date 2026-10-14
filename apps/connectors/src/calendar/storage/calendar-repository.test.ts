@@ -745,6 +745,21 @@ describe("terminal transitions of detached proposals", () => {
   });
 });
 
+describe("proposal event reference index", () => {
+  const plan = async (database: ConnectorDatabase, sql: string, parameters: Record<string, string>) =>
+    database.write((db) => db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all<{ detail: string }>(parameters))
+      .then((rows) => rows.map(({ detail }) => detail).join("\n"));
+
+  it("serves the detach trigger and the live-proposal purge check from an (actor_id, event_ref) index", async () => {
+    const { database } = await createDatabase();
+    // The statement the calendar_event_refs_retain_proposals trigger runs per deleted reference.
+    await expect(plan(database, "UPDATE calendar_change_proposals SET retained_event_ref = event_ref, event_ref = NULL WHERE actor_id = :actorId AND event_ref = :eventRef", { actorId, eventRef: "event-ref-01" }))
+      .resolves.toMatch(/USING (?:COVERING )?INDEX calendar_change_proposals_event_ref_idx \(actor_id=\? AND event_ref=\?\)/u);
+    await expect(plan(database, "SELECT 1 FROM calendar_event_refs WHERE last_observed_at < :olderThan AND NOT EXISTS (SELECT 1 FROM calendar_change_proposals AS proposal WHERE proposal.actor_id = calendar_event_refs.actor_id AND proposal.event_ref = calendar_event_refs.event_ref AND proposal.status IN ('pending', 'executing'))", { olderThan: now }))
+      .resolves.toMatch(/calendar_change_proposals_event_ref_idx/u);
+  });
+});
+
 describe("event reference REPLACE hazard", () => {
   // REPLACE deletes the conflicting row without firing the BEFORE DELETE
   // detach trigger (recursive_triggers is off), so the ON DELETE CASCADE from
