@@ -2,6 +2,8 @@ import type { CalendarChangeProposal, CalendarProposalStatus, CalendarSourceStat
 
 export type CalendarConnectionRecord = Readonly<{
   actorId: string;
+  /** Opaque identifier assigned by storage on every authorization replacement. */
+  authorizationId: string;
   state: "available" | "degraded" | "requires_reauthorization";
   refreshTokenCiphertext: string;
   primaryCalendarBindingCiphertext?: string;
@@ -12,6 +14,8 @@ export type CalendarConnectionRecord = Readonly<{
   createdAt: string;
   updatedAt: string;
 }>;
+
+export type CalendarConnectionInput = Omit<CalendarConnectionRecord, "authorizationId">;
 
 export type OAuthTransaction = Readonly<{
   stateHash: string;

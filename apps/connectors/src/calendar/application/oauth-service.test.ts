@@ -8,7 +8,7 @@ import type { CalendarRuntimeConfig } from "../config.js";
 import { openCalendarValue, sealCalendarValue, type CalendarKeyring } from "../crypto/envelope.js";
 import type { GoogleOAuthPort, GoogleTokenGrant } from "../ports/google-oauth.js";
 import { createCalendarRepository, type CalendarRepository } from "../storage/calendar-repository.js";
-import type { CalendarConnectionRecord, CalendarRecord } from "../storage/records.js";
+import type { CalendarConnectionInput, CalendarConnectionRecord, CalendarRecord } from "../storage/records.js";
 import { openConnectorDatabase, type ConnectorDatabase } from "../../foundation/database.js";
 import type { CalendarSourceStatus, DelegatedPrincipal } from "@personal-intelligence-hub/contracts";
 import { CalendarOAuthServiceImpl, type CalendarPrimaryBootstrap } from "./oauth-service.js";
@@ -74,7 +74,7 @@ const grant = (overrides: GrantOverrides = {}): GoogleTokenGrant => {
       : { refreshToken: "fictional-refresh-token" }),
   };
 };
-const oldConnection = (): CalendarConnectionRecord => ({
+const oldConnection = (): CalendarConnectionInput => ({
   actorId,
   state: "available",
   refreshTokenCiphertext: sealCalendarValue("fictional-old-refresh-token", `calendar_connections:${actorId}:refresh`, keyring),
@@ -114,8 +114,13 @@ const makeService = (
     bootstrapPrimary: vi.fn(async () => ({ state: "requires_attention", checkedAt: now.toISOString(), stale: false, canRead: false, canProposeChanges: false, primaryCalendarConfigured: false, additionalCalendarCount: 0, safeReasonCode: "calendar_selection_required" } satisfies CalendarSourceStatus)),
     ...overrides.bootstrap,
   };
+  const getAccessToken = overrides.tokenProvider?.getAccessToken ?? vi.fn(async () => "fictional-access-token");
   const tokenProvider: GoogleAccessTokenProvider = {
-    getAccessToken: vi.fn(async () => "fictional-access-token"),
+    getAccessToken,
+    getAuthorizedAccessToken: vi.fn(async (id: string) => {
+      const current = await database.read((db) => repository.getConnection(db, id));
+      return { accessToken: await getAccessToken(id), authorizationId: current?.authorizationId ?? "missing-authorization" };
+    }),
     invalidate: vi.fn(),
     ...overrides.tokenProvider,
   };
@@ -214,6 +219,7 @@ describe("Calendar OAuth service", () => {
           bootstrapCount += 1;
           expect(input.accessToken).toBe("fictional-access-token");
           const saved = await database.read((db) => repository.getConnection(db, actorId));
+          expect(input.authorizationId).toBe(saved!.authorizationId);
           await database.transaction((db) => {
             repository.saveConnection(db, {
               ...saved!,
@@ -338,6 +344,29 @@ describe("Calendar OAuth service", () => {
         state: "requires_reauthorization",
         safeReasonCode: "reauthorization_required",
       });
+  });
+
+  it("does not record a stale bootstrap failure on a replacement authorization", async () => {
+    currentTime = now;
+    const database = await createDatabase();
+    await database.write((db) => repository.saveConnection(db, oldConnection()));
+    let replaced: CalendarConnectionRecord | null = null;
+    const replaceThenFail = async (): Promise<never> => {
+      const current = await database.read((db) => repository.getConnection(db, actorId));
+      await database.transaction((db) => repository.replaceConnectionAuthorization(db, {
+        ...current!,
+        refreshTokenCiphertext: sealCalendarValue("fictional-replacement-refresh-token", `calendar_connections:${actorId}:refresh`, keyring),
+      }));
+      replaced = await database.read((db) => repository.getConnection(db, actorId));
+      currentTime = new Date(now.getTime() + 60_000);
+      throw new Error("calendar_provider_temporarily_unavailable");
+    };
+    const { service } = makeService(database, {
+      tokenProvider: { getAccessToken: vi.fn(replaceThenFail), getAuthorizedAccessToken: vi.fn(replaceThenFail) },
+    });
+    await service.bootstrap(principal());
+    expect(replaced).not.toBeNull();
+    await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toEqual(replaced);
   });
 
   it("preserves reauthorization state when bootstrap cannot obtain a token", async () => {

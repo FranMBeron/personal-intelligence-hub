@@ -4,8 +4,12 @@ import type { GoogleOAuthPort, GoogleTokenGrant } from "../ports/google-oauth.js
 import type { CalendarRepository } from "../storage/calendar-repository.js";
 import type { CalendarConnectionRecord } from "../storage/records.js";
 
+export type AuthorizedAccessToken = Readonly<{ accessToken: string; authorizationId: string }>;
+
 export interface GoogleAccessTokenProvider {
   getAccessToken(actorId: string): Promise<string>;
+  /** Returns an access token together with the authorization that issued it, for compare-and-swap writes. */
+  getAuthorizedAccessToken(actorId: string): Promise<AuthorizedAccessToken>;
   invalidate(actorId: string): void;
 }
 
@@ -14,7 +18,7 @@ export const GOOGLE_CALENDAR_REQUIRED_SCOPES = Object.freeze([
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
 ] as const);
 
-type CachedToken = Readonly<{ accessToken: string; expiresAt: number }>;
+type CachedToken = Readonly<{ accessToken: string; authorizationId: string; expiresAt: number }>;
 type Clock = () => Date;
 type Options = Readonly<{
   database: ConnectorDatabase;
@@ -40,7 +44,7 @@ export class GoogleAccessTokenProviderService implements GoogleAccessTokenProvid
   readonly #clock: Clock;
   readonly #expirySkewMs: number;
   readonly #cache = new Map<string, CachedToken>();
-  readonly #pending = new Map<string, Promise<string>>();
+  readonly #pending = new Map<string, Promise<AuthorizedAccessToken>>();
   readonly #generations = new Map<string, number>();
 
   constructor(options: Options) {
@@ -54,21 +58,25 @@ export class GoogleAccessTokenProviderService implements GoogleAccessTokenProvid
     this.#expirySkewMs = skew * 1000;
   }
 
-  getAccessToken(actorId: string): Promise<string> {
+  async getAccessToken(actorId: string): Promise<string> {
+    return (await this.getAuthorizedAccessToken(actorId)).accessToken;
+  }
+
+  getAuthorizedAccessToken(actorId: string): Promise<AuthorizedAccessToken> {
     const now = this.#clock().getTime();
     const cached = this.#cache.get(actorId);
     if (cached !== undefined && cached.expiresAt - this.#expirySkewMs > now) {
-      return Promise.resolve(cached.accessToken);
+      return Promise.resolve({ accessToken: cached.accessToken, authorizationId: cached.authorizationId });
     }
     const existing = this.#pending.get(actorId);
     if (existing !== undefined) return existing;
     const generation = this.#generations.get(actorId) ?? 0;
-    const pending = this.#refresh(actorId, generation).then(({ accessToken, expiresAt }) => {
+    const pending = this.#refresh(actorId, generation).then(({ accessToken, authorizationId, expiresAt }) => {
       if ((this.#generations.get(actorId) ?? 0) !== generation) fail("calendar_access_token_invalidated");
       if (expiresAt - this.#expirySkewMs > this.#clock().getTime()) {
-        this.#cache.set(actorId, { accessToken, expiresAt });
+        this.#cache.set(actorId, { accessToken, authorizationId, expiresAt });
       }
-      return accessToken;
+      return { accessToken, authorizationId };
     }).finally(() => {
       if (this.#pending.get(actorId) === pending) this.#pending.delete(actorId);
     });
@@ -82,7 +90,7 @@ export class GoogleAccessTokenProviderService implements GoogleAccessTokenProvid
     this.#pending.delete(actorId);
   }
 
-  async #refresh(actorId: string, generation: number): Promise<{ accessToken: string; expiresAt: number }> {
+  async #refresh(actorId: string, generation: number): Promise<{ accessToken: string; authorizationId: string; expiresAt: number }> {
     const savedConnection = await this.#database.read((db) => this.#repository.getConnection(db, actorId));
     if (savedConnection === null) return fail("calendar_not_configured");
     const connection = savedConnection;
@@ -139,7 +147,11 @@ export class GoogleAccessTokenProviderService implements GoogleAccessTokenProvid
     if (!await this.#saveIfCurrent(actorId, generation, connection, updated)) {
       return fail("calendar_access_token_invalidated");
     }
-    return { accessToken: grant.accessToken, expiresAt: now.getTime() + grant.expiresInSeconds * 1000 };
+    return {
+      accessToken: grant.accessToken,
+      authorizationId: connection.authorizationId,
+      expiresAt: now.getTime() + grant.expiresInSeconds * 1000,
+    };
   }
 
   async #markReauthorizationRequired(connection: CalendarConnectionRecord, generation: number): Promise<boolean> {

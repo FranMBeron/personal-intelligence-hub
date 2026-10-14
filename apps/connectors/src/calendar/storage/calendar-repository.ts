@@ -1,6 +1,9 @@
+import { randomBytes } from "node:crypto";
+
 import type { CalendarProposalStatus } from "@personal-intelligence-hub/contracts";
 import type { SqliteHandle } from "../../foundation/database.js";
 import type {
+  CalendarConnectionInput,
   CalendarConnectionRecord,
   CalendarRecord,
   EventReferenceRecord,
@@ -14,6 +17,7 @@ import type {
 
 type ConnectionRow = Readonly<{
   actor_id: string;
+  authorization_id: string;
   state: CalendarConnectionRecord["state"];
   refresh_token_ciphertext: string;
   primary_calendar_binding_ciphertext: string | null;
@@ -60,7 +64,7 @@ const optional = <T extends object, K extends string, V>(
 };
 
 const mapConnection = (row: ConnectionRow | undefined): CalendarConnectionRecord | null => row === undefined ? null : ({
-  actorId: row.actor_id, state: row.state, refreshTokenCiphertext: row.refresh_token_ciphertext,
+  actorId: row.actor_id, authorizationId: row.authorization_id, state: row.state, refreshTokenCiphertext: row.refresh_token_ciphertext,
   grantedScopes: JSON.parse(row.granted_scopes_json) as string[], selectionVersion: row.selection_version,
   createdAt: row.created_at, updatedAt: row.updated_at,
   ...optional({}, "primaryCalendarBindingCiphertext", row.primary_calendar_binding_ciphertext),
@@ -105,6 +109,28 @@ const requireOwnedEventReference = (database: SqliteHandle, actorId: string, eve
   if (row === undefined) fail("calendar_event_reference_not_found");
 };
 
+const newAuthorizationId = (): string => randomBytes(16).toString("hex");
+const upsertConnection = (
+  database: SqliteHandle,
+  connection: CalendarConnectionInput,
+  authorizationId: string,
+  replaceAuthorizationId: boolean,
+): void => {
+  const result = database.prepare(
+    "INSERT INTO calendar_connections(actor_id, authorization_id, state, refresh_token_ciphertext, primary_calendar_binding_ciphertext, granted_scopes_json, selection_version, last_success_at, safe_reason_code, created_at, updated_at) " +
+    "VALUES(:actorId, :authorizationId, :state, :refreshTokenCiphertext, :primaryCalendarBindingCiphertext, :grantedScopesJson, :selectionVersion, :lastSuccessAt, :safeReasonCode, :createdAt, :updatedAt) " +
+    "ON CONFLICT(actor_id) DO UPDATE SET " +
+    (replaceAuthorizationId ? "authorization_id = excluded.authorization_id, " : "") +
+    "state = excluded.state, refresh_token_ciphertext = excluded.refresh_token_ciphertext, primary_calendar_binding_ciphertext = excluded.primary_calendar_binding_ciphertext, granted_scopes_json = excluded.granted_scopes_json, selection_version = excluded.selection_version, last_success_at = excluded.last_success_at, safe_reason_code = excluded.safe_reason_code, updated_at = excluded.updated_at",
+  ).run({
+    actorId: connection.actorId, authorizationId, state: connection.state, refreshTokenCiphertext: connection.refreshTokenCiphertext,
+    primaryCalendarBindingCiphertext: connection.primaryCalendarBindingCiphertext ?? null,
+    grantedScopesJson: JSON.stringify(connection.grantedScopes), selectionVersion: connection.selectionVersion,
+    lastSuccessAt: connection.lastSuccessAt ?? null, safeReasonCode: connection.safeReasonCode ?? null,
+    createdAt: connection.createdAt, updatedAt: connection.updatedAt,
+  });
+  requireChanges(result.changes);
+};
 const selectConnection = (database: SqliteHandle, actorId: string) =>
   database.prepare("SELECT * FROM calendar_connections WHERE actor_id = :actorId").get<ConnectionRow>({ actorId });
 const selectProposal = (database: SqliteHandle, actorId: string, proposalId: string) =>
@@ -117,16 +143,24 @@ export interface CalendarRepository {
   getOAuthTransactionReplay(database: SqliteHandle, stateHash: string, actorId: string, now: string): OAuthTransaction | null;
   markOAuthAuthorizationCompleted(database: SqliteHandle, stateHash: string, completedAt: string): void;
   getConnection(database: SqliteHandle, actorId: string): CalendarConnectionRecord | null;
-  saveConnection(database: SqliteHandle, connection: CalendarConnectionRecord): void;
+  /** Inserts a connection with a fresh authorization id, or updates fields while keeping the stored id. */
+  saveConnection(database: SqliteHandle, connection: CalendarConnectionInput): void;
   saveConnectionIfUnchanged(
     database: SqliteHandle,
     expected: CalendarConnectionRecord,
     replacement: CalendarConnectionRecord,
   ): boolean;
-  replaceConnectionAuthorization(database: SqliteHandle, connection: CalendarConnectionRecord): void;
+  /** Replaces the authorization and returns the newly assigned opaque authorization id. */
+  replaceConnectionAuthorization(database: SqliteHandle, connection: CalendarConnectionInput): string;
   deleteConnection(database: SqliteHandle, actorId: string): void;
   listCalendars(database: SqliteHandle, actorId: string): readonly CalendarRecord[];
-  replaceCalendarSelection(database: SqliteHandle, actorId: string, expectedVersion: number, calendars: readonly CalendarRecord[]): number;
+  replaceCalendarSelection(
+    database: SqliteHandle,
+    actorId: string,
+    expectedVersion: number,
+    calendars: readonly CalendarRecord[],
+    expectedAuthorizationId?: string,
+  ): number;
   resolveCalendar(database: SqliteHandle, actorId: string, calendarRef: string): CalendarRecord | null;
   resolveEvent(database: SqliteHandle, actorId: string, eventRef: string): EventReferenceRecord | null;
   upsertEventReference(database: SqliteHandle, record: EventReferenceRecord): void;
@@ -168,32 +202,22 @@ export const createCalendarRepository = (): CalendarRepository => ({
     return mapConnection(selectConnection(database, actorId));
   },
   saveConnection(database, connection) {
-    const result = database.prepare(
-      "INSERT INTO calendar_connections(actor_id, state, refresh_token_ciphertext, primary_calendar_binding_ciphertext, granted_scopes_json, selection_version, last_success_at, safe_reason_code, created_at, updated_at) " +
-      "VALUES(:actorId, :state, :refreshTokenCiphertext, :primaryCalendarBindingCiphertext, :grantedScopesJson, :selectionVersion, :lastSuccessAt, :safeReasonCode, :createdAt, :updatedAt) " +
-      "ON CONFLICT(actor_id) DO UPDATE SET state = excluded.state, refresh_token_ciphertext = excluded.refresh_token_ciphertext, primary_calendar_binding_ciphertext = excluded.primary_calendar_binding_ciphertext, granted_scopes_json = excluded.granted_scopes_json, selection_version = excluded.selection_version, last_success_at = excluded.last_success_at, safe_reason_code = excluded.safe_reason_code, updated_at = excluded.updated_at",
-    ).run({
-      actorId: connection.actorId, state: connection.state, refreshTokenCiphertext: connection.refreshTokenCiphertext,
-      primaryCalendarBindingCiphertext: connection.primaryCalendarBindingCiphertext ?? null,
-      grantedScopesJson: JSON.stringify(connection.grantedScopes), selectionVersion: connection.selectionVersion,
-      lastSuccessAt: connection.lastSuccessAt ?? null, safeReasonCode: connection.safeReasonCode ?? null,
-      createdAt: connection.createdAt, updatedAt: connection.updatedAt,
-    });
-    requireChanges(result.changes);
+    upsertConnection(database, connection, newAuthorizationId(), false);
   },
   saveConnectionIfUnchanged(database, expected, replacement) {
-    if (expected.actorId !== replacement.actorId) return false;
+    if (expected.actorId !== replacement.actorId || expected.authorizationId !== replacement.authorizationId) return false;
     const result = database.prepare(
       "UPDATE calendar_connections SET state = :state, refresh_token_ciphertext = :refreshTokenCiphertext, " +
       "primary_calendar_binding_ciphertext = :primaryCalendarBindingCiphertext, granted_scopes_json = :grantedScopesJson, " +
       "selection_version = :selectionVersion, last_success_at = :lastSuccessAt, safe_reason_code = :safeReasonCode, updated_at = :updatedAt " +
-      "WHERE actor_id = :actorId AND state = :expectedState AND refresh_token_ciphertext = :expectedRefreshTokenCiphertext " +
+      "WHERE actor_id = :actorId AND authorization_id = :expectedAuthorizationId AND state = :expectedState AND refresh_token_ciphertext = :expectedRefreshTokenCiphertext " +
       "AND primary_calendar_binding_ciphertext IS :expectedPrimaryCalendarBindingCiphertext " +
       "AND granted_scopes_json = :expectedGrantedScopesJson AND selection_version = :expectedSelectionVersion " +
       "AND last_success_at IS :expectedLastSuccessAt AND safe_reason_code IS :expectedSafeReasonCode " +
       "AND created_at = :expectedCreatedAt AND updated_at = :expectedUpdatedAt",
     ).run({
       actorId: expected.actorId,
+      expectedAuthorizationId: expected.authorizationId,
       state: replacement.state,
       refreshTokenCiphertext: replacement.refreshTokenCiphertext,
       primaryCalendarBindingCiphertext: replacement.primaryCalendarBindingCiphertext ?? null,
@@ -219,9 +243,10 @@ export const createCalendarRepository = (): CalendarRepository => ({
     database.prepare("DELETE FROM calendar_change_proposals WHERE actor_id = :actorId").run({ actorId: connection.actorId });
     database.prepare("DELETE FROM calendar_event_refs WHERE actor_id = :actorId").run({ actorId: connection.actorId });
     database.prepare("DELETE FROM calendar_allowlist WHERE actor_id = :actorId").run({ actorId: connection.actorId });
-    const replacement = { ...connection };
-    delete (replacement as { primaryCalendarBindingCiphertext?: string }).primaryCalendarBindingCiphertext;
-    this.saveConnection(database, { ...replacement, selectionVersion: 1 });
+    const { primaryCalendarBindingCiphertext: _primary, ...replacement } = connection;
+    const authorizationId = newAuthorizationId();
+    upsertConnection(database, { ...replacement, selectionVersion: 1 }, authorizationId, true);
+    return authorizationId;
   },
   deleteConnection(database, actorId) {
     const result = database.prepare("DELETE FROM calendar_connections WHERE actor_id = :actorId").run({ actorId });
@@ -231,19 +256,28 @@ export const createCalendarRepository = (): CalendarRepository => ({
     return database.prepare("SELECT * FROM calendar_allowlist WHERE actor_id = :actorId ORDER BY calendar_ref")
       .all<CalendarRow>({ actorId }).map(mapCalendar);
   },
-  replaceCalendarSelection(database, actorId, expectedVersion, calendars) {
+  replaceCalendarSelection(database, actorId, expectedVersion, calendars, expectedAuthorizationId) {
     if (calendars.some((item) => item.actorId !== actorId)) {
       fail("calendar_selection_actor_mismatch");
     }
     const connectionRow = selectConnection(database, actorId);
+    if (expectedAuthorizationId !== undefined &&
+        (connectionRow === undefined || connectionRow.authorization_id !== expectedAuthorizationId)) {
+      fail("calendar_connection_changed");
+    }
     if (connectionRow === undefined || connectionRow.selection_version !== expectedVersion) fail("calendar_selection_version_conflict");
     const selected = calendars.filter((item) => item.readEnabled || item.writeEnabled);
     if (selected.length === 0 || selected.filter((item) => item.isPrimary).length !== 1 ||
         selected.some((item) => item.isPrimary && !item.readEnabled && !item.writeEnabled)) {
       fail("calendar_selection_primary_required");
     }
-    const update = database.prepare("UPDATE calendar_connections SET selection_version = selection_version + 1 WHERE actor_id = :actorId AND selection_version = :expectedVersion")
-      .run({ actorId, expectedVersion });
+    const update = expectedAuthorizationId === undefined
+      ? database.prepare("UPDATE calendar_connections SET selection_version = selection_version + 1 WHERE actor_id = :actorId AND selection_version = :expectedVersion")
+        .run({ actorId, expectedVersion })
+      : database.prepare(
+        "UPDATE calendar_connections SET selection_version = selection_version + 1 WHERE actor_id = :actorId AND selection_version = :expectedVersion " +
+        "AND authorization_id = :expectedAuthorizationId",
+      ).run({ actorId, expectedVersion, expectedAuthorizationId });
     requireChanges(update.changes, "calendar_selection_version_conflict");
 
     const selectedRefs = new Set(selected.map((item) => item.calendarRef));

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { openCalendarValue, sealCalendarValue, type CalendarKeyring } from "../crypto/envelope.js";
 import { openConnectorDatabase, type ConnectorDatabase } from "../../foundation/database.js";
 import { createCalendarRepository } from "../storage/calendar-repository.js";
-import type { CalendarConnectionRecord } from "../storage/records.js";
+import type { CalendarConnectionInput } from "../storage/records.js";
 import type { GoogleOAuthPort, GoogleTokenGrant } from "../ports/google-oauth.js";
 import { GoogleAccessTokenProviderService } from "./google-access-token-provider.js";
 
@@ -35,7 +35,7 @@ const createDatabase = async () => {
   return database;
 };
 const clock = () => new Date(currentTime);
-const connection = (overrides: Partial<CalendarConnectionRecord> = {}): CalendarConnectionRecord => ({
+const connection = (overrides: Partial<CalendarConnectionInput> = {}): CalendarConnectionInput => ({
   actorId,
   state: "available",
   refreshTokenCiphertext: sealCalendarValue("fictional-refresh-token", `calendar_connections:${actorId}:refresh`, keyring),
@@ -231,6 +231,46 @@ describe("Google access token provider", () => {
     await expect(pending).rejects.toThrow("calendar_access_token_invalidated");
     await expect(database.read((db) => repositories.getConnection(db, actorId)))
       .resolves.toMatchObject({ refreshTokenCiphertext: replacement.refreshTokenCiphertext });
+  });
+
+  it("does not persist a rotated refresh token into an identical replacement authorization", async () => {
+    currentTime = now;
+    const database = await createDatabase();
+    await seed(database);
+    const oauth: GoogleOAuthPort = {
+      exchangeAuthorizationCode: vi.fn(),
+      refreshAccessToken: vi.fn(async () => {
+        const current = await database.read((db) => repositories.getConnection(db, actorId));
+        await database.transaction((db) => repositories.replaceConnectionAuthorization(db, current!));
+        return grant();
+      }),
+      revokeToken: vi.fn(),
+    };
+    const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
+    await expect(provider.getAccessToken(actorId)).rejects.toThrow("calendar_access_token_invalidated");
+    const saved = await database.read((db) => repositories.getConnection(db, actorId));
+    expect(openCalendarValue(saved!.refreshTokenCiphertext, `calendar_connections:${actorId}:refresh`, keyring))
+      .toBe("fictional-refresh-token");
+  });
+
+  it("binds each issued access token to the authorization that produced it", async () => {
+    currentTime = now;
+    const database = await createDatabase();
+    await seed(database);
+    const oauth: GoogleOAuthPort = {
+      exchangeAuthorizationCode: vi.fn(),
+      refreshAccessToken: vi.fn(async () => grant()),
+      revokeToken: vi.fn(),
+    };
+    const provider = new GoogleAccessTokenProviderService({ database, repository: repositories, oauth, keyring, clock });
+    const first = await provider.getAuthorizedAccessToken(actorId);
+    const original = await database.read((db) => repositories.getConnection(db, actorId));
+    expect(first).toEqual({ accessToken: "fictional-access-token", authorizationId: original!.authorizationId });
+    await database.transaction((db) => repositories.replaceConnectionAuthorization(db, original!));
+    const cached = await provider.getAuthorizedAccessToken(actorId);
+    expect(cached.authorizationId).toBe(original!.authorizationId);
+    const replaced = await database.read((db) => repositories.getConnection(db, actorId));
+    expect(replaced!.authorizationId).not.toBe(original!.authorizationId);
   });
 
   it("invalidates the actor cache explicitly", async () => {

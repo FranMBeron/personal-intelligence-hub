@@ -8,7 +8,7 @@ import { openConnectorDatabase, type ConnectorDatabase } from "../../foundation/
 import { applyMigrations, loadMigrations } from "../../foundation/migrations.js";
 import { createCalendarRepository } from "./calendar-repository.js";
 import type {
-  CalendarConnectionRecord,
+  CalendarConnectionInput,
   CalendarRecord,
   EventReferenceRecord,
   ProposalRecord,
@@ -38,7 +38,7 @@ const createDatabase = async () => {
   return { database, databasePath };
 };
 
-const connection = (overrides: Partial<CalendarConnectionRecord> = {}): CalendarConnectionRecord => ({
+const connection = (overrides: Partial<CalendarConnectionInput> = {}): CalendarConnectionInput => ({
   actorId,
   state: "available",
   refreshTokenCiphertext: sealCalendarValue("fictional-refresh-token", `calendar_connections:${actorId}:refresh`, ring),
@@ -396,7 +396,15 @@ describe("Calendar repository", () => {
     const oldDatabase = openConnectorDatabase(databasePath, oldMigrations);
     databases.push(oldDatabase);
     await oldDatabase.transaction((db) => {
-      repository.saveConnection(db, connection());
+      const legacy = connection();
+      db.prepare(
+        "INSERT INTO calendar_connections(actor_id, state, refresh_token_ciphertext, granted_scopes_json, selection_version, created_at, updated_at) " +
+        "VALUES(:actorId, :state, :refreshTokenCiphertext, :grantedScopesJson, :selectionVersion, :createdAt, :updatedAt)",
+      ).run({
+        actorId: legacy.actorId, state: legacy.state, refreshTokenCiphertext: legacy.refreshTokenCiphertext,
+        grantedScopesJson: JSON.stringify(legacy.grantedScopes), selectionVersion: legacy.selectionVersion,
+        createdAt: legacy.createdAt, updatedAt: legacy.updatedAt,
+      });
       repository.replaceCalendarSelection(db, actorId, 1, [calendar()]);
       repository.upsertEventReference(db, eventReference());
       repository.insertProposal(db, proposal({ eventRef: "event-ref-01" }), "idempotency-migration", "request-migration");
@@ -412,6 +420,36 @@ describe("Calendar repository", () => {
     await expect(upgraded.read((db) => repository.resolveEvent(db, actorId, "event-ref-01"))).resolves.not.toBeNull();
     await expect(count(upgraded, "calendar_idempotency")).resolves.toBe(1);
     await expect(upgraded.read((db) => db.prepare("PRAGMA foreign_key_check").all())).resolves.toEqual([]);
+    const migrated = await upgraded.read((db) => repository.getConnection(db, actorId));
+    expect(migrated?.authorizationId).toMatch(/^[0-9a-f]{32}$/u);
+    await upgraded.write((db) => db.prepare(
+      "INSERT INTO calendar_connections(actor_id, state, refresh_token_ciphertext, granted_scopes_json, selection_version, created_at, updated_at) " +
+      "VALUES(:actorId, 'available', 'legacy-ciphertext', '[]', 1, :now, :now)",
+    ).run({ actorId: otherActor, now: later }));
+    const legacyInsert = await upgraded.read((db) => repository.getConnection(db, otherActor));
+    expect(legacyInsert?.authorizationId).toMatch(/^[0-9a-f]{32}$/u);
+    expect(legacyInsert?.authorizationId).not.toBe(migrated?.authorizationId);
+  });
+
+  it("assigns a fresh authorization id on every replacement, even with identical metadata", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    const original = await database.read((db) => repository.getConnection(db, actorId));
+    const returned = await database.transaction((db) => repository.replaceConnectionAuthorization(db, original!));
+    const replaced = await database.read((db) => repository.getConnection(db, actorId));
+    expect(replaced!.authorizationId).toBe(returned);
+    expect(replaced!.authorizationId).not.toBe(original!.authorizationId);
+    const { authorizationId: _originalId, ...originalFields } = original!;
+    const { authorizationId: _replacedId, ...replacedFields } = replaced!;
+    expect(replacedFields).toEqual(originalFields);
+    await expect(database.transaction((db) => repository.saveConnectionIfUnchanged(db, original!, { ...original!, updatedAt: later })))
+      .resolves.toBe(false);
+    await database.write((db) => repository.saveConnection(db, { ...replaced!, state: "degraded" }));
+    await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toMatchObject({ authorizationId: returned });
+    await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], original!.authorizationId)))
+      .rejects.toThrow("calendar_connection_changed");
+    await expect(database.transaction((db) => repository.replaceCalendarSelection(db, actorId, 1, [calendar()], returned)))
+      .resolves.toBe(2);
   });
 
   it("reopens the same file without reapplying migrations", async () => {

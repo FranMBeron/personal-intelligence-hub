@@ -13,7 +13,11 @@ import {
 import type { ConnectorDatabase } from "../../foundation/database.js";
 import { calendarBlindIndex, openCalendarValue, sealCalendarValue, type CalendarKeyring } from "../crypto/envelope.js";
 import type { GoogleCalendarPort, GoogleCalendarRecord } from "../ports/google-calendar.js";
-import { GOOGLE_CALENDAR_REQUIRED_SCOPES, type GoogleAccessTokenProvider } from "./google-access-token-provider.js";
+import {
+  GOOGLE_CALENDAR_REQUIRED_SCOPES,
+  type AuthorizedAccessToken,
+  type GoogleAccessTokenProvider,
+} from "./google-access-token-provider.js";
 import type { CalendarRepository } from "../storage/calendar-repository.js";
 import type { CalendarConnectionRecord, CalendarRecord } from "../storage/records.js";
 
@@ -21,8 +25,10 @@ export interface CalendarSelectionService {
   discover(principal: DelegatedPrincipal): Promise<CalendarSelection>;
   get(principal: DelegatedPrincipal): Promise<CalendarSelection>;
   update(principal: DelegatedPrincipal, body: UpdateCalendarSelectionBody): Promise<CalendarSelection>;
-  bootstrapPrimary(input: { actorId: string; accessToken: string; requestId: string }): Promise<CalendarSourceStatus>;
+  bootstrapPrimary(input: BootstrapPrimaryInput): Promise<CalendarSourceStatus>;
 }
+
+type BootstrapPrimaryInput = Readonly<{ actorId: string; accessToken: string; authorizationId: string; requestId: string }>;
 
 type Clock = () => Date;
 type Options = Readonly<{
@@ -52,14 +58,9 @@ const primaryAad = (actorId: string) => `calendar_connections:${actorId}:primary
 const refFor = (actorId: string, providerCalendarId: string, key: Uint8Array): string =>
   "cal_" + createHmac("sha256", key).update(actorId + "\0" + providerCalendarId, "utf8").digest("base64url");
 const canWrite = (role: GoogleCalendarRecord["accessRole"] | CalendarRecord["providerAccessRole"]): boolean => role === "writer" || role === "owner";
-const sameAuthorizationGeneration = (left: CalendarConnectionRecord, right: CalendarConnectionRecord): boolean =>
-  left.actorId === right.actorId &&
-  left.createdAt === right.createdAt &&
-  left.selectionVersion === right.selectionVersion &&
-  (left.primaryCalendarBindingCiphertext ?? null) === (right.primaryCalendarBindingCiphertext ?? null) &&
-  JSON.stringify(left.grantedScopes) === JSON.stringify(right.grantedScopes);
 const sameConnectionSnapshot = (left: CalendarConnectionRecord, right: CalendarConnectionRecord): boolean =>
   left.actorId === right.actorId &&
+  left.authorizationId === right.authorizationId &&
   left.state === right.state &&
   left.refreshTokenCiphertext === right.refreshTokenCiphertext &&
   (left.primaryCalendarBindingCiphertext ?? null) === (right.primaryCalendarBindingCiphertext ?? null) &&
@@ -161,12 +162,12 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
       const token = await this.#token(principal.actorId);
       let providerCalendars: readonly GoogleCalendarRecord[];
       try {
-        providerCalendars = await this.#google.listCalendars(token);
+        providerCalendars = await this.#google.listCalendars(token.accessToken);
       } catch (error) {
-        await this.#recordProviderFailure(principal.actorId, error);
+        await this.#recordProviderFailure(principal.actorId, token.authorizationId, error);
         throw this.#publicProviderError(error);
       }
-      await this.#recordSuccess(principal.actorId);
+      await this.#recordSuccess(principal.actorId, token.authorizationId);
       const saved = await this.#database.read((db) => this.#repository.listCalendars(db, principal.actorId));
       const savedByRef = new Map(saved.map((record) => [record.calendarRef, record]));
       const items = providerCalendars.map((providerCalendar) => {
@@ -218,14 +219,15 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
       const token = await this.#token(principal.actorId);
       const connectionSnapshot = await this.#database.read((db) => this.#repository.getConnection(db, principal.actorId));
       if (connectionSnapshot === null) return fail("calendar_not_configured");
-      if (!sameAuthorizationGeneration(authorizationBeforeToken, connectionSnapshot)) {
+      if (token.authorizationId !== authorizationBeforeToken.authorizationId ||
+          token.authorizationId !== connectionSnapshot.authorizationId) {
         return fail("calendar_connection_changed");
       }
       let providerCalendars: readonly GoogleCalendarRecord[];
       try {
-        providerCalendars = await this.#google.listCalendars(token);
+        providerCalendars = await this.#google.listCalendars(token.accessToken);
       } catch (error) {
-        await this.#recordProviderFailure(principal.actorId, error);
+        await this.#recordProviderFailure(principal.actorId, token.authorizationId, error);
         throw this.#publicProviderError(error);
       }
       const discovered = new Map(providerCalendars.map((item) => [this.#calendarRef(principal.actorId, item.id), item]));
@@ -259,14 +261,16 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
           const current = this.#repository.getConnection(db, principal.actorId);
           if (current === null) return fail("calendar_not_configured");
           if (!sameConnectionSnapshot(current, connectionSnapshot)) return fail("calendar_connection_changed");
-          const nextVersion = this.#repository.replaceCalendarSelection(db, principal.actorId, parsedBody.data.expectedVersion, records);
+          const nextVersion = this.#repository.replaceCalendarSelection(
+            db, principal.actorId, parsedBody.data.expectedVersion, records, token.authorizationId,
+          );
           this.#repository.appendAudit(db, {
             id: randomUUID(), actorId: principal.actorId, operation: "selection_change", outcome: "selection_updated",
             requestId: principal.requestId, occurredAt: timestamp,
           });
           return nextVersion;
         });
-        await this.#recordSuccess(principal.actorId);
+        await this.#recordSuccess(principal.actorId, token.authorizationId);
         return CalendarSelectionSchema.parse({
           version,
           items: records.filter((record) => record.readEnabled || record.writeEnabled).map((record) => openRecord(record, this.#keyring)),
@@ -281,17 +285,18 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
     });
   }
 
-  async bootstrapPrimary(input: { actorId: string; accessToken: string; requestId: string }): Promise<CalendarSourceStatus> {
+  async bootstrapPrimary(input: BootstrapPrimaryInput): Promise<CalendarSourceStatus> {
     return this.#exclusive(input.actorId, async () => {
       const existing = await this.#database.read((db) => this.#repository.getConnection(db, input.actorId));
       if (existing === null) return fail("calendar_not_configured");
+      if (existing.authorizationId !== input.authorizationId) return fail("calendar_connection_changed");
       if (existing.primaryCalendarBindingCiphertext !== undefined && existing.selectionVersion >= 1) {
         return this.#status(input.actorId);
       }
       if (existing.state === "requires_reauthorization" ||
           !GOOGLE_CALENDAR_REQUIRED_SCOPES.every((scope) => existing.grantedScopes.includes(scope))) {
         const error = new Error("calendar_reauthorization_required");
-        await this.#recordProviderFailure(input.actorId, error);
+        await this.#recordProviderFailure(input.actorId, input.authorizationId, error);
         throw this.#publicProviderError(error);
       }
 
@@ -299,12 +304,12 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
       try {
         providerCalendars = await this.#google.listCalendars(input.accessToken);
       } catch (error) {
-        await this.#recordProviderFailure(input.actorId, error);
+        await this.#recordProviderFailure(input.actorId, input.authorizationId, error);
         throw this.#publicProviderError(error);
       }
       const primaries = providerCalendars.filter((calendar) => calendar.primary);
       if (primaries.length !== 1 || !canWrite(primaries[0]!.accessRole)) {
-        await this.#recordSuccess(input.actorId);
+        await this.#recordSuccess(input.actorId, input.authorizationId);
         return fail("calendar_primary_unavailable");
       }
       const primary = primaries[0]!;
@@ -313,6 +318,7 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
         await this.#database.transaction((db) => {
           const connection = this.#repository.getConnection(db, input.actorId);
           if (connection === null) return fail("calendar_not_configured");
+          if (connection.authorizationId !== input.authorizationId) return fail("calendar_connection_changed");
           if (connection.primaryCalendarBindingCiphertext !== undefined && connection.selectionVersion >= 1) return;
           if (connection.refreshTokenCiphertext !== existing.refreshTokenCiphertext ||
               connection.updatedAt !== existing.updatedAt ||
@@ -330,10 +336,10 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
             readEnabled: true, writeEnabled: true, isPrimary: true, lastVerifiedAt: timestamp,
           };
           const initialVersion = connection.selectionVersion;
-          this.#repository.replaceCalendarSelection(db, input.actorId, initialVersion, [record]);
+          this.#repository.replaceCalendarSelection(db, input.actorId, initialVersion, [record], input.authorizationId);
           const current = this.#repository.getConnection(db, input.actorId)!;
           const { safeReasonCode: _safeReasonCode, ...fields } = current;
-          this.#repository.saveConnection(db, {
+          const bound = this.#repository.saveConnectionIfUnchanged(db, current, {
             ...fields,
             state: "available",
             primaryCalendarBindingCiphertext: sealCalendarValue(primary.id, primaryAad(input.actorId), this.#keyring),
@@ -341,6 +347,7 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
             lastSuccessAt: timestamp,
             updatedAt: timestamp,
           });
+          if (!bound) fail("calendar_connection_changed");
           this.#repository.appendAudit(db, {
             id: randomUUID(), actorId: input.actorId, operation: "selection_change", outcome: "selection_updated",
             requestId: input.requestId, occurredAt: timestamp,
@@ -354,11 +361,12 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
     });
   }
 
-  async #token(actorId: string): Promise<string> {
+  async #token(actorId: string): Promise<AuthorizedAccessToken> {
+    const before = await this.#database.read((db) => this.#repository.getConnection(db, actorId));
     try {
-      return await this.#tokens.getAccessToken(actorId);
+      return await this.#tokens.getAuthorizedAccessToken(actorId);
     } catch (error) {
-      await this.#recordProviderFailure(actorId, error);
+      if (before !== null) await this.#recordProviderFailure(actorId, before.authorizationId, error);
       throw this.#publicProviderError(error);
     }
   }
@@ -367,9 +375,9 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
     return refFor(actorId, providerCalendarId, this.#keyring.blindIndexKey);
   }
 
-  async #recordSuccess(actorId: string): Promise<void> {
+  async #recordSuccess(actorId: string, authorizationId: string): Promise<void> {
     const existing = await this.#database.read((db) => this.#repository.getConnection(db, actorId));
-    if (existing === null || existing.state === "requires_reauthorization") return;
+    if (existing === null || existing.authorizationId !== authorizationId || existing.state === "requires_reauthorization") return;
     const { safeReasonCode: reason, ...fields } = existing;
     const replacement: CalendarConnectionRecord = {
       ...fields, state: "available", lastSuccessAt: this.#clock().toISOString(), updatedAt: this.#clock().toISOString(),
@@ -378,14 +386,14 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
     await this.#database.write((db) => { this.#repository.saveConnectionIfUnchanged(db, existing, replacement); });
   }
 
-  async #recordProviderFailure(actorId: string, error: unknown): Promise<void> {
+  async #recordProviderFailure(actorId: string, authorizationId: string, error: unknown): Promise<void> {
     const code = safeProviderError(error);
     const reauth = code === "google_calendar_reauthorization_required" || code === "calendar_reauthorization_required";
     const permissionDenied = code === "google_calendar_permission_denied";
     if (!reauth && !permissionDenied && code !== "google_calendar_temporarily_unavailable" &&
         code !== "calendar_provider_temporarily_unavailable") return;
     const existing = await this.#database.read((db) => this.#repository.getConnection(db, actorId));
-    if (existing === null || existing.state === "requires_reauthorization") return;
+    if (existing === null || existing.authorizationId !== authorizationId || existing.state === "requires_reauthorization") return;
     const timestamp = this.#clock().toISOString();
     const safeReasonCode = reauth ? "reauthorization_required" :
       permissionDenied ? "provider_permission_denied" : "provider_temporarily_unavailable";

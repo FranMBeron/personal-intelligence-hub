@@ -12,7 +12,7 @@ import type { CalendarRuntimeConfig } from "../config.js";
 import { openCalendarValue, sealCalendarValue, type CalendarKeyring } from "../crypto/envelope.js";
 import type { GoogleOAuthPort, GoogleTokenGrant } from "../ports/google-oauth.js";
 import type { CalendarRepository } from "../storage/calendar-repository.js";
-import type { CalendarConnectionRecord } from "../storage/records.js";
+import type { CalendarConnectionInput, CalendarConnectionRecord } from "../storage/records.js";
 import {
   GOOGLE_CALENDAR_REQUIRED_SCOPES,
   type GoogleAccessTokenProvider,
@@ -28,6 +28,7 @@ export interface CalendarPrimaryBootstrap {
   bootstrapPrimary(input: {
     actorId: string;
     accessToken: string;
+    authorizationId: string;
     requestId: string;
   }): Promise<CalendarSourceStatus>;
 }
@@ -163,12 +164,7 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
 
   bootstrap(principal: DelegatedPrincipal): Promise<CalendarSourceStatus> {
     return this.#exclusive(principal.actorId, async () => {
-      try {
-        const accessToken = await this.#tokens.getAccessToken(principal.actorId);
-        await this.#runBootstrap(principal.actorId, accessToken, principal.requestId);
-      } catch {
-        await this.#recordBootstrapFailure(principal.actorId);
-      }
+      await this.#bootstrapWithStoredCredentials(principal);
       return this.status(principal);
     });
   }
@@ -189,12 +185,7 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
     );
     if (replay !== null) {
       this.#tokens.invalidate(principal.actorId);
-      try {
-        const accessToken = await this.#tokens.getAccessToken(principal.actorId);
-        await this.#runBootstrap(principal.actorId, accessToken, principal.requestId);
-      } catch {
-        await this.#recordBootstrapFailure(principal.actorId);
-      }
+      await this.#bootstrapWithStoredCredentials(principal);
       return this.status(principal);
     }
 
@@ -239,7 +230,7 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
     const validRefreshToken = refreshToken ?? fail("calendar_oauth_refresh_token_missing");
 
     const timestamp = this.#clock().toISOString();
-    const connection: CalendarConnectionRecord = {
+    const connection: CalendarConnectionInput = {
       actorId: principal.actorId,
       state: "available",
       refreshTokenCiphertext: sealCalendarValue(validRefreshToken, refreshAad(principal.actorId), this.#keyring),
@@ -249,19 +240,20 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
       createdAt: oldConnection?.createdAt ?? timestamp,
       updatedAt: timestamp,
     };
-    await this.#database.transaction((db) => {
-      this.#repository.replaceConnectionAuthorization(db, connection);
+    const authorizationId = await this.#database.transaction((db) => {
+      const replacementId = this.#repository.replaceConnectionAuthorization(db, connection);
       this.#repository.markOAuthAuthorizationCompleted(db, stateHash, timestamp);
       this.#repository.appendAudit(db, {
         id: randomUUID(), actorId: principal.actorId, operation: "connect", outcome: "connected",
         requestId: principal.requestId, occurredAt: timestamp,
       });
+      return replacementId;
     });
     this.#tokens.invalidate(principal.actorId);
     try {
-      await this.#runBootstrap(principal.actorId, grant.accessToken, principal.requestId);
+      await this.#runBootstrap(principal.actorId, { accessToken: grant.accessToken, authorizationId }, principal.requestId);
     } catch {
-      await this.#recordBootstrapFailure(principal.actorId);
+      await this.#recordBootstrapFailure(principal.actorId, authorizationId);
     }
     return this.status(principal);
   }
@@ -296,18 +288,37 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
     return this.status(principal);
   }
 
-  async #runBootstrap(actorId: string, accessToken: string, requestId: string): Promise<void> {
+  async #bootstrapWithStoredCredentials(principal: DelegatedPrincipal): Promise<void> {
+    const before = await this.#database.read((db) => this.#repository.getConnection(db, principal.actorId));
+    if (before === null) return;
     try {
-      await this.#bootstrap.bootstrapPrimary({ actorId, accessToken, requestId });
+      const token = await this.#tokens.getAuthorizedAccessToken(principal.actorId);
+      if (token.authorizationId !== before.authorizationId) fail("calendar_connection_changed");
+      await this.#runBootstrap(principal.actorId, token, principal.requestId);
+    } catch {
+      await this.#recordBootstrapFailure(principal.actorId, before.authorizationId);
+    }
+  }
+
+  async #runBootstrap(
+    actorId: string,
+    token: Readonly<{ accessToken: string; authorizationId: string }>,
+    requestId: string,
+  ): Promise<void> {
+    try {
+      await this.#bootstrap.bootstrapPrimary({
+        actorId, accessToken: token.accessToken, authorizationId: token.authorizationId, requestId,
+      });
     } catch (error) {
       throw new Error(safeRequestError(error));
     }
   }
 
-  async #recordBootstrapFailure(actorId: string): Promise<void> {
+  async #recordBootstrapFailure(actorId: string, authorizationId: string): Promise<void> {
     const existing = await this.#database.read((db) => this.#repository.getConnection(db, actorId));
     if (
       existing === null ||
+      existing.authorizationId !== authorizationId ||
       existing.state === "requires_reauthorization" ||
       existing.safeReasonCode === "reauthorization_required"
     ) return;

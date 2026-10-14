@@ -9,7 +9,7 @@ import { openConnectorDatabase, type ConnectorDatabase } from "../../foundation/
 import { openCalendarValue, sealCalendarValue, type CalendarKeyring } from "../crypto/envelope.js";
 import type { GoogleCalendarPort, GoogleCalendarRecord } from "../ports/google-calendar.js";
 import { createCalendarRepository } from "../storage/calendar-repository.js";
-import type { CalendarConnectionRecord } from "../storage/records.js";
+import type { CalendarConnectionInput } from "../storage/records.js";
 import type { GoogleAccessTokenProvider } from "./google-access-token-provider.js";
 import { CalendarSelectionServiceImpl } from "./calendar-selection-service.js";
 
@@ -44,7 +44,7 @@ const openDb = async () => {
 };
 const seedConnection = async (db: ConnectorDatabase, id = actorId, version = 1) => {
   const stamp = currentTime.toISOString();
-  const value: CalendarConnectionRecord = {
+  const value: CalendarConnectionInput = {
     actorId: id, state: "available",
     refreshTokenCiphertext: sealCalendarValue("fictional-refresh-token", `calendar_connections:${id}:refresh`, keyring),
     grantedScopes: scopes, selectionVersion: version, createdAt: stamp, updatedAt: stamp,
@@ -61,8 +61,22 @@ const mockGoogle = (overrides: Partial<GoogleCalendarPort> = {}) => ({
   respondToInvitation: vi.fn(),
   ...overrides,
 } satisfies GoogleCalendarPort);
+const currentAuthorizationId = async (db: ConnectorDatabase, id = actorId) =>
+  (await db.read((handle) => repository.getConnection(handle, id)))?.authorizationId ?? "missing-authorization";
+const bootstrapInput = async (db: ConnectorDatabase) => ({
+  actorId, accessToken: "fictional-access-token", authorizationId: await currentAuthorizationId(db), requestId: "request-fictional",
+});
 const makeService = (db: ConnectorDatabase, google = mockGoogle(), tokenOverrides: Partial<GoogleAccessTokenProvider> = {}) => {
-  const tokens: GoogleAccessTokenProvider = { getAccessToken: vi.fn(async () => "fictional-access-token"), invalidate: vi.fn(), ...tokenOverrides };
+  const getAccessToken = tokenOverrides.getAccessToken ?? vi.fn(async () => "fictional-access-token");
+  const tokens: GoogleAccessTokenProvider = {
+    getAccessToken,
+    getAuthorizedAccessToken: vi.fn(async (id: string) => {
+      const authorizationId = await currentAuthorizationId(db, id);
+      return { accessToken: await getAccessToken(id), authorizationId };
+    }),
+    invalidate: vi.fn(),
+    ...tokenOverrides,
+  };
   return {
     google, tokens,
     service: new CalendarSelectionServiceImpl({ database: db, repository, tokens, google, keyring, clock }),
@@ -101,7 +115,7 @@ describe("Calendar selection service", () => {
     const db = await openDb();
     await seedConnection(db);
     const { service, google } = makeService(db);
-    const input = { actorId, accessToken: "fictional-access-token", requestId: "request-fictional" };
+    const input = await bootstrapInput(db);
     const status = await service.bootstrapPrimary(input);
     expect(status).toMatchObject({ canRead: true, canProposeChanges: true, primaryCalendarConfigured: true });
     const selection = await service.get(principal());
@@ -124,7 +138,7 @@ describe("Calendar selection service", () => {
     const google = mockGoogle();
     const first = makeService(db, google).service;
     const second = makeService(db, google).service;
-    const input = { actorId, accessToken: "fictional-access-token", requestId: "request-fictional" };
+    const input = await bootstrapInput(db);
     const [statusA, statusB] = await Promise.all([first.bootstrapPrimary(input), second.bootstrapPrimary(input)]);
     expect(statusA.primaryCalendarConfigured).toBe(true);
     expect(statusB.primaryCalendarConfigured).toBe(true);
@@ -136,7 +150,7 @@ describe("Calendar selection service", () => {
     const db = await openDb();
     await seedConnection(db);
     const { service } = makeService(db);
-    await service.bootstrapPrimary({ actorId, accessToken: "fictional-access-token", requestId: "request-fictional" });
+    await service.bootstrapPrimary(await bootstrapInput(db));
     const discovered = await service.discover(principal());
     const primaryRef = discovered.items.find((item) => item.isPrimary)!.calendarRef;
     const secondaryRef = (await service.discover(principal())).items.find((item) => !item.isPrimary)!.calendarRef;
@@ -158,19 +172,21 @@ describe("Calendar selection service", () => {
     const db = await openDb();
     await seedConnection(db);
     const bootstrap = makeService(db).service;
-    await bootstrap.bootstrapPrimary({ actorId, accessToken: "fictional-access-token", requestId: "request-fictional" });
+    await bootstrap.bootstrapPrimary(await bootstrapInput(db));
     const primaryRef = (await bootstrap.get(principal())).items[0]!.calendarRef;
     const google = mockGoogle();
+    const issueOldToken = async () => {
+      const current = await db.read((handle) => repository.getConnection(handle, actorId));
+      await db.transaction((handle) => repository.replaceConnectionAuthorization(handle, {
+        ...current!,
+        refreshTokenCiphertext: sealCalendarValue("fictional-new-oauth-refresh-token", "calendar_connections:" + actorId + ":refresh", keyring),
+        updatedAt: "2026-10-12T12:01:00.000Z",
+      }));
+      return { accessToken: "fictional-old-access-token", authorizationId: current!.authorizationId };
+    };
     const tokens: GoogleAccessTokenProvider = {
-      getAccessToken: vi.fn(async () => {
-        const current = await db.read((handle) => repository.getConnection(handle, actorId));
-        await db.transaction((handle) => repository.replaceConnectionAuthorization(handle, {
-          ...current!,
-          refreshTokenCiphertext: sealCalendarValue("fictional-new-oauth-refresh-token", "calendar_connections:" + actorId + ":refresh", keyring),
-          updatedAt: "2026-10-12T12:01:00.000Z",
-        }));
-        return "fictional-old-access-token";
-      }),
+      getAccessToken: vi.fn(async () => (await issueOldToken()).accessToken),
+      getAuthorizedAccessToken: vi.fn(issueOldToken),
       invalidate: vi.fn(),
     };
     const service = new CalendarSelectionServiceImpl({ database: db, repository, tokens, google, keyring, clock });
@@ -180,6 +196,87 @@ describe("Calendar selection service", () => {
     })).rejects.toThrow("calendar_connection_changed");
     expect(google.listCalendars).not.toHaveBeenCalled();
     expect(await db.read((handle) => repository.listCalendars(handle, actorId))).toEqual([]);
+  });
+
+  it("rejects a stale token after a non-bootstrapped authorization is replaced with equal metadata", async () => {
+    const db = await openDb();
+    await seedConnection(db);
+    const primaryRef = (await makeService(db).service.discover(principal())).items.find((item) => item.isPrimary)!.calendarRef;
+    const google = mockGoogle();
+    const issueOldToken = async () => {
+      const current = await db.read((handle) => repository.getConnection(handle, actorId));
+      await db.transaction((handle) => repository.replaceConnectionAuthorization(handle, {
+        ...current!,
+        refreshTokenCiphertext: sealCalendarValue("fictional-replacement-refresh-token", "calendar_connections:" + actorId + ":refresh", keyring),
+      }));
+      return { accessToken: "fictional-old-access-token", authorizationId: current!.authorizationId };
+    };
+    const tokens = {
+      getAuthorizedAccessToken: vi.fn(issueOldToken),
+      getAccessToken: vi.fn(async () => (await issueOldToken()).accessToken),
+      invalidate: vi.fn(),
+    };
+    const service = new CalendarSelectionServiceImpl({ database: db, repository, tokens, google, keyring, clock });
+    await expect(service.update(principal(), {
+      expectedVersion: 1,
+      calendars: [{ calendarRef: primaryRef, readEnabled: true, writeEnabled: true }],
+    })).rejects.toThrow("calendar_connection_changed");
+    expect(google.listCalendars).not.toHaveBeenCalled();
+    expect(await db.read((handle) => repository.listCalendars(handle, actorId))).toEqual([]);
+    expect(await auditCount(db)).toBe(0);
+  });
+
+  it("rejects primary bootstrap for an authorization replaced by an identical record", async () => {
+    const db = await openDb();
+    await seedConnection(db);
+    const authorizationId = (await db.read((handle) => repository.getConnection(handle, actorId)))!.authorizationId;
+    const google = mockGoogle({ listCalendars: vi.fn(async () => {
+      const current = await db.read((handle) => repository.getConnection(handle, actorId));
+      await db.transaction((handle) => repository.replaceConnectionAuthorization(handle, current!));
+      return [primary, secondary];
+    }) });
+    const { service } = makeService(db, google);
+    await expect(service.bootstrapPrimary({
+      actorId, accessToken: "fictional-old-access-token", authorizationId, requestId: "request-fictional",
+    })).rejects.toThrow("calendar_connection_changed");
+    expect(await db.read((handle) => repository.listCalendars(handle, actorId))).toEqual([]);
+    expect((await db.read((handle) => repository.getConnection(handle, actorId)))?.primaryCalendarBindingCiphertext).toBeUndefined();
+    expect(await auditCount(db)).toBe(0);
+  });
+
+  it("does not record stale provider success on a replacement authorization", async () => {
+    const db = await openDb();
+    await seedConnection(db);
+    const google = mockGoogle({ listCalendars: vi.fn(async () => {
+      const current = await db.read((handle) => repository.getConnection(handle, actorId));
+      await db.transaction((handle) => repository.replaceConnectionAuthorization(handle, {
+        ...current!,
+        refreshTokenCiphertext: sealCalendarValue("fictional-replacement-refresh-token", "calendar_connections:" + actorId + ":refresh", keyring),
+      }));
+      return [primary, secondary];
+    }) });
+    const { service } = makeService(db, google);
+    await service.discover(principal()).catch(() => undefined);
+    const connection = await db.read((handle) => repository.getConnection(handle, actorId));
+    expect(connection?.lastSuccessAt).toBeUndefined();
+  });
+
+  it("does not record a stale provider failure on a replacement authorization", async () => {
+    const db = await openDb();
+    await seedConnection(db);
+    const google = mockGoogle({ listCalendars: vi.fn(async () => {
+      const current = await db.read((handle) => repository.getConnection(handle, actorId));
+      await db.transaction((handle) => repository.replaceConnectionAuthorization(handle, {
+        ...current!,
+        refreshTokenCiphertext: sealCalendarValue("fictional-replacement-refresh-token", "calendar_connections:" + actorId + ":refresh", keyring),
+      }));
+      throw new Error("google_calendar_reauthorization_required");
+    }) });
+    const { service } = makeService(db, google);
+    await expect(service.discover(principal())).rejects.toThrow("calendar_reauthorization_required");
+    const connection = await db.read((handle) => repository.getConnection(handle, actorId));
+    expect(connection).toMatchObject({ state: "available" });
+    expect(connection?.safeReasonCode).toBeUndefined();
   });
 
   it("rejects selection results fetched under credentials replaced while provider discovery was in flight", async () => {
@@ -198,7 +295,7 @@ describe("Calendar selection service", () => {
       return [primary, secondary];
     }) });
     const { service } = makeService(db, google);
-    await service.bootstrapPrimary({ actorId, accessToken: "fictional-access-token", requestId: "request-fictional" });
+    await service.bootstrapPrimary(await bootstrapInput(db));
     const primaryRef = (await service.get(principal())).items[0]!.calendarRef;
     shouldDefer = true;
     const pending = service.update(principal(), {
@@ -227,7 +324,7 @@ describe("Calendar selection service", () => {
     const mutable = { roles: [primary, secondary] as GoogleCalendarRecord[] };
     const google = mockGoogle({ listCalendars: vi.fn(async () => mutable.roles) });
     const { service } = makeService(db, google);
-    await service.bootstrapPrimary({ actorId, accessToken: "fictional-access-token", requestId: "request-fictional" });
+    await service.bootstrapPrimary(await bootstrapInput(db));
     const selected = await service.get(principal());
     const primaryRef = selected.items[0]!.calendarRef;
     mutable.roles = [{ ...primary, accessRole: "reader" as const }, secondary];
@@ -287,7 +384,7 @@ describe("Calendar selection service", () => {
     await seedConnection(db);
     const google = mockGoogle({ listCalendars: vi.fn(async () => [{ ...primary, accessRole: "reader" as const }]) });
     const { service } = makeService(db, google);
-    await expect(service.bootstrapPrimary({ actorId, accessToken: "fictional-access-token", requestId: "request-fictional" }))
+    await expect(service.bootstrapPrimary(await bootstrapInput(db)))
       .rejects.toThrow("calendar_primary_unavailable");
     expect(await db.read((handle) => repository.listCalendars(handle, actorId))).toEqual([]);
     expect(await auditCount(db)).toBe(0);
@@ -301,7 +398,7 @@ describe("Calendar selection service", () => {
     await seedConnection(db);
     const google = mockGoogle({ listCalendars: vi.fn(async () => calendars) });
     const { service } = makeService(db, google);
-    await expect(service.bootstrapPrimary({ actorId, accessToken: "fictional-access-token", requestId: "request-fictional" }))
+    await expect(service.bootstrapPrimary(await bootstrapInput(db)))
       .rejects.toThrow("calendar_primary_unavailable");
     expect(await db.read((handle) => repository.listCalendars(handle, actorId))).toEqual([]);
     expect(await auditCount(db)).toBe(0);
@@ -312,7 +409,7 @@ describe("Calendar selection service", () => {
     await seedConnection(db);
     await seedConnection(db, centralActorId);
     const { service } = makeService(db);
-    await service.bootstrapPrimary({ actorId, accessToken: "fictional-access-token", requestId: "request-fictional" });
+    await service.bootstrapPrimary(await bootstrapInput(db));
     await expect(service.update({ ...principal(), actorId: centralActorId }, {
       expectedVersion: 1, calendars: [{ calendarRef: "cal_" + randomUUID(), readEnabled: true, writeEnabled: false }],
     })).rejects.toThrow("calendar_not_found");
