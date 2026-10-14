@@ -3,12 +3,14 @@
 import { useId, useRef, useState } from "react";
 import type { Conversation } from "@personal-intelligence-hub/contracts";
 
+import { UserFacingError } from "./user-facing-error";
+
 type AsyncAction = () => Promise<void>;
 type ConversationAction = (id: string) => Promise<void>;
 
 export function ThreadSelector({
   items, selectedId, onSelect, onCreate, onRename, onArchive, onRestore, loading,
-  onLoadMore, hasMore = false, loadingMore = false,
+  onLoadMore, hasMore = false, loadingMore = false, createDisabledReason,
 }: Readonly<{
   items: readonly Conversation[];
   selectedId: string | null;
@@ -21,6 +23,8 @@ export function ThreadSelector({
   onLoadMore?: AsyncAction;
   hasMore?: boolean;
   loadingMore?: boolean;
+  /** When set, creation is unavailable; the reason is shown and linked to the (still focusable) button. */
+  createDisabledReason?: string | undefined;
 }>) {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -29,13 +33,14 @@ export function ThreadSelector({
   const titleInput = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const titleId = useId();
+  const createHelpId = useId();
 
   const run = async (id: string, operation: () => Promise<void>) => {
     setError(null);
     setBusyId(id);
     try { await operation(); }
     catch (cause) {
-      setError(cause instanceof Error && cause.message.startsWith("La selección se actualizó en otro lugar.")
+      setError(cause instanceof UserFacingError
         ? cause.message
         : "No se pudo guardar el cambio. La selección o conversación pudo cambiar en otro lugar.");
     }
@@ -70,8 +75,12 @@ export function ThreadSelector({
     <section className="thread-selector" aria-label="Conversaciones">
       <div className="thread-selector__header">
         <div><p className="eyebrow">Hilos guardados</p><h2>Conversaciones</h2></div>
-        <button className="button button--quiet" type="button" onClick={() => void run("create", onCreate)} disabled={busyId !== null || loading}>Nueva conversación</button>
+        <button className="button button--quiet" type="button" aria-disabled={createDisabledReason === undefined ? undefined : true}
+          aria-describedby={createDisabledReason === undefined ? undefined : createHelpId}
+          onClick={() => { if (createDisabledReason === undefined) void run("create", onCreate); }}
+          disabled={createDisabledReason === undefined && (busyId !== null || loading)}>Nueva conversación</button>
       </div>
+      {createDisabledReason === undefined ? null : <p id={createHelpId} className="thread-selector__hint">{createDisabledReason}</p>}
       {error === null ? null : <p role="alert" className="thread-selector__error">{error}</p>}
       {loading && items.length === 0 ? <p role="status">Cargando conversaciones…</p> : items.length === 0 ? (
         <p className="thread-selector__empty">Todavía no hay conversaciones guardadas.</p>

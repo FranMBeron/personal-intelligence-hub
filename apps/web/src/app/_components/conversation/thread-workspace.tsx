@@ -6,6 +6,7 @@ import { type Conversation as ConversationRecord, type ConversationSelection, ty
 import { ConversationClient, ConversationClientError } from "./conversation-client";
 import { Conversation } from "./conversation";
 import { ThreadSelector } from "./thread-selector";
+import { UserFacingError } from "./user-facing-error";
 
 const pageLimit = 50;
 const staleAgentMessage = "Cambiaste de agente antes de terminar; el mensaje no se envió.";
@@ -26,6 +27,7 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [listFailed, setListFailed] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor] = useState<ConversationList["pageInfo"]["nextCursor"]>(null);
@@ -76,14 +78,14 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
     const controller = new AbortController();
     agentGeneration.current += 1;
     setLoadedAgentId(agentId);
-    setLoading(true); setError(null); setItems([]); setSelectedId(null); setSelection(null); setCursor(null); cursorRef.current = null; setHasMore(false);
+    setLoading(true); setError(null); setListFailed(false); setItems([]); setSelectedId(null); setSelection(null); setCursor(null); cursorRef.current = null; setHasMore(false);
     void Promise.all([loadLists(controller.signal), readSelection(controller.signal)]).then(([, persisted]) => {
       if (controller.signal.aborted) return;
       if (persisted.agentId !== agentId) throw new Error("Selection belongs to another agent.");
       setSelection(persisted); setSelectedId(persisted.conversationId); setLoading(false);
     }).catch(() => {
       if (controller.signal.aborted) return;
-      setError("No se pudieron cargar las conversaciones guardadas."); setLoading(false);
+      setError("No se pudieron cargar las conversaciones guardadas."); setListFailed(true); setLoading(false);
     });
     return () => { controller.abort(); listGeneration.current += 1; };
   }, [agentId, loadLists, readSelection]);
@@ -102,7 +104,7 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
         try { await reloadPersistedSelection(isCurrent); } catch { /* keep the explicit conflict notice below */ }
         if (!isCurrent()) return null;
         setError(selectionConflictMessage);
-        throw new Error(selectionConflictMessage);
+        throw new UserFacingError(selectionConflictMessage);
       }
       throw cause;
     }
@@ -116,9 +118,9 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
   const persistSelection = useCallback(async (conversation: ConversationRecord, isCurrent: () => boolean) => {
     if (conversation.agentId !== agentId) throw new Error("Conversation belongs to another agent.");
     const current = selection ?? await readSelection();
-    if (!isCurrent()) throw new Error(staleAgentMessage);
+    if (!isCurrent()) throw new UserFacingError(staleAgentMessage);
     const next = await writeSelection(isCurrent, conversation.id, current.version);
-    if (next === null) throw new Error(staleAgentMessage);
+    if (next === null) throw new UserFacingError(staleAgentMessage);
     setItems((previous) => [conversation, ...previous.filter((item) => item.id !== conversation.id)]);
     return conversation;
   }, [agentId, readSelection, selection, writeSelection]);
@@ -126,7 +128,7 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
   const resolveMainForSend = useCallback(async () => {
     const isCurrent = captureAgent();
     const main = await client.mainConversation(agentId);
-    if (!isCurrent()) throw new Error(staleAgentMessage);
+    if (!isCurrent()) throw new UserFacingError(staleAgentMessage);
     return persistSelection(main, isCurrent);
   }, [agentId, captureAgent, client, persistSelection]);
 
@@ -150,7 +152,7 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
   const archiveThread = useCallback((id: string) => mutateThread(id, async (item) => {
     if (selectedId === id) {
       const main = items.find((candidate) => candidate.isMain && !candidate.archived);
-      if (main === undefined) throw new Error("Cambia la conversación activa antes de archivarla.");
+      if (main === undefined) throw new UserFacingError("Cambia la conversación activa antes de archivarla.");
       await selectThread(main.id);
     }
     return client.archiveConversation(id, { archived: true, expectedVersion: item.version });
@@ -176,7 +178,8 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
         {!isCurrentAgent || selectedId === null ? null : <p className="thread-workspace__current">Hilo activo</p>}
       </header>
       {!isCurrentAgent || error === null ? null : <p role="status" className="thread-workspace__error">{error}</p>}
-      {selectorOpen ? <ThreadSelector items={isCurrentAgent ? items : []} selectedId={isCurrentAgent ? selectedId : null} loading={loading || !isCurrentAgent} onSelect={selectThread} onCreate={createThread} onRename={renameThread} onArchive={archiveThread} onRestore={restoreThread} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore} /> : null}
+      {selectorOpen ? <ThreadSelector items={isCurrentAgent ? items : []} selectedId={isCurrentAgent ? selectedId : null} loading={loading || !isCurrentAgent} onSelect={selectThread} onCreate={createThread} onRename={renameThread} onArchive={archiveThread} onRestore={restoreThread} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore}
+        createDisabledReason={isCurrentAgent && listFailed ? "No se pueden crear conversaciones hasta que se cargue la lista. Recarga la página para intentarlo de nuevo." : undefined} /> : null}
       {isCurrentAgent && selectedId === null && !loading ? <p className="thread-workspace__empty">Escribe un mensaje para abrir la conversación principal de {agentName}.</p> : null}
       {capabilities === null ? <p role="status">La conversación con {agentName} no está disponible ahora.</p> : <Conversation key={agentId} conversationId={isCurrentAgent ? selectedId : null} agentName={agentName} capabilities={capabilities} onResolveMain={resolveMainForSend} canSend={isCurrentAgent && !loading} client={client} />}
     </section>

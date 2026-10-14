@@ -255,6 +255,40 @@ describe("ThreadWorkspace", () => {
     expect(screen.getByRole("button", { name: "Seleccionar Planning main" }).getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("preserves the specific archive guidance when the active thread cannot fall back to main", async () => {
+    const extra = conversationFixture({ id: "extra-thread", agentId: "research", isMain: false, title: "Ideas" });
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/conversation-selection")) return Response.json(selectionFixture({ agentId: "research", conversationId: extra.id, version: 1 }));
+      if (path.includes("/conversations?agentId=research")) return Response.json({ items: path.includes("archived=true") ? [] : [extra], pageInfo: emptyList.pageInfo });
+      if (path.includes("/messages?limit=50")) return Response.json(history);
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Archivar Ideas" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("Cambia la conversación activa antes de archivarla.");
+  });
+
+  it("disables thread creation with a visible explanation when the list failed to load", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith("/conversation-selection")) return Response.json(selectionFixture({ agentId: "research", conversationId: null, version: 0 }));
+      if (path.includes("/conversations?agentId=research")) return Response.json({ detail: "unavailable" }, { status: 503 });
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    await screen.findByText("No se pudieron cargar las conversaciones guardadas.");
+    const create = screen.getByRole("button", { name: "Nueva conversación" });
+    expect(create.getAttribute("aria-disabled")).toBe("true");
+    const help = document.getElementById(create.getAttribute("aria-describedby") ?? "");
+    expect(help?.textContent).toMatch(/no se pueden crear conversaciones/iu);
+    fireEvent.click(create);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
   it("isolates and aborts conversation state when switching agents", async () => {
     const research = conversationFixture({ id: "research-main", agentId: "research", isMain: true, title: "Research main" });
     const planning = conversationFixture({ id: "planning-main", agentId: "planning", isMain: true, title: "Planning main" });
