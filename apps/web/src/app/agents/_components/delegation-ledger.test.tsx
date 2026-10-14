@@ -87,6 +87,20 @@ describe("DelegationLedger", () => {
     await waitFor(() => expect(get).toHaveBeenCalledWith("d-central", expect.any(AbortSignal)));
   });
 
+  it("only points aria-controls at a detail region that exists", async () => {
+    const { client } = fakeClient([fromCentral, fromTelegram]);
+    render(<DelegationLedger agentId="coordinator" agentNames={names} client={client} />);
+    const button = await waitFor(() => row("Preparar resumen semanal"));
+    const dangling = () => [...document.querySelectorAll("[aria-controls]")]
+      .map((element) => element.getAttribute("aria-controls")!)
+      .filter((id) => document.getElementById(id) === null);
+    expect(dangling()).toEqual([]);
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-controls")).not.toBeNull();
+    expect(document.getElementById(button.getAttribute("aria-controls")!)).not.toBeNull();
+    expect(dangling()).toEqual([]);
+  });
+
   it("renders no PIH link for a Telegram-origin delegation and does not invent a result", async () => {
     const { client } = fakeClient([fromTelegram]);
     render(<DelegationLedger agentId="coordinator" agentNames={names} client={client} />);

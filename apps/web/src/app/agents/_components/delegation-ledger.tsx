@@ -145,7 +145,7 @@ export function DelegationLedger({
                   className="delegation-ledger__row"
                   type="button"
                   aria-expanded={expanded}
-                  aria-controls={detailId}
+                  aria-controls={expanded ? detailId : undefined}
                   onClick={() => toggle(listed)}
                 >
                   <span className="delegation-ledger__route">
