@@ -255,6 +255,62 @@ describe("ThreadWorkspace", () => {
     expect(screen.getByRole("button", { name: "Seleccionar Planning main" }).getAttribute("aria-pressed")).toBe("true");
   });
 
+  const selectedOtherFetcher = (extra: (path: string, init?: RequestInit) => Promise<Response> | undefined) => {
+    const research = conversationFixture({ id: "research-main", agentId: "research", isMain: true, title: "Research main" });
+    const researchOther = conversationFixture({ id: "research-other", agentId: "research", isMain: false, title: "Research other" });
+    const planning = conversationFixture({ id: "planning-main", agentId: "planning", isMain: true, title: "Planning main" });
+    return vi.fn((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const path = String(input);
+      const agentId = path.includes("/agents/planning/") || path.includes("agentId=planning") ? "planning" : "research";
+      const custom = extra(path, init);
+      if (custom !== undefined) return custom;
+      if (path.endsWith("/conversation-selection")) return Promise.resolve(Response.json(selectionFixture({
+        agentId, conversationId: agentId === "research" ? researchOther.id : planning.id, version: 1,
+      })));
+      if (path.includes("/conversations?agentId=")) return Promise.resolve(Response.json({
+        items: path.includes("archived=true") ? [] : agentId === "research" ? [research, researchOther] : [planning], pageInfo: emptyList.pageInfo,
+      }));
+      if (path.includes("/messages?limit=50")) return Promise.resolve(Response.json(history));
+      return Promise.reject(new Error(`Unexpected request ${path}`));
+    });
+  };
+
+  it("does not send the archive request when the agent changes while switching away from the archived thread", async () => {
+    let releasePut: ((response: Response) => void) | undefined;
+    const fetcher = selectedOtherFetcher((path, init) => path.includes("/agents/research/conversation-selection") && init?.method === "PUT"
+      ? new Promise((resolve) => { releasePut = resolve; })
+      : undefined);
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Archivar Research other" }));
+    await waitFor(() => expect(releasePut).toBeDefined());
+    view.rerender(<ThreadWorkspace agentId="planning" agentName="Planning" capabilities={capabilities} />);
+    await screen.findByRole("button", { name: "Seleccionar Planning main" });
+    releasePut?.(Response.json(selectionFixture({ agentId: "research", conversationId: "research-main", version: 2 })));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetcher.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(false);
+    expect(screen.queryByRole("button", { name: "Restaurar Research other" })).toBeNull();
+  });
+
+  it("does not show a previous agent's late rename failure in the new agent's selector", async () => {
+    let rejectRename: ((response: Response) => void) | undefined;
+    const fetcher = selectedOtherFetcher((path, init) => path.endsWith("/research-other") && init?.method === "PATCH"
+      ? new Promise((resolve) => { rejectRename = resolve; })
+      : undefined);
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(<ThreadWorkspace agentId="research" agentName="Research" capabilities={capabilities} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Renombrar Research other" }));
+    const title = await screen.findByRole("textbox", { name: "Nuevo título para Research other" });
+    fireEvent.change(title, { target: { value: "Otro nombre" } });
+    fireEvent.submit(title.closest("form")!);
+    await waitFor(() => expect(rejectRename).toBeDefined());
+    view.rerender(<ThreadWorkspace agentId="planning" agentName="Planning" capabilities={capabilities} />);
+    await screen.findByRole("button", { name: "Seleccionar Planning main" });
+    rejectRename?.(Response.json({ detail: "conflict" }, { status: 409 }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("preserves the specific archive guidance when the active thread cannot fall back to main", async () => {
     const extra = conversationFixture({ id: "extra-thread", agentId: "research", isMain: false, title: "Ideas" });
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {

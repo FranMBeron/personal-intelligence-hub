@@ -110,10 +110,12 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
     }
   }, [agentId, client, reloadPersistedSelection]);
 
-  const selectThread = useCallback(async (id: string) => {
-    if (!isCurrentAgent || selection === null) return;
-    await writeSelection(captureAgent(), id, selection.version);
-  }, [captureAgent, isCurrentAgent, selection, writeSelection]);
+  // Resolves false when the agent session went stale before (or while) the selection was written.
+  const switchSelection = useCallback(async (id: string, isCurrent: () => boolean): Promise<boolean> => {
+    if (!isCurrentAgent || selection === null || !isCurrent()) return false;
+    return await writeSelection(isCurrent, id, selection.version) !== null;
+  }, [isCurrentAgent, selection, writeSelection]);
+  const selectThread = useCallback(async (id: string) => { await switchSelection(id, captureAgent()); }, [captureAgent, switchSelection]);
 
   const persistSelection = useCallback(async (conversation: ConversationRecord, isCurrent: () => boolean) => {
     if (conversation.agentId !== agentId) throw new Error("Conversation belongs to another agent.");
@@ -142,21 +144,26 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
     await writeSelection(isCurrent, created.id, selection.version);
   }, [agentId, captureAgent, client, isCurrentAgent, selection, writeSelection]);
 
-  const mutateThread = useCallback(async (id: string, patch: (item: ConversationRecord) => Promise<ConversationRecord>) => {
+  // `patch` resolves null to skip the mutation; results and failures from a stale agent session are dropped silently.
+  const mutateThread = useCallback(async (id: string, patch: (item: ConversationRecord, isCurrent: () => boolean) => Promise<ConversationRecord | null>) => {
     const item = items.find((candidate) => candidate.id === id);
     if (item === undefined) return;
-    const updated = await patch(item);
+    const isCurrent = captureAgent();
+    let updated: ConversationRecord | null;
+    try { updated = await patch(item, isCurrent); }
+    catch (cause) { if (!isCurrent()) return; throw cause; }
+    if (updated === null || !isCurrent()) return;
     setItems((previous) => previous.map((candidate) => candidate.id === id ? updated : candidate));
-  }, [items]);
+  }, [captureAgent, items]);
   const renameThread = useCallback((id: string, title: string) => mutateThread(id, (item) => client.renameConversation(id, { title, expectedVersion: item.version })), [client, mutateThread]);
-  const archiveThread = useCallback((id: string) => mutateThread(id, async (item) => {
+  const archiveThread = useCallback((id: string) => mutateThread(id, async (item, isCurrent) => {
     if (selectedId === id) {
       const main = items.find((candidate) => candidate.isMain && !candidate.archived);
       if (main === undefined) throw new UserFacingError("Cambia la conversación activa antes de archivarla.");
-      await selectThread(main.id);
+      if (!await switchSelection(main.id, isCurrent)) return null;
     }
     return client.archiveConversation(id, { archived: true, expectedVersion: item.version });
-  }), [client, items, mutateThread, selectThread, selectedId]);
+  }), [client, items, mutateThread, selectedId, switchSelection]);
   const restoreThread = useCallback((id: string) => mutateThread(id, (item) => client.archiveConversation(id, { archived: false, expectedVersion: item.version })), [client, mutateThread]);
 
   const loadMore = useCallback(async () => {
@@ -178,7 +185,7 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
         {!isCurrentAgent || selectedId === null ? null : <p className="thread-workspace__current">Hilo activo</p>}
       </header>
       {!isCurrentAgent || error === null ? null : <p role="status" className="thread-workspace__error">{error}</p>}
-      {selectorOpen ? <ThreadSelector items={isCurrentAgent ? items : []} selectedId={isCurrentAgent ? selectedId : null} loading={loading || !isCurrentAgent} onSelect={selectThread} onCreate={createThread} onRename={renameThread} onArchive={archiveThread} onRestore={restoreThread} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore}
+      {selectorOpen ? <ThreadSelector key={`selector-${agentId}`} items={isCurrentAgent ? items : []} selectedId={isCurrentAgent ? selectedId : null} loading={loading || !isCurrentAgent} onSelect={selectThread} onCreate={createThread} onRename={renameThread} onArchive={archiveThread} onRestore={restoreThread} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore}
         createDisabledReason={isCurrentAgent && listFailed ? "No se pueden crear conversaciones hasta que se cargue la lista. Recarga la página para intentarlo de nuevo." : undefined} /> : null}
       {isCurrentAgent && selectedId === null && !loading ? <p className="thread-workspace__empty">Escribe un mensaje para abrir la conversación principal de {agentName}.</p> : null}
       {capabilities === null ? <p role="status">La conversación con {agentName} no está disponible ahora.</p> : <Conversation key={agentId} conversationId={isCurrentAgent ? selectedId : null} agentName={agentName} capabilities={capabilities} onResolveMain={resolveMainForSend} canSend={isCurrentAgent && !loading} client={client} />}
