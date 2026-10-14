@@ -15,7 +15,8 @@ import { UserFacingError } from "./user-facing-error";
 const sendErrorMessage = (error: unknown): string => {
   if (error instanceof UserFacingError) return error.message;
   if (error instanceof ConversationClientError) {
-    if (error.status === 401 || error.status === 403) return "Tu sesión no tiene acceso a esta conversación. Vuelve a iniciar sesión.";
+    if (error.status === 401) return "Tu sesión expiró. Vuelve a iniciar sesión.";
+    if (error.status === 403) return "No tienes acceso a esta conversación.";
     if (error.status === 404) return "Esta conversación ya no está disponible.";
     if (error.status === 409) return "El envío entró en conflicto con otro cambio. Revisa la conversación antes de reintentar.";
     if (error.status === 413) return "El mensaje o sus adjuntos superan el tamaño permitido.";

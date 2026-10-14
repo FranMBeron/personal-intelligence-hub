@@ -196,6 +196,21 @@ describe("Conversation", () => {
     expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();
   });
 
+  it.each([
+    [401, "Tu sesión expiró. Vuelve a iniciar sesión."],
+    [403, "No tienes acceso a esta conversación."],
+  ])("explains a %i send failure without conflating expired sessions and missing access", async (status, expected) => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/messages?limit=50")) return Response.json({ items: [], pageInfo: { nextCursor: null, hasNextPage: false }, streamCursor: "0" });
+      if (init?.method === "POST") return Response.json({ detail: "denied" }, { status });
+      throw new Error("Unexpected request");
+    }));
+    render(<Conversation conversationId="conversation-01" agentName="Research" capabilities={capabilities} onResolveMain={async () => { throw new Error("unused"); }} />);
+    fireEvent.change(screen.getByLabelText("Mensaje para Research"), { target: { value: "Hola" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Conversación con Research" }));
+    expect(await screen.findByText(expected, { selector: ".conversation__error" })).toBeTruthy();
+  });
+
   it("retains the draft when validation or send fails", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ detail: "conflict" }, { status: 409 }));
     vi.stubGlobal("fetch", fetcher);
