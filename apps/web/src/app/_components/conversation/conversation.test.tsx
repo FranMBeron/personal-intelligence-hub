@@ -154,6 +154,20 @@ describe("Conversation", () => {
     expect(screen.queryByLabelText("Mensaje para Hermes")).toBeNull();
   });
 
+  it("shows a localized safe message instead of the raw client error when sending fails", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/messages?limit=50")) return Response.json({ items: [], pageInfo: { nextCursor: null, hasNextPage: false }, streamCursor: "0" });
+      if (init?.method === "POST") return Response.json({ detail: "boom" }, { status: 500 });
+      throw new Error("Unexpected request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<Conversation conversationId="conversation-01" agentName="Research" capabilities={capabilities} onResolveMain={async () => { throw new Error("unused"); }} />);
+    fireEvent.change(screen.getByLabelText("Mensaje para Research"), { target: { value: "Hola" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Conversación con Research" }));
+    expect(await screen.findByText("Hermes no pudo procesar el mensaje. Inténtalo de nuevo en unos minutos.")).toBeTruthy();
+    expect(screen.queryByText(/could not be completed/u)).toBeNull();
+  });
+
   it("retains the draft when validation or send fails", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ detail: "conflict" }, { status: 409 }));
     vi.stubGlobal("fetch", fetcher);

@@ -8,8 +8,23 @@ import { useCallback, useEffect, useId, useReducer, useRef, useState } from "rea
 import { SourceState } from "../source-state";
 import { Composer } from "./composer";
 import { subscribeToConversationEvents } from "./event-stream";
-import { ConversationClient } from "./conversation-client";
+import { ConversationClient, ConversationClientError } from "./conversation-client";
 import { conversationReducer, initialConversationState, type ConversationMessage } from "./state";
+import { UserFacingError } from "./user-facing-error";
+
+const sendErrorMessage = (error: unknown): string => {
+  if (error instanceof UserFacingError) return error.message;
+  if (error instanceof ConversationClientError) {
+    if (error.status === 401 || error.status === 403) return "Tu sesión no tiene acceso a esta conversación. Vuelve a iniciar sesión.";
+    if (error.status === 404) return "Esta conversación ya no está disponible.";
+    if (error.status === 409) return "El envío entró en conflicto con otro cambio. Revisa la conversación antes de reintentar.";
+    if (error.status === 413) return "El mensaje o sus adjuntos superan el tamaño permitido.";
+    if (error.status === 429) return "Demasiados envíos seguidos. Espera un momento e inténtalo de nuevo.";
+    if (error.status >= 500) return "Hermes no pudo procesar el mensaje. Inténtalo de nuevo en unos minutos.";
+    return "El mensaje no se pudo validar. Revisa el contenido e inténtalo de nuevo.";
+  }
+  return "No se pudo enviar el mensaje. Revisa tu conexión e inténtalo de nuevo.";
+};
 
 type PendingSend = {
   readonly idempotencyKey: string;
@@ -134,6 +149,7 @@ export function Conversation({
             dispatch({ type: "event.received", event, conversationId, generation: currentGeneration });
           },
           onCursorExpired: () => { expired = true; },
+          onAccessDenied: () => setOperationError("Las actualizaciones en tiempo real se detuvieron porque la sesión no tiene acceso. Vuelve a iniciar sesión."),
           onUnavailable: () => setOperationError("La actualización en tiempo real está intentando reconectar."),
         });
         if (!expired || signal.aborted) return;
@@ -225,7 +241,7 @@ export function Conversation({
       setText(""); setAttachments([]); setVoice(null);
     } catch (error) {
       if (controller.signal.aborted) return;
-      const detail = error instanceof Error ? error.message : "No se pudo enviar el mensaje.";
+      const detail = sendErrorMessage(error);
       setOperationError(detail);
       if (optimistic !== undefined) dispatch({ type: "message.failed", messageId: optimistic.id, detail });
     } finally {
@@ -243,7 +259,7 @@ export function Conversation({
     try { await sendExisting(state.conversationId, message, message.idempotencyKey, controller.signal); }
     catch (error) {
       if (!controller.signal.aborted) {
-        const detail = error instanceof Error ? error.message : "No se pudo reenviar.";
+        const detail = sendErrorMessage(error);
         dispatch({ type: "message.failed", messageId: message.id, detail });
       }
     }

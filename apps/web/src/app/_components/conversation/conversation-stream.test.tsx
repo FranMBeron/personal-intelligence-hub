@@ -72,4 +72,19 @@ describe("Conversation event stream", () => {
     expect(eventCalls).toBe(2);
     expect(screen.queryByText(/intentando reconectar/u)).toBeNull();
   });
+
+  it("shows a stopped state without reconnecting when the stream is denied", async () => {
+    let eventCalls = 0;
+    const fetcher = vi.fn((input: RequestInfo | URL): Promise<Response> => {
+      const path = String(input);
+      if (path.includes("/messages?limit=50")) return Promise.resolve(Response.json({ items: [], pageInfo, streamCursor: "7" }));
+      if (path.endsWith("/events")) { eventCalls += 1; return Promise.resolve(new Response(null, { status: 403 })); }
+      return Promise.reject(new Error(`Unexpected request ${path}`));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<Conversation conversationId="thread-1" capabilities={capabilities} onResolveMain={unused} />);
+    expect(await screen.findByText("Las actualizaciones en tiempo real se detuvieron porque la sesión no tiene acceso. Vuelve a iniciar sesión.")).toBeTruthy();
+    expect(screen.queryByText(/intentando reconectar/u)).toBeNull();
+    expect(eventCalls).toBe(1);
+  });
 });

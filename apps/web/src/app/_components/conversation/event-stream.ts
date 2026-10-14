@@ -5,6 +5,8 @@ type Options = Readonly<{
   signal: AbortSignal;
   onEvent: (event: HermesEvent) => void;
   onUnavailable?: () => void;
+  /** 401/403: the stream stops permanently; falls back to onUnavailable when omitted. */
+  onAccessDenied?: () => void;
   onCursorExpired?: () => void | Promise<void>;
   initialCursor?: string | null;
   fetcher?: typeof fetch;
@@ -80,6 +82,7 @@ export const subscribeToConversationEvents = async ({
   signal,
   onEvent,
   onUnavailable,
+  onAccessDenied,
   onCursorExpired,
   initialCursor,
   fetcher = fetch,
@@ -103,7 +106,7 @@ export const subscribeToConversationEvents = async ({
         return;
       }
       if (response.status === 401 || response.status === 403) {
-        onUnavailable?.();
+        (onAccessDenied ?? onUnavailable)?.();
         return;
       }
       if (!response.ok) throw new Error("Conversation event stream unavailable.");
