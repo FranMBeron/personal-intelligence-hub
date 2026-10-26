@@ -116,9 +116,18 @@ invitation from someone else needs a separate response operation.
 
 If the connector stops after starting a change but before saving the result,
 the next start inspects provider state for those proposals before serving
-any route. It settles each proposal without repeating a change blindly. If
-Google is unreachable, the proposal stays executing, the source reports
-`degraded`, and a human can retry from **Sistema** later.
+any route, within a bounded budget: at most the first 100 executing proposals
+and at most 30 seconds, and it ends early on shutdown. It settles each
+proposal without repeating a change blindly. Proposals it does not reach stay
+executing for the next start or a human retry from **Sistema**. If Google is
+unreachable, the proposal stays executing and the source reports `degraded`
+when Calendar had succeeded earlier, or `unavailable` when it never had; a
+human can retry from **Sistema** later.
+
+Readiness (`/health/ready`) reflects the connector process only: the database,
+migrations, and every module probe answering. Provider and account state, such
+as an unreachable Google or a missing calendar selection, never fails
+readiness; it appears in system status (`/v1/system/status`) and **Sistema**.
 
 ## 5. Disconnect and reauthorization
 
