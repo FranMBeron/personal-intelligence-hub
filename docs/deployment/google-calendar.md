@@ -114,6 +114,14 @@ the event changed in the meantime, the proposal ends in conflict and a new
 proposal is needed. Cancelling applies only to events the owner organizes. An
 invitation from someone else needs a separate response operation.
 
+The confirmation screen shows everything the change sends to Google: every
+guest email (for an update, also which guests are added or removed compared
+with the current event) and the full description as plain text (for an update,
+whether it changes and the new text). Invisible and bidirectional control
+characters are shown as visible code points. Review the recipients before
+confirming: a proposal comes from an agent and may add guests you did not ask
+for.
+
 If the connector stops after starting a change but before saving the result,
 the next start inspects provider state for those proposals before serving
 any route, within a bounded budget: at most the first 100 executing proposals

@@ -142,13 +142,16 @@ describe("Google event mapper", () => {
     expect(serialized).not.toContain("etag");
   });
 
-  it("projects agenda items and previews with attendee counts only", () => {
-    const detail = mapGoogleEvent(event({ location: "Room", attendees: [{ email: "a@example.test" }, { email: "b@example.test" }] }), context)!;
+  it("projects agenda items and previews with every attendee email and the description", () => {
+    const detail = mapGoogleEvent(event({ location: "Room", description: "Fictional agenda", attendees: [{ email: "a@example.test" }, { email: "b@example.test" }, { displayName: "No email" }] }), context)!;
     expect(toAgendaItem(detail)).toEqual({
       eventRef: detail.eventRef, calendarRef: detail.calendarRef, calendarDisplayName: detail.calendarDisplayName,
       title: detail.title, time: detail.time, status: "confirmed", location: "Room",
     });
-    expect(toEventPreview(detail)).toEqual({ title: detail.title, time: detail.time, location: "Room", attendeeCount: 2 });
+    expect(toEventPreview(detail)).toEqual({
+      title: detail.title, time: detail.time, location: "Room", description: "Fictional agenda",
+      attendeeCount: 3, attendeeEmails: ["a@example.test", "b@example.test"],
+    });
   });
 
   it("orders events chronologically with all-day events anchored to local midnight", () => {

@@ -101,7 +101,14 @@ export const CalendarEventPreviewSchema = z.object({
   title: NonEmptyStringSchema.max(500),
   time: CalendarEventTimeSchema,
   location: z.string().max(1_000).optional(),
+  /** Plain text exactly as it will be written (after) or as it currently reads (before). */
+  description: z.string().max(20_000).optional(),
   attendeeCount: z.number().int().min(0),
+  /**
+   * Every guest email the event will be sent to (after) or currently has (before). The human
+   * confirming a change must be able to see each recipient, never only a count.
+   */
+  attendeeEmails: z.array(z.email().max(320)),
 }).strict();
 export type CalendarEventPreview = z.infer<typeof CalendarEventPreviewSchema>;
 
@@ -192,6 +199,12 @@ export const CalendarChangeSummarySchema = z.object({
 }).strict().superRefine((summary, context) => {
   if ((summary.operation === "respond_invitation") !== (summary.invitationResponse !== undefined)) {
     context.addIssue({ code: "custom", path: ["invitationResponse"], message: "Invitation response is required only for respond_invitation." });
+  }
+  if ((summary.operation === "create" || summary.operation === "update") && summary.after === undefined) {
+    context.addIssue({ code: "custom", path: ["after"], message: "Create and update proposals must show the resulting event." });
+  }
+  if (summary.operation !== "create" && summary.before === undefined) {
+    context.addIssue({ code: "custom", path: ["before"], message: "Changes to an existing event must show its current state." });
   }
 });
 export type CalendarChangeSummary = z.infer<typeof CalendarChangeSummarySchema>;

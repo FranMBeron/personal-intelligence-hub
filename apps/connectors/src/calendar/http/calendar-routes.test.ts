@@ -83,7 +83,7 @@ const proposal: CalendarChangeProposal = {
   id: "00000000-0000-4000-8000-000000000001", version: 1, status: "pending",
   summary: {
     operation: "create", calendarDisplayName: "Fictional", timeZone: "UTC", recurrenceScope: "single",
-    organizerRelationship: "self", guestNotification: "none", after: { title: "Fictional meeting", time: timed, attendeeCount: 0 },
+    organizerRelationship: "self", guestNotification: "none", after: { title: "Fictional meeting", time: timed, attendeeCount: 0, attendeeEmails: [] },
   },
   createdAt: NOW, expiresAt: "2026-10-12T12:15:00.000Z",
 };
