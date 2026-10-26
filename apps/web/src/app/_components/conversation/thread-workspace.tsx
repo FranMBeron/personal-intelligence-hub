@@ -11,12 +11,18 @@ import { UserFacingError } from "./user-facing-error";
 const pageLimit = 50;
 const staleAgentMessage = "Cambiaste de agente antes de terminar; el mensaje no se envió.";
 const selectionConflictMessage = "La selección se actualizó en otro lugar. Se cargó el valor más reciente; vuelve a elegir la conversación.";
+const requestedUnavailableMessage = "La conversación solicitada no está disponible. Se muestra tu conversación activa.";
 
-export function ThreadWorkspace({ agentId, agentName, capabilities, client: suppliedClient }: Readonly<{
+export function ThreadWorkspace({ agentId, agentName, capabilities, client: suppliedClient, requestedConversationId = null }: Readonly<{
   agentId: string;
   agentName: string;
   capabilities: HermesCapabilities | null;
   client?: ConversationClient;
+  /**
+   * A thread named by a link (for example a delegation's source thread). It is shown without changing the
+   * persisted selection; only an explicit "use as active" action writes it.
+   */
+  requestedConversationId?: string | null;
 }>) {
   const client = useRef(suppliedClient ?? new ConversationClient()).current;
   const [loadedAgentId, setLoadedAgentId] = useState(agentId);
@@ -29,6 +35,7 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
   const [error, setError] = useState<string | null>(null);
   const [listFailed, setListFailed] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(true);
+  const [viewingRequested, setViewingRequested] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor] = useState<ConversationList["pageInfo"]["nextCursor"]>(null);
   const cursorRef = useRef<ConversationList["pageInfo"]["nextCursor"]>(null);
@@ -78,17 +85,30 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
     const controller = new AbortController();
     agentGeneration.current += 1;
     setLoadedAgentId(agentId);
-    setLoading(true); setError(null); setListFailed(false); setItems([]); setSelectedId(null); setSelection(null); setCursor(null); cursorRef.current = null; setHasMore(false);
-    void Promise.all([loadLists(controller.signal), readSelection(controller.signal)]).then(([, persisted]) => {
+    setLoading(true); setError(null); setListFailed(false); setItems([]); setSelectedId(null); setSelection(null); setCursor(null); cursorRef.current = null; setHasMore(false); setViewingRequested(null);
+    void Promise.all([loadLists(controller.signal), readSelection(controller.signal)]).then(async ([, persisted]) => {
       if (controller.signal.aborted) return;
       if (persisted.agentId !== agentId) throw new Error("Selection belongs to another agent.");
-      setSelection(persisted); setSelectedId(persisted.conversationId); setLoading(false);
+      setSelection(persisted); setSelectedId(persisted.conversationId);
+      if (requestedConversationId !== null && requestedConversationId !== persisted.conversationId) {
+        // Read-only lookup: the requested thread is shown only when it belongs to this agent; nothing is written.
+        const requested = await client.getConversation(requestedConversationId, controller.signal).catch(() => null);
+        if (controller.signal.aborted) return;
+        if (requested !== null && requested.agentId === agentId) {
+          setItems((previous) => previous.some((item) => item.id === requested.id) ? previous : [requested, ...previous]);
+          setSelectedId(requested.id);
+          setViewingRequested(requested.id);
+        } else {
+          setError(requestedUnavailableMessage);
+        }
+      }
+      setLoading(false);
     }).catch(() => {
       if (controller.signal.aborted) return;
       setError("No se pudieron cargar las conversaciones guardadas."); setListFailed(true); setLoading(false);
     });
     return () => { controller.abort(); listGeneration.current += 1; };
-  }, [agentId, loadLists, readSelection]);
+  }, [agentId, client, loadLists, readSelection, requestedConversationId]);
 
   // Applies a selection write only while the agent session that issued it is still current.
   const writeSelection = useCallback(async (isCurrent: () => boolean, conversationId: string, expectedVersion: number) => {
@@ -96,7 +116,7 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
       const next = await client.selectConversation(agentId, { conversationId, expectedVersion });
       if (!isCurrent()) return null;
       if (next.agentId !== agentId) throw new Error("Selection belongs to another agent.");
-      setSelection(next); setSelectedId(next.conversationId); setError(null);
+      setSelection(next); setSelectedId(next.conversationId); setError(null); setViewingRequested(null);
       return next;
     } catch (cause) {
       if (!isCurrent()) return null;
@@ -182,9 +202,15 @@ export function ThreadWorkspace({ agentId, agentName, capabilities, client: supp
       <header className="thread-workspace__header">
         <h2>{agentName}</h2>
         <button ref={toggleRef} className="button button--quiet" type="button" onClick={toggleSelector} aria-expanded={selectorOpen}>{selectorOpen ? "Cerrar selector" : "Abrir selector de conversaciones"}</button>
-        {!isCurrentAgent || selectedId === null ? null : <p className="thread-workspace__current">Hilo activo</p>}
+        {!isCurrentAgent || selectedId === null || viewingRequested !== null ? null : <p className="thread-workspace__current">Hilo activo</p>}
       </header>
       {!isCurrentAgent || error === null ? null : <p role="status" className="thread-workspace__error">{error}</p>}
+      {!isCurrentAgent || viewingRequested === null ? null : (
+        <div className="thread-workspace__notice">
+          <p>Estás viendo una conversación abierta desde un enlace. Tu conversación activa no cambió.</p>
+          <button className="button button--quiet" type="button" onClick={() => { void selectThread(viewingRequested).catch((cause: unknown) => setError(cause instanceof UserFacingError ? cause.message : "No se pudo cambiar la conversación activa.")); }}>Usar como conversación activa</button>
+        </div>
+      )}
       {selectorOpen ? <ThreadSelector key={`selector-${agentId}`} items={isCurrentAgent ? items : []} selectedId={isCurrentAgent ? selectedId : null} loading={loading || !isCurrentAgent} onSelect={selectThread} onCreate={createThread} onRename={renameThread} onArchive={archiveThread} onRestore={restoreThread} hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore}
         createDisabledReason={isCurrentAgent && listFailed ? "No se pueden crear conversaciones hasta que se cargue la lista. Recarga la página para intentarlo de nuevo." : undefined} /> : null}
       {isCurrentAgent && selectedId === null && !loading ? <p className="thread-workspace__empty">Escribe un mensaje para abrir la conversación principal de {agentName}.</p> : null}

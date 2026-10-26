@@ -14,11 +14,13 @@ export type CentralSourceState = "available" | "unavailable" | "not_configured";
  * Page-neutral Central conversation slot. Every tab mounts this same entry so the thread shown is always
  * the coordinator's server-backed selection; it never allocates or selects a thread while rendering.
  */
-export function CentralEntry({ profile, capabilities, sourceState, client }: Readonly<{
+export function CentralEntry({ profile, capabilities, sourceState, client, requestedConversationId = null }: Readonly<{
   profile: CentralProfile | null;
   capabilities: HermesCapabilities | null;
   sourceState: CentralSourceState;
   client?: ConversationClient;
+  /** Thread named by a link (e.g. `/?conversation=`); shown read-only until the user makes it active. */
+  requestedConversationId?: string | null;
 }>) {
   if (profile === null) {
     return (
@@ -38,7 +40,7 @@ export function CentralEntry({ profile, capabilities, sourceState, client }: Rea
   }
   return (
     <div className="central-entry">
-      <ThreadWorkspace key={profile.id} agentId={profile.id} agentName={profile.displayName} capabilities={capabilities} {...(client === undefined ? {} : { client })} />
+      <ThreadWorkspace key={profile.id} agentId={profile.id} agentName={profile.displayName} capabilities={capabilities} requestedConversationId={requestedConversationId} {...(client === undefined ? {} : { client })} />
     </div>
   );
 }
