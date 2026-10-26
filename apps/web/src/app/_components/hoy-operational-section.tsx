@@ -95,7 +95,7 @@ export function HoyOperationalSection({
             <header className="panel-heading">
               <h3 id="hoy-agenda-title">Agenda de hoy</h3>
             </header>
-            <SourceState compact headingLevel={4} state="error" title="No se pudo leer tu zona horaria" detail="Sin una zona confirmada no podemos saber qué día es para vos; revisala en Sistema." />
+            <SourceState compact headingLevel={4} state="error" title="No se pudo leer tu zona horaria" detail="Sin una zona confirmada no podemos saber qué día es para ti; revísala en Sistema." />
           </section>
         ) : (
           <AgendaPanel result={agenda} now={now} timeZone={zone} />

@@ -38,7 +38,7 @@ export function Composer({ agentName, capabilities, text, submitting, attachment
         <button className="icon-button" type="button" aria-label="Añadir voz" disabled={!capabilities.voice.enabled} aria-describedby={!capabilities.voice.enabled ? "voice-unavailable" : undefined} onClick={() => voiceInput.current?.click()}><Icon name="microphone" /></button>
       </div>
       <label className="sr-only" htmlFor={messageId}>Mensaje para {agentName}</label>
-      <textarea id={messageId} name="message" placeholder="¿Qué querés hacer?" rows={1} value={text} onChange={(event) => onTextChange(event.target.value)} />
+      <textarea id={messageId} name="message" placeholder="¿Qué quieres hacer?" rows={1} value={text} onChange={(event) => onTextChange(event.target.value)} />
       <button className="button composer__send" type="submit" disabled={!canSubmit || submitting || submitDisabled}>{submitting ? "Enviando…" : "Enviar"}<Icon name="send" /></button>
       {!capabilities.attachments.enabled ? <p className="capability-note" id="attachment-unavailable">Hermes no admite adjuntos en esta instalación.</p> : null}
       {!capabilities.voice.enabled ? <p className="capability-note" id="voice-unavailable">Hermes no admite voz en esta instalación.</p> : null}

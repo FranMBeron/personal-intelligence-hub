@@ -132,7 +132,9 @@ describe("HomePage", () => {
     expect(operational.getByText("No hay eventos hoy")).toBeTruthy();
     expect(agendaCalls).toEqual([{ timeZone: "Asia/Tokyo", from: "2026-10-12T15:00:00.000Z", to: "2026-10-13T15:00:00.000Z" }]);
     expect(container.querySelector(".day-grid")).not.toBeNull();
-    expect(container.textContent).not.toMatch(/Etapa 5|todavía sin conectar|No tenés|Pedile/u);
+    expect(container.textContent).not.toMatch(/Etapa 5|todavía sin conectar|No tenés|Pedile|para vos|revisala/u);
+    expect(container.innerHTML).not.toMatch(/querés/u);
+    expect(screen.getByPlaceholderText("¿Qué quieres hacer?")).toBeTruthy();
   });
 
   it("mounts the configured Central entry and performs no mutation while rendering", async () => {
@@ -176,6 +178,7 @@ describe("HomePage", () => {
     configure({ preferences: null });
     await renderPage();
     expect(screen.getByText("No se pudo leer tu zona horaria")).toBeTruthy();
+    expect(screen.getByText(/qué día es para ti; revísala en Sistema/u)).toBeTruthy();
     expect(agendaCalls).toEqual([]);
   });
 
