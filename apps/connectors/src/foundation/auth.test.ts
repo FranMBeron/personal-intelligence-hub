@@ -563,6 +563,9 @@ describe("connector authentication", () => {
     const blocked = await app.inject({ method: "GET", url: "/health/ready" });
 
     expect(blocked.statusCode).toBe(429);
+    expect(blocked.headers["content-type"]).toContain("application/problem+json");
+    expect(blocked.json()).toMatchObject({ code: "rate_limit_exceeded", status: 429 });
+    expect(Object.keys(blocked.headers).filter((name) => /ratelimit|retry-after/u.test(name))).toEqual([]);
     expect(
       (await app.inject({ method: "GET", url: "/health/live" })).statusCode,
     ).toBe(200);

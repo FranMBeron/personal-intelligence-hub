@@ -4,6 +4,7 @@ import {
   type ConnectorServiceId,
   type DelegatedPrincipal,
 } from "@personal-intelligence-hub/contracts";
+import rateLimit from "@fastify/rate-limit";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { decodeJwt, jwtVerify } from "jose";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -380,7 +381,6 @@ export const installConnectorAuthentication = (
     MAX_CREDENTIAL_BUCKETS,
     "credentialBucketCapacity",
   );
-  const processWideBucket: FixedWindow = { count: 0, resetAt: 0 };
   const credentialBuckets = new CredentialBucketLru(credentialBucketCapacity);
   const hmacKey = randomBytes(32);
 
@@ -396,15 +396,40 @@ export const installConnectorAuthentication = (
     hmacKey.fill(0);
   });
 
+  // Process-wide pre-authentication budget. A Unix socket peer has no address, and identity
+  // headers are untrusted before authentication, so every request shares one constant key.
+  void app.register(rateLimit, {
+    global: false,
+    max: processWideMax,
+    timeWindow: timeWindowMs,
+    keyGenerator: () => "connectors-process",
+    allowList: (request) => requestPath(request) === "/health/live",
+    // Responses keep their existing shape: no limiter headers on success or on 429.
+    addHeaders: {
+      "x-ratelimit-limit": false,
+      "x-ratelimit-remaining": false,
+      "x-ratelimit-reset": false,
+      "retry-after": false,
+    },
+    addHeadersOnExceeding: {
+      "x-ratelimit-limit": false,
+      "x-ratelimit-remaining": false,
+      "x-ratelimit-reset": false,
+    },
+    errorResponseBuilder: () => rateLimitExceeded(),
+  });
+
+  // Resolve the decorated limiter on requests, after plugin initialization. A parent hook
+  // runs before authentication; the plugin's automatic route hooks would run after it.
+  app.addHook("onRequest", async (request, reply) => {
+    const limitRequest = app.rateLimit();
+    await limitRequest.call(app, request, reply);
+  });
+
+  // Per-credential budget: an invalid or unknown token cannot exhaust a valid service's window.
   app.addHook("onRequest", async (request) => {
     if (requestPath(request) === "/health/live") return;
     const now = Date.now();
-    const processAllowed = consumeWindow(
-      processWideBucket,
-      processWideMax,
-      timeWindowMs,
-      now,
-    );
     const bucketKey = credentialBucketKey(
       request,
       config.serviceCredentials,
@@ -416,7 +441,7 @@ export const installConnectorAuthentication = (
       timeWindowMs,
       now,
     );
-    if (!processAllowed || !credentialAllowed) throw rateLimitExceeded();
+    if (!credentialAllowed) throw rateLimitExceeded();
   });
 
   app.addHook("onRequest", async (request) => {
