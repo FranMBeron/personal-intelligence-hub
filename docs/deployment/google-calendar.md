@@ -132,6 +132,13 @@ unreachable, the proposal stays executing and the source reports `degraded`
 when Calendar had succeeded earlier, or `unavailable` when it never had; a
 human can retry from **Sistema** later.
 
+While any proposal is executing, disconnecting or reconnecting Calendar is
+refused with `409 conflict` before anything is revoked or deleted, so a change
+that may already have reached Google keeps its proposal and audit record. Wait
+until it settles (or retry it from **Sistema**), then disconnect or reconnect.
+If a proposal starts executing while a reconnect is exchanging its code, the
+reconnect fails and the newly issued Google token is revoked.
+
 Readiness (`/health/ready`) reflects the connector process only: the database,
 migrations, and every module probe answering. Provider and account state, such
 as an unreachable Google or a missing calendar selection, never fails

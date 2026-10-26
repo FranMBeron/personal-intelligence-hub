@@ -400,6 +400,7 @@ describe("Calendar connector routes: problem mapping", () => {
     ["calendar_reauthorization_required", 409, "conflict"],
     ["calendar_primary_unavailable", 409, "conflict"],
     ["calendar_oauth_refresh_token_missing", 409, "conflict"],
+    ["calendar_proposal_executing", 409, "conflict"],
     ["calendar_proposal_transition_conflict", 409, "conflict"],
     ["calendar_proposal_detached", 409, "conflict"],
     ["calendar_event_reference_not_found", 409, "conflict"],
