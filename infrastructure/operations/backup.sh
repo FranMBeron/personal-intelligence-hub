@@ -2,6 +2,37 @@
 set -eu
 umask 077
 
+usage() {
+  echo "Usage: $0 [--connectors-snapshot <staging-directory> --context-tag pre-activation-<40-character-git-sha>]" >&2
+  exit 64
+}
+
+connectors_snapshot=
+context_tag=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --connectors-snapshot)
+      [ "$#" -ge 2 ] && [ -z "$connectors_snapshot" ] && [ -n "$2" ] || usage
+      connectors_snapshot=$2
+      shift 2
+      ;;
+    --context-tag)
+      [ "$#" -ge 2 ] && [ -z "$context_tag" ] && [ -n "$2" ] || usage
+      context_tag=$2
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+if [ -n "$connectors_snapshot" ] && [ -z "$context_tag" ]; then usage; fi
+if [ -z "$connectors_snapshot" ] && [ -n "$context_tag" ]; then usage; fi
+if [ -n "$context_tag" ]; then
+  context_sha=${context_tag#pre-activation-}
+  case "$context_tag" in pre-activation-*) ;; *) usage ;; esac
+  case "$context_sha" in *[!0-9a-f]*|'') usage ;; esac
+  [ "${#context_sha}" -eq 40 ] || usage
+fi
+
 pih_root=${PIH_ROOT:-/srv/personal-intelligence-hub}
 compose_project=${PIH_COMPOSE_PROJECT:-personal-intelligence-hub}
 backup_root="$pih_root/backups"
@@ -27,8 +58,66 @@ if ! flock -n 9; then
   exit 75
 fi
 
+# A connectors snapshot is accepted only from the root-owned staging area that
+# the release scripts create, as a real directory holding exactly the verified
+# Foundation database/manifest pair.
+if [ -n "$connectors_snapshot" ]; then
+  connectors_staging_root="$backup_root/connectors-staging"
+  case "$connectors_snapshot" in
+    "$connectors_staging_root"/*/*) ;;
+    *) echo "Connectors snapshot must be below the connectors staging root." >&2; exit 1 ;;
+  esac
+  case "$connectors_snapshot" in
+    *//*|*/./*|*/../*|*/.|*/..|*/) echo "Connectors snapshot path must be normalized." >&2; exit 1 ;;
+  esac
+  if [ ! -d "$connectors_snapshot" ] || [ -L "$connectors_snapshot" ] || \
+    [ "$(readlink -f "$connectors_snapshot")" != "$connectors_snapshot" ] || \
+    [ "$(readlink -f "$connectors_staging_root")" != "$connectors_staging_root" ]; then
+    echo "Connectors snapshot must be a real directory without symbolic links." >&2
+    exit 1
+  fi
+  if [ "$(stat -c '%u:%a' "$connectors_snapshot")" != "$(id -u):700" ]; then
+    echo "Connectors snapshot directory must be owned by the backup user with mode 0700." >&2
+    exit 1
+  fi
+  snapshot_entries=$(find "$connectors_snapshot" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')
+  if [ "$snapshot_entries" != "connectors.sqlite manifest.json " ]; then
+    echo "Connectors snapshot must contain exactly the database and manifest." >&2
+    exit 1
+  fi
+  for snapshot_file in connectors.sqlite manifest.json; do
+    if [ ! -f "$connectors_snapshot/$snapshot_file" ] || [ -L "$connectors_snapshot/$snapshot_file" ]; then
+      echo "Connectors snapshot files must be regular files." >&2
+      exit 1
+    fi
+  done
+  expected_database_sha=$(jq -er '.databaseSha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' \
+    "$connectors_snapshot/manifest.json") || {
+    echo "Connectors snapshot manifest is invalid." >&2
+    exit 1
+  }
+  if [ "$(sha256sum "$connectors_snapshot/connectors.sqlite" | awk '{print $1}')" != "$expected_database_sha" ]; then
+    echo "Connectors snapshot database does not match its manifest." >&2
+    exit 1
+  fi
+fi
+
 staging_directory=$(mktemp -d "$backup_root/staging.XXXXXX")
-trap 'rm -rf "$staging_directory"' EXIT HUP INT TERM
+trap 'rm -rf "$staging_directory"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [ -n "$connectors_snapshot" ]; then
+  mkdir -m 0700 "$staging_directory/pih-connectors-snapshot"
+  for snapshot_file in connectors.sqlite manifest.json; do
+    cp "$connectors_snapshot/$snapshot_file" "$staging_directory/pih-connectors-snapshot/$snapshot_file"
+    cmp -s "$connectors_snapshot/$snapshot_file" "$staging_directory/pih-connectors-snapshot/$snapshot_file" || {
+      echo "Connectors snapshot copy verification failed." >&2
+      exit 1
+    }
+  done
+fi
 
 compose() {
   docker compose \
@@ -87,9 +176,16 @@ if [ -f "$include_file" ]; then
 fi
 
 RESTIC_BIN="$restic_bin" "$script_directory/restic-lock-guard.sh" --repair
-restic backup "$staging_directory" \
-  --tag personal-intelligence-hub \
-  --tag "$release_sha"
+if [ -n "$context_tag" ]; then
+  restic backup "$staging_directory" \
+    --tag personal-intelligence-hub \
+    --tag "$release_sha" \
+    --tag "$context_tag"
+else
+  restic backup "$staging_directory" \
+    --tag personal-intelligence-hub \
+    --tag "$release_sha"
+fi
 
 # Retention is part of backup success: a snapshot followed by failed retention
 # must leave this service failed so its OnFailure alert fires.
@@ -103,4 +199,14 @@ restic check
 restic snapshots --latest 1 --tag personal-intelligence-hub --json \
   > "$backup_root/last-successful-snapshot.json"
 
+if [ -n "$context_tag" ]; then
+  restic snapshots --tag "$context_tag" --json > "$staging_directory/context-snapshots.json"
+  context_snapshot_id=$(jq -er \
+    'if length == 1 then .[0].id else error("ambiguous context snapshot") end | select(type == "string" and test("^[0-9a-f]{64}$"))' \
+    "$staging_directory/context-snapshots.json") || {
+    echo "Exactly one verified snapshot must carry the context tag." >&2
+    exit 1
+  }
+  echo "connectors-snapshot-id=$context_snapshot_id"
+fi
 echo "Personal Intelligence Hub backup and retention completed for $release_sha."

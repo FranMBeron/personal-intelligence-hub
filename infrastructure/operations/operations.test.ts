@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { assertDeployBaseline, assertRollbackBaseline } from "./check-connectors-migration-baseline.mjs";
+import { candidateSha, createReleaseFixture, oldSha } from "./release-fixture.js";
 
 const exec = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
@@ -285,119 +286,13 @@ describe("connectors recovery", () => {
     { previous: "enabled active", expectedReadinessChecks: "1", hasPreviousRuntime: true, failRestoreLink: true, failPointerUpdate: false },
     { previous: "enabled active", expectedReadinessChecks: "2", hasPreviousRuntime: true, failRestoreLink: false, failPointerUpdate: true },
   ])("restores connector symlink and exact systemd state without touching web when readiness fails ($previous)", async ({ previous, expectedReadinessChecks, hasPreviousRuntime, hasProviderMigrations = false, failRestoreLink, failPointerUpdate }) => {
-    const root = await mkdtemp(join(tmpdir(), "pih-connectors-deploy-failure-"));
-    temporaryDirectories.push(root);
-    const sha = "c".repeat(40);
-    const oldSha = "d".repeat(40);
-    const release = join(root, "releases", sha);
-    const oldRelease = join(root, "releases", oldSha);
-    const connectorsRoot = join(root, "host-connectors");
-    const runtime = join(connectorsRoot, "releases", sha);
-    const previousRuntime = join(connectorsRoot, "releases", oldSha);
-    const bin = join(root, "bin");
-    const migrationDirectory = join(release, "apps/connectors/src/migrations");
-    const deployerEnvironment = join(root, "secrets/connectors-deployer.env");
-    const systemdState = join(root, "systemd.state");
-    const readinessCount = join(root, "readiness.count");
-    const dockerLog = join(root, "docker.log");
-    const systemdLog = join(root, "systemd.log");
-    const jq = (await exec("sh", ["-c", "command -v jq"])).stdout.trim();
-
-    await mkdir(migrationDirectory, { recursive: true });
-    await mkdir(join(release, "infrastructure/docker"), { recursive: true });
-    await mkdir(join(release, "infrastructure/operations"), { recursive: true });
-    await writeFile(join(release, "infrastructure/operations/check-connectors-readiness.mjs"), "export {};\n");
-    await writeFile(join(release, "infrastructure/operations/check-connectors-migration-baseline.mjs"), "export {};\n");
-    await mkdir(join(oldRelease, "infrastructure/docker"), { recursive: true });
-    await mkdir(join(root, "config/releases"), { recursive: true });
-    await mkdir(join(root, "secrets"), { recursive: true });
-    await mkdir(join(connectorsRoot, "releases"), { recursive: true });
-    await mkdir(previousRuntime, { recursive: true });
-    await mkdir(bin);
-    await writeFile(join(release, "REVISION"), `${sha}\n`);
-    await writeFile(join(release, "infrastructure/docker/compose.production.yaml"), "services: {}\n");
-    for (const name of ["api", "web", "postgres"]) {
-      await writeFile(join(release, `infrastructure/docker/${name}.Dockerfile`), "FROM scratch\n");
-    }
-    await writeFile(join(release, "infrastructure/docker/connectors-build.Dockerfile"), "FROM scratch\n");
-    await writeFile(join(migrationDirectory, "0000_foundation.sql"), "CREATE TABLE fixture(id TEXT);\n");
-    if (hasProviderMigrations) {
-      await writeFile(join(migrationDirectory, "0001_provider.sql"), "CREATE TABLE provider_fixture(id TEXT);\n");
-    }
-    await writeFile(join(oldRelease, "infrastructure/docker/compose.production.yaml"), "services: {}\n");
-    const oldEnvironment = join(root, "config/releases", `${oldSha}.compose.env`);
-    await writeFile(oldEnvironment, "PIH_WEB_PORT=3000\n");
-    await symlink(oldRelease, join(root, "current"));
-    await symlink(oldEnvironment, join(root, "config/current-compose.env"));
-    if (hasPreviousRuntime) await symlink(previousRuntime, join(connectorsRoot, "current"));
-    await writeFile(join(root, "config/compose.env"), "POSTGRES_DB=fixture\nPIH_WEB_PORT=3000\n");
-    await writeFile(deployerEnvironment, [
-      "CONNECTORS_DEPLOYER_SERVICE_TOKEN=fictional-deployer-token-32-bytes-minimum",
-      "CONNECTORS_DEPLOYER_ISSUER=pih-deployer",
-      `CONNECTORS_DEPLOYER_SIGNING_KEY=${Buffer.alloc(32, 7).toString("base64url")}`,
-      "CONNECTORS_DEPLOYER_ACTOR_ID=service:pih-deployer",
-      "",
-    ].join("\n"), { mode: 0o600 });
-    await writeFile(systemdState, `${previous}\n`);
-    await symlink(jq, join(bin, "jq"));
-
-    const commands: Record<string, string> = {
-      docker: `#!/bin/sh
-set -eu
-printf '%s\n' "$*" >> "$DOCKER_LOG"
-if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
-  if [ "\${3:-}" = "--format" ]; then printf 'sha256:fixture-image-id\\n'; exit 0; fi
-  if [ "$#" -eq 3 ]; then exit 1; fi
-  printf '[]\\n'; exit 0
-fi
-case "$1" in
-  build) exit 0 ;;
-  create) printf 'connector-export-container\\n' ;;
-  cp)
-    mkdir -p "$3/dist/src/migrations"
-    cp "$TEST_MIGRATIONS"/*.sql "$3/dist/src/migrations/"
-    : > "$3/dist/src/main.js"
-    ;;
-  rm) exit 0 ;;
-  compose) case " $* " in *" config "*) exit 0 ;; *" up "*) exit 0 ;; esac ;;
-esac
-exit 0
-`,
-      syft: `#!/bin/sh
-for argument do case "$argument" in cyclonedx-json=*) : > "\${argument#*=}" ;; esac; done
-`,
-      grype: "#!/bin/sh\nexit 0\n",
-      curl: "#!/bin/sh\nexit 0\n",
-      node: `#!/bin/sh
-case "$1" in *check-connectors-migration-baseline.mjs) exit 0 ;; esac
-count=0
-[ ! -f "$READINESS_COUNT" ] || count=$(cat "$READINESS_COUNT")
-count=$((count + 1))
-printf '%s\\n' "$count" > "$READINESS_COUNT"
-[ "\${READINESS_FAIL_FIRST:-1}" != 1 ] || [ "$count" -ne 1 ]
-`,
-      systemctl: `#!/bin/sh
-set -eu
-action=$1
-printf '%s\n' "$*" >> "$SYSTEMD_LOG"
-printf 'systemctl %s\n' "$*" >> "$EVENT_LOG"
-set -- $(cat "$SYSTEMD_STATE")
-enabled=$1
-active=$2
-case "$action" in
-  is-enabled) printf '%s\n' "$enabled"; [ "$enabled" = enabled ] ;;
-  is-active) printf '%s\n' "$active"; [ "$active" = active ] ;;
-  enable) enabled=enabled ;;
-  disable) enabled=disabled ;;
-  restart|start) active=active ;;
-  stop) active=inactive ;;
-  *) exit 1 ;;
-esac
-case "$action" in is-enabled|is-active) ;; *) printf '%s %s\n' "$enabled" "$active" > "$SYSTEMD_STATE" ;; esac
-`,
-      chown: "#!/bin/sh\nexit 0\n",
-      chmod: "#!/bin/sh\nexit 0\n",
-      mv: `#!/bin/sh
+    const release = await createReleaseFixture({
+      previousRuntime: hasPreviousRuntime,
+      database: hasPreviousRuntime,
+      systemdState: previous,
+      providerMigration: hasProviderMigrations,
+      extraFakes: {
+        mv: `#!/bin/sh
 case "$*" in
   *".current-restore."*) [ "\${RESTORE_LINK_FAILURE:-0}" != 1 ] || exit 1 ;;
   *".current-compose."*"/current-compose.env")
@@ -409,31 +304,14 @@ case "$*" in
 esac
 exec /usr/bin/mv "$@"
 `,
-      stat: `#!/bin/sh
-if [ "$1" = "-c" ]; then printf '0:600\\n'; else exec /usr/bin/stat "$@"; fi
-`,
-    };
-    for (const [name, contents] of Object.entries(commands)) {
-      await writeFile(join(bin, name), contents, { mode: 0o700 });
-    }
-
-    await expect(exec("sh", [`${operationsRoot}/deploy-release.sh`, sha], {
-      env: {
-        ...process.env,
-        PATH: `${bin}:${process.env.PATH}`,
-        PIH_ROOT: root,
-        PIH_CONNECTORS_ROOT: connectorsRoot,
-        CONNECTORS_DEPLOYER_ENV_FILE: deployerEnvironment,
-        DOCKER_LOG: dockerLog,
-        SYSTEMD_LOG: systemdLog,
-        SYSTEMD_STATE: systemdState,
-        EVENT_LOG: join(root, "events.log"),
-        READINESS_COUNT: readinessCount,
-        TEST_MIGRATIONS: migrationDirectory,
-        RESTORE_LINK_FAILURE: failRestoreLink ? "1" : "0",
-        APP_POINTER_FAILURE: failPointerUpdate ? "1" : "0",
-        READINESS_FAIL_FIRST: failPointerUpdate ? "0" : "1",
       },
+    });
+    temporaryDirectories.push(release.root);
+
+    await expect(release.run("deploy-release.sh", [candidateSha], {
+      RESTORE_LINK_FAILURE: failRestoreLink ? "1" : "0",
+      APP_POINTER_FAILURE: failPointerUpdate ? "1" : "0",
+      READINESS_FAIL_AT: failPointerUpdate ? "" : "1",
     })).rejects.toMatchObject({
       code: 1,
       stderr: failRestoreLink
@@ -444,27 +322,24 @@ if [ "$1" = "-c" ]; then printf '0:600\\n'; else exec /usr/bin/stat "$@"; fi
     });
 
     if (failRestoreLink) {
-      expect(await readlink(join(connectorsRoot, "current"))).toBe(runtime);
+      expect(await readlink(join(release.connectorsRoot, "current"))).toBe(release.candidateRuntime);
     } else if (hasPreviousRuntime) {
-      expect(await readlink(join(connectorsRoot, "current"))).toBe(previousRuntime);
+      expect(await readlink(join(release.connectorsRoot, "current"))).toBe(release.oldRuntime);
     } else {
-      await expect(readlink(join(connectorsRoot, "current"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readlink(join(release.connectorsRoot, "current"))).rejects.toMatchObject({ code: "ENOENT" });
     }
-    expect(await readlink(join(root, "current"))).toBe(oldRelease);
-    expect(await readlink(join(root, "config/current-compose.env"))).toBe(oldEnvironment);
-    expect((await readFile(systemdState, "utf8")).trim()).toBe(
+    expect(await readlink(join(release.root, "current"))).toBe(release.oldRelease);
+    expect(await readlink(join(release.root, "config/current-compose.env")))
+      .toBe(join(release.root, "config/releases", `${oldSha}.compose.env`));
+    expect((await readFile(release.systemdState, "utf8")).trim()).toBe(
       failRestoreLink ? "enabled inactive" : previous,
     );
-    expect((await readFile(readinessCount, "utf8")).trim()).toBe(expectedReadinessChecks);
-    const dockerCalls = await readFile(dockerLog, "utf8");
-    if (failPointerUpdate) {
-      expect(dockerCalls.match(/compose .* up /gu)).toHaveLength(2);
-    } else {
-      expect(dockerCalls).not.toMatch(/compose .* up /u);
-    }
-    const systemdCalls = await readFile(systemdLog, "utf8");
-    expect(systemdCalls).toContain("restart personal-intelligence-hub-connectors.service");
-    expect(systemdCalls).toContain("enable personal-intelligence-hub-connectors.service");
+    expect((await readFile(join(release.root, "readiness.count"), "utf8")).trim()).toBe(expectedReadinessChecks);
+    const events = await release.events();
+    const composeUps = events.filter((line) => /^docker compose .* up /u.test(line));
+    expect(composeUps).toHaveLength(failPointerUpdate ? 2 : 0);
+    expect(events).toContain(`systemctl restart ${candidateSha}`);
+    expect(events).toContain(`systemctl enable ${candidateSha}`);
   });
 });
 

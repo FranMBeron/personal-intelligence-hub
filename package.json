@@ -26,7 +26,7 @@
     "test:compose": "vitest run infrastructure/docker/compose.test.ts",
     "test:ci-policy": "vitest run scripts/ci-policy.test.ts",
     "test:docker-policy": "vitest run infrastructure/docker/hardening.test.ts",
-    "test:operations": "vitest run infrastructure/operations/operations.test.ts",
+    "test:operations": "vitest run infrastructure/operations",
     "test:public-boundary": "vitest run scripts/public-boundary.test.ts",
     "test:public": "vitest run scripts/openapi.test.ts",
     "verify:secrets": "sh scripts/verify-no-secrets.sh",
