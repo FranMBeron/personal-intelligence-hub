@@ -17,7 +17,7 @@
     "@electron-forge/maker-dmg": "8.0.1",
     "@electron-forge/plugin-vite": "8.0.1",
     "@electron-forge/shared-types": "8.0.1",
-    "electron": "44.7.0",
+    "electron": "44.9.1",
     "jsdom": "30.0.1",
     "vite": "8.3.4"
   }
