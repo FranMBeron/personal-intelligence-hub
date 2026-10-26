@@ -79,6 +79,11 @@ const isOversizedBodyError = (error: unknown): boolean =>
   "code" in error &&
   error.code === "FST_ERR_CTP_BODY_TOO_LARGE";
 
+const isUnsupportedMediaTypeError = (error: unknown): boolean =>
+  error instanceof Error &&
+  "code" in error &&
+  error.code === "FST_ERR_CTP_INVALID_MEDIA_TYPE";
+
 export const toConnectorProblem = (
   error: unknown,
   requestId: string,
@@ -86,15 +91,18 @@ export const toConnectorProblem = (
 ): ApiProblem => {
   const invalidJsonBody = isInvalidJsonBodyError(error);
   const oversizedBody = isOversizedBodyError(error);
+  const unsupportedMediaType = isUnsupportedMediaTypeError(error);
   const code: FoundationProblemCode =
     error instanceof ConnectorProblem
       ? error.code
       : oversizedBody
         ? "payload_too_large"
-        : invalidJsonBody
+        : invalidJsonBody || unsupportedMediaType
           ? "validation_failed"
           : "internal_error";
-  const status = error instanceof ConnectorProblem ? error.status : oversizedBody ? 413 : invalidJsonBody ? 400 : 500;
+  const status = error instanceof ConnectorProblem
+    ? error.status
+    : oversizedBody ? 413 : unsupportedMediaType ? 415 : invalidJsonBody ? 400 : 500;
   const definition = definitions[code];
   return {
     type: `https://pih.example/problems/${code.replaceAll("_", "-")}`,

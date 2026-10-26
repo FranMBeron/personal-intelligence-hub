@@ -2,10 +2,16 @@ import {
   SourceStatusSchema,
   type SourceStatus,
 } from "@personal-intelligence-hub/contracts";
-import fastify, { type FastifyInstance, type RawServerDefault } from "fastify";
+import fastify, {
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+  type RawServerDefault,
+} from "fastify";
 import { randomUUID } from "node:crypto";
 
 import { installConnectorAuthentication, requireScope, requireService } from "./foundation/auth.js";
+import { ConnectorProblem, toConnectorProblem } from "./foundation/problems.js";
 import type { ConnectorDatabase } from "./foundation/database.js";
 import type { ConnectorModule, ConnectorModuleDependencies } from "./foundation/module.js";
 import { preferencesConnectorModule } from "./preferences/routes.js";
@@ -40,11 +46,13 @@ const safeUnavailable = (name: string, now: Date): SourceStatus => SourceStatusS
   safeReasonCode: "probe_failed",
 });
 
-const getSourceStatuses = async (
+type ProbedStatus = Readonly<{ status: SourceStatus; probeFailed: boolean }>;
+
+const probeSources = async (
   modules: readonly ConnectorModule[],
   dependencies: ConnectorModuleDependencies,
-): Promise<readonly SourceStatus[]> => {
-  const statuses = await Promise.all(modules.map(async (module) => {
+): Promise<readonly ProbedStatus[]> => {
+  const statuses = await Promise.all(modules.map(async (module): Promise<ProbedStatus> => {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const probe = Promise.resolve().then(() => module.status(dependencies));
@@ -57,15 +65,22 @@ const getSourceStatuses = async (
       const candidate: unknown = await Promise.race([probe, timeoutError]);
       const parsed = SourceStatusSchema.parse(candidate);
       if (parsed.id !== module.name) throw new Error("Source ID mismatch");
-      return parsed;
+      return { status: parsed, probeFailed: false };
     } catch {
-      return safeUnavailable(module.name, dependencies.clock.now());
+      return { status: safeUnavailable(module.name, dependencies.clock.now()), probeFailed: true };
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
     }
   }));
-  return statuses.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+  return statuses.sort((left, right) =>
+    left.status.id < right.status.id ? -1 : left.status.id > right.status.id ? 1 : 0);
 };
+
+const getSourceStatuses = async (
+  modules: readonly ConnectorModule[],
+  dependencies: ConnectorModuleDependencies,
+): Promise<readonly SourceStatus[]> =>
+  (await probeSources(modules, dependencies)).map((probed) => probed.status);
 
 const readiness = async (
   database: ConnectorDatabase,
@@ -86,11 +101,19 @@ const readiness = async (
   } catch {
     // Readiness responses intentionally expose only booleans.
   }
-  const sources = await getSourceStatuses(modules, dependencies);
-  const modulesReady = sources.every((source) =>
-    source.state !== "unavailable" && source.state !== "requires_attention",
-  );
+  // Readiness means this process can serve: every module answered its probe. Provider or account
+  // state (an unselected calendar, an unreachable upstream) is reported by /v1/system/status instead,
+  // so a user-level condition never fails a deployment health check.
+  const modulesReady = (await probeSources(modules, dependencies)).every((probed) => !probed.probeFailed);
   return Object.freeze({ database: databaseReady, migrations: migrationsReady, modules: modulesReady });
+};
+
+const answerRouterError = (error: Error & { code?: string }, request: FastifyRequest, reply: FastifyReply): void => {
+  const status = error.code === "FST_ERR_MAX_PARAM_LENGTH" ? 414 : 400;
+  const problem = { ...toConnectorProblem(
+    new ConnectorProblem("validation_failed", 400), request.id, "/unmatched"), status };
+  void reply.code(status).header("x-request-id", request.id)
+    .header("cache-control", "no-store").type("application/problem+json").send(problem);
 };
 
 export const createConnectorsApp = async (
@@ -104,6 +127,9 @@ export const createConnectorsApp = async (
     genReqId: () => requestIdFactory(),
     requestIdHeader: false,
     ajv: { customOptions: { removeAdditional: false } },
+    // Router-level URL errors happen before authentication; answer with a fixed problem that never
+    // reflects the caller's path.
+    frameworkErrors: answerRouterError,
   });
   const moduleDependencies: ConnectorModuleDependencies = Object.freeze({
     config: dependencies.config,
@@ -117,6 +143,7 @@ export const createConnectorsApp = async (
 
   app.addHook("onSend", async (request, reply, payload) => {
     reply.header("x-request-id", request.id);
+    if (!reply.hasHeader("cache-control")) reply.header("cache-control", "no-store");
     return payload;
   });
 

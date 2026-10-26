@@ -145,3 +145,51 @@ describe("connectors app", () => {
     expect(response.headers["x-request-id"]).toBe("5af093d0-84f1-4759-a92e-bbe2949ab957");
   });
 });
+
+describe("connectors app operational boundaries", () => {
+  const withState = (id: string, state: string, safeReasonCode: string) => ({
+    id, state, checkedAt: "2026-10-12T12:00:00.000Z", stale: false, capabilities: [], safeReasonCode,
+  });
+
+  it("keeps readiness independent of provider account state while probes succeed", async () => {
+    const app = await createApp([
+      makeModule("calendar", async () => withState("calendar", "requires_attention", "primary_calendar_unselected")),
+      makeModule("hermes", async () => withState("hermes", "unavailable", "provider_unreachable")),
+    ]);
+    const readiness = await app.inject({ method: "GET", url: "/health/ready", headers: await headers(deployer, "service", "health:read") });
+    expect(readiness.statusCode).toBe(200);
+    expect(readiness.json()).toEqual({ status: "ready", database: true, migrations: true, modules: true });
+    const status = await app.inject({ method: "GET", url: "/v1/system/status", headers: await headers(web, "human", "system:read") });
+    expect(status.json().sources.map((source: { state: string }) => source.state)).toEqual(["requires_attention", "unavailable"]);
+  });
+
+  it("marks health and system status responses as not cacheable", async () => {
+    const app = await createApp([makeModule("calendar", async () => status("calendar"))]);
+    for (const [url, credential, actorType, scope] of [
+      ["/v1/system/status", web, "human", "system:read"],
+      ["/health/ready", deployer, "service", "health:read"],
+      ["/health/live", deployer, "service", "health:read"],
+    ] as const) {
+      const response = await app.inject({ method: "GET", url, headers: await headers(credential, actorType, scope) });
+      expect(response.headers["cache-control"], url).toBe("no-store");
+    }
+  });
+
+  it("answers router-level URL errors with a fixed problem that never echoes the path", async () => {
+    const probe: ConnectorModule = {
+      name: "probe",
+      register: async (app) => { app.get("/v1/probe/:id", async () => ({ ok: true })); },
+      status: async () => status("probe"),
+    };
+    const app = await createApp([probe]);
+    const marker = "private-marker";
+    for (const [url, expected] of [[`/v1/probe/${marker}${"x".repeat(200)}`, 414], [`/v1/probe/${marker}%E0%A4%A`, 400]] as const) {
+      const response = await app.inject({ method: "GET", url });
+      expect(response.statusCode, url).toBe(expected);
+      expect(response.headers["content-type"]).toContain("application/problem+json");
+      expect(response.headers["cache-control"]).toBe("no-store");
+      expect(response.json()).toMatchObject({ code: "validation_failed", requestId: "5af093d0-84f1-4759-a92e-bbe2949ab957" });
+      expect(response.body).not.toContain(marker);
+    }
+  });
+});

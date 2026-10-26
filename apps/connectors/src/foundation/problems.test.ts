@@ -37,6 +37,15 @@ describe("connector problems", () => {
     expect(ApiProblemSchema.parse(problem)).toEqual(problem);
   });
 
+  it("maps an unsupported request media type to a fixed validation problem", () => {
+    const error = Object.assign(new Error("Unsupported Media Type: text/private-marker"), {
+      code: "FST_ERR_CTP_INVALID_MEDIA_TYPE",
+    });
+    const problem = toConnectorProblem(error, requestId, "/v1/test");
+    expect(problem).toMatchObject({ code: "validation_failed", status: 415 });
+    expect(JSON.stringify(problem)).not.toContain("private-marker");
+  });
+
   it("maps unknown failures to a non-reflective internal problem", () => {
     const sensitiveClaim = "decoded-claim-that-must-not-leak";
     const problem = toConnectorProblem(
