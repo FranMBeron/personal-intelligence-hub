@@ -4,7 +4,7 @@ const fixtureURL = "http://127.0.0.1:4401";
 
 test.beforeEach(async ({ request }) => {
   await request.post(`${fixtureURL}/__control`, {
-    data: { api: "available", hermes: "available" },
+    data: { api: "available" },
   });
 });
 
@@ -50,7 +50,7 @@ test("uses every interface without connectors and never exposes runtime values",
 
 test("shows verified source-down states", async ({ page, request }) => {
   await request.post(`${fixtureURL}/__control`, {
-    data: { api: "unavailable", hermes: "unavailable" },
+    data: { api: "unavailable" },
   });
 
   await page.goto("/");
