@@ -109,7 +109,12 @@ Names only; values are private.
 3. `GET /v1/conversations/:id/events` with `Last-Event-ID: <streamCursor>`
    continues exactly after the snapshot. Headers: `Content-Type:
    text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`.
-   Frames carry `id`, `event`, and the normalized JSON event.
+   Frames carry `id`, `event`, and the normalized JSON event. Every stream
+   ends after at most 30 minutes, even while idle, so the bounded pool of
+   concurrent streams cannot be held indefinitely; clients reconnect with the
+   last `id` as `Last-Event-ID` and miss nothing. The web client treats a
+   normal close after at least a minute open as this planned end and
+   reconnects at once, without reporting an outage.
 4. Only `message.accepted`, `message.delta`, `message.completed`,
    `message.failed`, `agent.changed`, and `heartbeat` reach clients. Tool,
    reasoning, approval, and unknown upstream events are dropped before storage.
