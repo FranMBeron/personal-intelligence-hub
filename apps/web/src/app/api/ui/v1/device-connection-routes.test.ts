@@ -130,6 +130,27 @@ describe("device connection BFF routes", () => {
     expect(gateway.reconnect).not.toHaveBeenCalled();
   });
 
+  it("refuses a large reconnect body without buffering it", async () => {
+    const gateway = gatewayStub();
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(64 * 1024));
+      },
+    });
+    const response = await createDeviceConnectionReconnectHandler(gateway, policy)(
+      new Request(`${ORIGIN}/api/ui/v1/device-connections/example-band/reconnect`, {
+        method: "POST", headers: { authorization: "Bearer delegated-test-token", origin: ORIGIN }, body, duplex: "half",
+      } as RequestInit),
+      params("example-band"),
+    );
+
+    expect(response.status).toBe(422);
+    expect(pulls).toBeLessThan(4);
+    expect(gateway.reconnect).not.toHaveBeenCalled();
+  });
+
   it("passes through sanitized connector problems", async () => {
     const gateway = gatewayStub({
       reconnect: vi.fn(async () => {

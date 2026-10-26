@@ -29,9 +29,22 @@ type Operation = (
 
 /** A reconnect carries no body: the only inputs are the path id and the fixed operation. */
 const requireEmptyBody = async (request: Request): Promise<void> => {
-  if (request.body === null) return;
-  if ((await request.text()).length > 0) {
+  const refuse = (): never => {
     throw new ZodError([{ code: "custom", path: [], message: "This operation does not accept a request body." }]);
+  };
+  const length = request.headers.get("content-length");
+  if (length !== null && length !== "0") refuse();
+  if (request.body === null) return;
+  // Read at most until the first non-empty chunk; never buffer an arbitrary body.
+  const reader = request.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      if (value.byteLength > 0) refuse();
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
   }
 };
 
