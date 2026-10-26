@@ -69,11 +69,13 @@ const SERVICE_CEILINGS = {
       "system:read",
       "preferences:read",
       "preferences:write",
+      "devices:read",
+      "devices:write",
     ],
   },
   "hermes-central": {
     actorTypes: ["agent"],
-    scopes: ["calendar:read", "calendar:propose"],
+    scopes: ["calendar:read", "calendar:propose", "devices:read", "devices:write"],
   },
   "telegram-gateway": {
     actorTypes: ["service"],
