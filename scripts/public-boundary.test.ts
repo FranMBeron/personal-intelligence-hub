@@ -106,7 +106,7 @@ async function privateIdentityViolations(cwd: string): Promise<string[]> {
 function productionSource(path: string): boolean {
   return /\.[cm]?[jt]sx?$/u.test(path) &&
     !/\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path) &&
-    !/(?:^|\/)(?:__tests__|tests?|testing)(?:\/|$)/u.test(path);
+    !/(?:^|\/)(?:__tests__|tests?|testing|e2e)(?:\/|$)/u.test(path);
 }
 
 function importedSpecifiers(path: string, content: string): string[] {
