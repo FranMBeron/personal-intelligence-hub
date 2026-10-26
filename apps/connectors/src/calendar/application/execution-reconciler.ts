@@ -19,11 +19,19 @@ export type DrainInput = Readonly<{
   limit: number;
   /** Batches one call may read before returning, 1..100; defaults to 10. */
   maxBatches?: number;
+  /**
+   * Checked before each proposal; once it returns false the call returns with `remaining: true`
+   * and the next call resumes at the proposal not reached. Lets callers bound a pass in time.
+   */
+  shouldContinue?: () => boolean;
 }>;
 export type DrainResult = Readonly<{
   /** Proposals attempted in this call (settled or left executing). */
   processed: number;
-  /** True only when the batch budget ran out while executing proposals beyond the scan position remain. */
+  /**
+   * True when the batch budget ran out while executing proposals beyond the scan position remain,
+   * or when `shouldContinue` stopped the call before a proposal it read.
+   */
   remaining: boolean;
 }>;
 
@@ -102,6 +110,7 @@ export class CalendarExecutionReconciler implements ExecutionReconciler {
       const after = this.#resumeAfter;
       const batch = await this.#database.read((db) => this.#repository.listExecutingProposals(db, limit, after));
       for (const proposal of batch) {
+        if (input.shouldContinue?.() === false) return { processed, remaining: true };
         this.#resumeAfter = keysetOf(proposal);
         if (!this.#due(proposal)) continue;
         processed += 1;

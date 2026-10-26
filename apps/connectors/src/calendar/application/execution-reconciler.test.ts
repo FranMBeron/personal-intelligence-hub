@@ -278,5 +278,17 @@ describe("Calendar execution reconciler", () => {
       expect(attempted).toEqual(ids);
       await expect(restarted.reconciler.reconcileOutstanding({ limit: 1, maxBatches: 0 })).rejects.toThrow("calendar_reconcile_batches_invalid");
     });
+
+    it("stops before the next proposal once shouldContinue declines and resumes there later", async () => {
+      const { restarted, attempted, ids } = await stuck(3);
+      let checks = 0;
+      const shouldContinue = () => { checks += 1; return checks <= 1; };
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 10, shouldContinue })).resolves.toEqual({ processed: 1, remaining: true });
+      expect(attempted).toEqual(ids.slice(0, 1));
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 10, shouldContinue: () => false })).resolves.toEqual({ processed: 0, remaining: true });
+      expect(attempted).toEqual(ids.slice(0, 1));
+      await expect(restarted.reconciler.reconcileOutstanding({ limit: 10 })).resolves.toEqual({ processed: 2, remaining: false });
+      expect(attempted).toEqual(ids);
+    });
   });
 });

@@ -148,6 +148,40 @@ describe("Calendar retention lifecycle", () => {
     expect(world.events).toEqual(["drain"]);
   });
 
+  it("bounds the startup recovery pass by a wall-clock deadline and logs a safe code", async () => {
+    const world = setup();
+    const seen: boolean[] = [];
+    world.setDrain(async (input) => {
+      seen.push(input.shouldContinue?.() ?? true);
+      world.clock.advance(29_999);
+      seen.push(input.shouldContinue?.() ?? true);
+      world.clock.advance(1);
+      seen.push(input.shouldContinue?.() ?? true);
+      return { processed: 2, remaining: true };
+    });
+    await world.lifecycle.start();
+    expect(seen).toEqual([true, true, false]);
+    expect(world.logs).toEqual(["calendar_recovery_deadline_reached"]);
+    expect(world.events).toEqual(["drain", "purge@2026-10-12T12:00:30.000Z"]);
+    expect(world.scheduler.timers.size).toBe(1);
+  });
+
+  it("stops the startup recovery pass once stop is called", async () => {
+    const world = setup();
+    const gate = deferred<DrainResult>();
+    let input: DrainInput | undefined;
+    world.setDrain((received) => { input = received; return gate.promise; });
+    const starting = world.lifecycle.start();
+    await flush();
+    expect(input?.shouldContinue?.()).toBe(true);
+    const stopping = world.lifecycle.stop();
+    expect(input?.shouldContinue?.()).toBe(false);
+    gate.resolve({ processed: 0, remaining: true });
+    await Promise.all([starting, stopping]);
+    expect(world.logs).toEqual([]);
+    expect(world.events).toEqual(["drain"]);
+  });
+
   it("rejects an invalid interval", () => {
     const world = setup();
     expect(() => new CalendarRetentionLifecycleService({
