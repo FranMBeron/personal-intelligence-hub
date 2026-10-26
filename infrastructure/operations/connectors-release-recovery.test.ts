@@ -342,7 +342,7 @@ describe("backup.sh connectors snapshot input", () => {
     expect(await release.stagingLeftovers()).toEqual(["connectors-staging/deploy.fixture"]);
   });
 
-  it("groups connector snapshots by a stable tag so retention prunes them without regrouping other snapshots", async () => {
+  it("groups snapshots by host so retention prunes both ordinary and connector snapshots", async () => {
     const { release, snapshot, run } = await prepare();
     await run(["--connectors-snapshot", snapshot, "--context-tag", tag]);
     const raw = await release.events();
@@ -350,21 +350,21 @@ describe("backup.sh connectors snapshot input", () => {
     expect(backup).toContain("--tag pih-connectors-pre-activation");
     const forgets = raw.filter((line) => line.startsWith("restic forget "));
     expect(forgets).toEqual([
-      "restic forget --tag personal-intelligence-hub --keep-daily 7 --keep-weekly 5 --keep-monthly 12 --prune",
+      "restic forget --tag personal-intelligence-hub --group-by host --keep-tag pih-connectors-pre-activation --keep-daily 7 --keep-weekly 5 --keep-monthly 12 --prune",
       "restic forget --tag pih-connectors-pre-activation --group-by host --keep-last 5 --keep-daily 7 --keep-weekly 5 --keep-monthly 12 --prune",
     ]);
     expect(raw.findIndex((line) => line.startsWith("restic check")))
       .toBeGreaterThan(raw.lastIndexOf(forgets[1]!));
   });
 
-  it("leaves ordinary backups ungrouped and untagged as connector snapshots", async () => {
+  it("keeps ordinary backups out of the connector retention pass", async () => {
     const { release } = await prepare();
     await release.run("backup.sh", [], { RESTIC_REPOSITORY: release.resticRepository });
     const raw = await release.events();
     expect(raw.find((line) => line.startsWith("restic backup "))).not.toContain("pih-connectors-pre-activation");
     // The connector retention pass only ever selects snapshots carrying the connector tag.
     expect(raw.filter((line) => line.startsWith("restic forget ") && !line.includes("--tag pih-connectors-pre-activation")))
-      .toEqual(["restic forget --tag personal-intelligence-hub --keep-daily 7 --keep-weekly 5 --keep-monthly 12 --prune"]);
+      .toEqual(["restic forget --tag personal-intelligence-hub --group-by host --keep-tag pih-connectors-pre-activation --keep-daily 7 --keep-weekly 5 --keep-monthly 12 --prune"]);
   });
 
   it.each([

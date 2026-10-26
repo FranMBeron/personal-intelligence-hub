@@ -113,15 +113,14 @@ complete release flow):
 Restored databases are created by root; the scripts reapply the previous
 database owner to the database and any SQLite sidecar files before the
 service starts. Plaintext staging directories are removed on every exit path.
-Retention: every backup is archived from a new random staging path, so the
-general `restic forget --tag personal-intelligence-hub` pass (default host and
-paths grouping) treats each snapshot as its own group. Connector
-pre-activation snapshots therefore also carry the stable tag
-`pih-connectors-pre-activation`, and `backup.sh` runs a second retention pass
-limited to that tag with `--group-by host`, keeping the last
-`PIH_CONNECTORS_KEEP_LAST` (default 5) plus the daily, weekly and monthly
-policy. That pass selects only connector snapshots, so the grouping of other
-snapshots is unchanged; the general pass keeps its existing behaviour.
+Retention: every backup is archived from a new random staging path, so
+restic's default host and paths grouping would make each snapshot its own group
+and nothing would ever be pruned. The general `restic forget --tag
+personal-intelligence-hub` pass therefore uses `--group-by host` and keeps every
+snapshot tagged `pih-connectors-pre-activation`. Those connector snapshots are
+retained by a second pass limited to that tag, also grouped by host, keeping the
+last `PIH_CONNECTORS_KEEP_LAST` (default 5) plus the daily, weekly and monthly
+policy.
 
 ## Private runtime configuration
 

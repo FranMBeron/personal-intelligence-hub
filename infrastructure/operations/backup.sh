@@ -190,17 +190,20 @@ fi
 
 # Retention is part of backup success: a snapshot followed by failed retention
 # must leave this service failed so its OnFailure alert fires.
+# Every backup is archived from a new random staging path, so restic's default
+# host+paths grouping would make each snapshot its own group and nothing would
+# ever be pruned. Group by host instead. Connector pre-activation snapshots are
+# kept here and retained by their own pass below.
 restic forget \
   --tag personal-intelligence-hub \
+  --group-by host \
+  --keep-tag pih-connectors-pre-activation \
   --keep-daily "${PIH_BACKUP_KEEP_DAILY:-7}" \
   --keep-weekly "${PIH_BACKUP_KEEP_WEEKLY:-5}" \
   --keep-monthly "${PIH_BACKUP_KEEP_MONTHLY:-12}" \
   --prune
-# Every backup is archived from a new random staging path, so the default
-# host+paths grouping above makes each snapshot its own group. Connector
-# pre-activation snapshots carry a stable tag and are retained as one group
-# per host; this pass selects only snapshots with that tag and leaves the
-# grouping of every other snapshot unchanged.
+# Connector pre-activation snapshots carry a stable tag and are retained as one
+# group per host by this pass only.
 restic forget \
   --tag pih-connectors-pre-activation \
   --group-by host \
