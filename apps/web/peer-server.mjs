@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { join } from "node:path";
 import { parse } from "node:url";
 import { fileURLToPath } from "node:url";
 import next from "next";
@@ -18,6 +20,16 @@ if (!Number.isInteger(port) || port < 0 || port > 65_535) {
 }
 // Validated before Next starts: Tailscale identity without a trusted proxy socket (or the reverse) is fatal.
 const trustedProxySocketPath = trustedProxySocketPathFromEnvironment(process.env);
+
+// Start the way Next's generated standalone server.js does: hand Next the compiled build config
+// so it never loads next.config or the webpack hook, which the standalone image does not contain.
+process.env.NODE_ENV = "production";
+if (process.env.__NEXT_PRIVATE_STANDALONE_CONFIG === undefined) {
+  const requiredServerFiles = JSON.parse(
+    readFileSync(join(directory, ".next", "required-server-files.json"), "utf8"),
+  );
+  process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(requiredServerFiles.config);
+}
 
 const app = next({ dev: false, dir: directory, hostname, port });
 await app.prepare();
