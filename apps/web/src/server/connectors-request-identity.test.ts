@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ConnectorsConfig } from "../config/server";
 import { deriveRequestContext } from "./context";
 import { createConnectorsRequestIdentity } from "./connectors-request-identity";
+import type { OidcPrincipalVerifier } from "./oidc-principal";
 import { withImmediatePeerAddress, withTrustedProxyPeer } from "./peer-address";
 
 const actorId = "a03f7492-09f0-4e8f-95d0-12b7c616aaea";
@@ -82,3 +83,24 @@ describe("production connectors identity wiring", () => {
   });
 });
 
+describe("OIDC connectors identity rate-limit key", () => {
+  it("keys concurrency and rate limits on the verified subject, not the bearer token", async () => {
+    const principal = { actorId, subject: "fictional-oidc-subject", actorType: "human" as const };
+    const oidcVerifier = { resolve: vi.fn(async () => ({ ok: true as const, principal })) } as unknown as OidcPrincipalVerifier;
+    const identity = createConnectorsRequestIdentity({
+      socketPath: "/run/pih-connectors/connectors.sock",
+      serviceToken: "fictional-connectors-service-token-at-least-32-bytes",
+      delegatedJwtKey: new Uint8Array(32).fill(4),
+      humanAuthMode: "oidc",
+      oidc: {
+        issuer: "https://identity.example.test/",
+        audience: "fictional-audience",
+        jwksUri: "https://identity.example.test/jwks",
+      },
+    }, undefined, { oidcVerifier });
+    const first = await identity.resolve(new Headers({ authorization: "Bearer fictional-token-one" }));
+    const second = await identity.resolve(new Headers({ authorization: "Bearer fictional-token-two" }));
+    expect(first).toMatchObject({ ok: true, concurrencyKey: "oidc:fictional-oidc-subject", principal });
+    expect(second).toMatchObject({ ok: true, concurrencyKey: "oidc:fictional-oidc-subject" });
+  });
+});
