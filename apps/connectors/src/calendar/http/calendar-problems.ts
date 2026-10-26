@@ -59,6 +59,11 @@ const CALENDAR_PROBLEMS: ReadonlyMap<string, Mapped> = new Map<string, Mapped>([
   ["calendar_reauthorization_required", CONFLICT],
   ["calendar_primary_unavailable", CONFLICT],
   ["calendar_oauth_refresh_token_missing", CONFLICT],
+  // Storage compare-and-set losers: a concurrent request or deselection changed the proposal or
+  // its event reference between the service read and the write.
+  ["calendar_proposal_transition_conflict", CONFLICT],
+  ["calendar_proposal_detached", CONFLICT],
+  ["calendar_event_reference_not_found", CONFLICT],
 
   ["calendar_provider_temporarily_unavailable", UNAVAILABLE],
   ["calendar_access_token_invalidated", UNAVAILABLE],
