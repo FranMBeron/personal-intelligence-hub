@@ -2,6 +2,7 @@ import type { CalendarAgendaQuery, Snapshot, Task } from "@personal-intelligence
 import { agendaFixture, calendarStatusFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
 import { describe, expect, it, vi } from "vitest";
 
+import { BffRequestError } from "./bff-request";
 import { buildHoyView, loadHoyOperational } from "./hoy";
 
 const now = new Date("2026-09-18T12:00:00.000Z");
@@ -155,6 +156,15 @@ describe("loadHoyOperational", () => {
     const tasksDown = await loadHoyOperational(sources({ snapshot: fail }), instant);
     expect(tasksDown.priorities.state).toBe("unavailable");
     expect(tasksDown.agenda.state).toBe("available");
+  });
+
+  it("keeps the safe problem code of a failed agenda read", async () => {
+    const denied = await loadHoyOperational(sources({ agenda: () => Promise.reject(new BffRequestError(403, "forbidden")) }), instant);
+    expect(denied.agenda.state).toBe("permission_denied");
+    const conflict = await loadHoyOperational(sources({ agenda: () => Promise.reject(new BffRequestError(409, "conflict")) }), instant);
+    expect(conflict.agenda.state).toBe("attention");
+    const down = await loadHoyOperational(sources({ agenda: () => Promise.reject(new BffRequestError(503, "dependency_unavailable")) }), instant);
+    expect(down.agenda.state).toBe("unavailable");
   });
 
   it("loads tasks without waiting for the preference", async () => {

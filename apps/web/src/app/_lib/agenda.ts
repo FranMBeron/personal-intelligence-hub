@@ -2,6 +2,7 @@ import type { CalendarAgenda, CalendarAgendaItem, CalendarSourceStatus } from "@
 
 import type { Loadable } from "../system/_lib/system-view";
 
+import { BffRequestError } from "./bff-request";
 import { addDays, formatClock } from "./time-format";
 
 /**
@@ -171,11 +172,41 @@ export type AgendaResult =
   | Readonly<{ state: "permission_denied" }>
   | Readonly<{ state: "attention" }>;
 
+/** Safe facts about a failed read: the HTTP status and the contract problem code, never upstream text. */
+export type ReadFailure = Readonly<{ status: number; code: string | null }>;
+
+/** An agenda read; a failure keeps its safe problem facts so a permission or connection problem is not called an outage. */
+export type AgendaRead = Loadable<CalendarAgenda> | Readonly<{ state: "unavailable"; failure: ReadFailure }>;
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+
+/** Reads the safe status/code from a browser BFF error or a server gateway problem; anything else has none. */
+export const readFailureOf = (error: unknown): ReadFailure | null => {
+  if (error instanceof BffRequestError) return { status: error.status, code: error.code };
+  const problem = isRecord(error) && isRecord(error.problem) ? error.problem : null;
+  if (problem !== null && typeof problem.status === "number" && typeof problem.code === "string") {
+    return { status: problem.status, code: problem.code };
+  }
+  return null;
+};
+
+/**
+ * Connectors answer a provider permission denial with 403 `forbidden`, and a connection that needs the user
+ * (reauthorization, a missing primary calendar, a changed connection) with 409 `conflict`. The 409 does not say
+ * which, so it points to Sistema ("attention"), where the source status shows the precise state.
+ */
+const failedAgenda = (agenda: AgendaRead): AgendaResult => {
+  const failure = "failure" in agenda ? agenda.failure : null;
+  if (failure?.status === 403 && failure.code === "forbidden") return { state: "permission_denied" };
+  if (failure?.status === 409 && failure.code === "conflict") return { state: "attention" };
+  return { state: "unavailable" };
+};
+
 /**
  * Combines the calendar source status and the agenda read. The status decides availability and freshness;
  * the agenda is shown only when it was actually read.
  */
-export const toAgendaResult = (status: Loadable<CalendarSourceStatus>, agenda: Loadable<CalendarAgenda>): AgendaResult => {
+export const toAgendaResult = (status: Loadable<CalendarSourceStatus>, agenda: AgendaRead): AgendaResult => {
   if (status.state === "not_configured" || agenda.state === "not_configured") return { state: "unconfigured" };
   if (status.state === "loaded") {
     const source = status.value;
@@ -183,11 +214,11 @@ export const toAgendaResult = (status: Loadable<CalendarSourceStatus>, agenda: L
     if (source.state === "requires_reauthorization") return { state: "reauthorization" };
     if (source.safeReasonCode === "provider_permission_denied") return { state: "permission_denied" };
     if (source.state === "requires_attention") return { state: "attention" };
-    if (agenda.state !== "loaded") return { state: "unavailable" };
+    if (agenda.state !== "loaded") return failedAgenda(agenda);
     return source.state === "available" && !source.stale
       ? { state: "available", agenda: agenda.value }
       : { state: "stale", agenda: agenda.value };
   }
   // Without a status we cannot vouch for freshness: a successful read is shown as last known data.
-  return agenda.state === "loaded" ? { state: "stale", agenda: agenda.value } : { state: "unavailable" };
+  return agenda.state === "loaded" ? { state: "stale", agenda: agenda.value } : failedAgenda(agenda);
 };

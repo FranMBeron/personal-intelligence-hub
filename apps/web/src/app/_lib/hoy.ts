@@ -9,7 +9,7 @@ import type {
 } from "@personal-intelligence-hub/contracts";
 
 import type { Loadable } from "../system/_lib/system-view";
-import { agendaRequestWindow, toAgendaResult, zonedParts, type AgendaResult } from "./agenda";
+import { agendaRequestWindow, readFailureOf, toAgendaResult, zonedParts, type AgendaRead, type AgendaResult } from "./agenda";
 import { isValidTimeZone } from "./time-format";
 
 const priorityRank: Record<TaskPriority, number> = {
@@ -102,6 +102,16 @@ const settle = async <T>(operation: (() => Promise<T>) | null): Promise<Loadable
   }
 };
 
+/** Like `settle`, but a failed agenda read keeps its safe status and problem code. */
+const settleAgenda = async (operation: () => Promise<CalendarAgenda>): Promise<AgendaRead> => {
+  try {
+    return { state: "loaded", value: await operation() };
+  } catch (error) {
+    const failure = readFailureOf(error);
+    return failure === null ? { state: "unavailable" } : { state: "unavailable", failure };
+  }
+};
+
 const resolveTimeZone = async (sources: HoySources): Promise<TimeZoneResult> => {
   const preferences = await settle(sources.preferences);
   if (preferences.state === "loaded" && isValidTimeZone(preferences.value.timeZone)) {
@@ -119,11 +129,11 @@ export const loadHoyOperational = async (sources: HoySources, now: Date): Promis
   const timeZonePromise = resolveTimeZone(sources);
   const prioritiesPromise = settle(sources.snapshot);
   const statusPromise = settle(sources.calendarStatus);
-  const agendaPromise = timeZonePromise.then((zone): Promise<Loadable<CalendarAgenda>> => {
+  const agendaPromise = timeZonePromise.then((zone): Promise<AgendaRead> => {
     const read = sources.agenda;
     if (read === null) return Promise.resolve({ state: "not_configured" });
     if (zone.state === "unavailable") return Promise.resolve({ state: "unavailable" });
-    return settle(() => read(agendaRequestWindow(now, zone.value)));
+    return settleAgenda(() => read(agendaRequestWindow(now, zone.value)));
   });
   const [timeZone, priorities, status, agenda] = await Promise.all([timeZonePromise, prioritiesPromise, statusPromise, agendaPromise]);
   return { timeZone, priorities, agenda: toAgendaResult(status, agenda) };

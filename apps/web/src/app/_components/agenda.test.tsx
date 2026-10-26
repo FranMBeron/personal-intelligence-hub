@@ -105,4 +105,12 @@ describe("toAgendaResult", () => {
     expect(toAgendaResult({ state: "loaded", value: calendarStatusFixture({ state: "degraded", safeReasonCode: "provider_temporarily_unavailable" }) }, agenda).state).toBe("stale");
     expect(toAgendaResult({ state: "loaded", value: calendarStatusFixture({ state: "unavailable" }) }, { state: "unavailable" }).state).toBe("unavailable");
   });
+
+  it("keeps a permission or connection problem from the agenda read instead of calling it unavailable", () => {
+    const available = { state: "loaded" as const, value: calendarStatusFixture({ state: "available" }) };
+    expect(toAgendaResult(available, { state: "unavailable", failure: { status: 403, code: "forbidden" } }).state).toBe("permission_denied");
+    expect(toAgendaResult(available, { state: "unavailable", failure: { status: 409, code: "conflict" } }).state).toBe("attention");
+    expect(toAgendaResult(available, { state: "unavailable", failure: { status: 503, code: "dependency_unavailable" } }).state).toBe("unavailable");
+    expect(toAgendaResult({ state: "unavailable" }, { state: "unavailable", failure: { status: 403, code: "forbidden" } }).state).toBe("permission_denied");
+  });
 });
