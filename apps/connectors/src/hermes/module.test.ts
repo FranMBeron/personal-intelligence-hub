@@ -13,6 +13,7 @@ import {
   disposeHermesHarnesses,
   ownerActorId,
   peerTokenA,
+  principalFor,
   profileEnvironment,
   specialistAId,
 } from "../../test/hermes/harness.js";
@@ -115,6 +116,36 @@ describe("createHermesModule", () => {
     expect(order.slice(4)).toEqual(["stop:maintenance", "stop:delegations", "stop:reconciler", "stop:server"]);
     expect(signal?.aborted).toBe(true);
     expect(runtime).toBeDefined();
+  });
+
+  it("cancels a worker's in-flight upstream call on close instead of waiting for the client timeout", async () => {
+    const harness = await createHermesHarness();
+    // Upstream accepts the request and never answers; only the caller's abort signal ends it.
+    const stalled = vi.fn((_input: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    }));
+    let runtime: HermesRuntime | undefined;
+    let inFlight: Promise<unknown> | undefined;
+    const idle = { start: async () => undefined, stop: async () => undefined };
+    // A draining worker awaits its in-flight upstream batch, as resume and reconcile passes do.
+    const draining = {
+      start: async () => { inFlight = runtime!.routes.conversations.create(principalFor(), { agentId: specialistAId }); },
+      stop: async () => { await inFlight?.catch(() => undefined); },
+    };
+    const options: HermesModuleOptions = { config: harness.config, fetch: stalled as unknown as typeof fetch };
+    const module = createHermesModule(options, (dependencies) => {
+      runtime = createHermesRuntime(options, dependencies, {
+        delegationServer: undefined, reconciler: idle, delegationReconciler: idle, maintenance: draining,
+      });
+      return runtime;
+    });
+    const app = await createConnectorsApp({ ...dependenciesFor(harness), modules: [module] });
+    await app.ready();
+    await vi.waitFor(() => expect(stalled).toHaveBeenCalled());
+    const started = performance.now();
+    await app.close();
+    expect(performance.now() - started).toBeLessThan(1_000);
+    await expect(inFlight).rejects.toBeDefined();
   });
 
   it("projects the configured profiles before routes accept traffic", async () => {

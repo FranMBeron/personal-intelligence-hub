@@ -22,9 +22,13 @@ import { FakeHermesServer, REASONING_MARKER, TOOL_MARKER } from "./fake-hermes-s
 import { imageFixtures } from "./harness.js";
 
 const cleanups: (() => Promise<void>)[] = [];
+// Each close drains real workers, the delegation socket and the fake upstream in sequence; in-flight
+// upstream calls are cancelled on close, but a contended CI runner (parallel packages and suites)
+// can still exceed vitest's 10 s default across several runtimes, so give cleanup an explicit budget.
+const CLEANUP_TIMEOUT_MS = 30_000;
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
-});
+}, CLEANUP_TIMEOUT_MS);
 
 const directory = async (): Promise<string> => {
   const path = await mkdtemp(join(tmpdir(), "pih-hermes-security-"));

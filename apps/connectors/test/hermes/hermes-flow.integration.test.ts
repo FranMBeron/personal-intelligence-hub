@@ -38,10 +38,14 @@ const freshRuntime = async (): Promise<HermesTestRuntime> => {
   return runtime;
 };
 
+// Each close drains real workers, the delegation socket and the fake upstream in sequence; in-flight
+// upstream calls are cancelled on close, but a contended CI runner (parallel packages and suites)
+// can still exceed vitest's 10 s default across several runtimes, so give cleanup an explicit budget.
+const CLEANUP_TIMEOUT_MS = 30_000;
 afterEach(async () => {
   for (const runtime of runtimes.splice(0)) await runtime.close();
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
-});
+}, CLEANUP_TIMEOUT_MS);
 
 describe("Hermes subsystem end to end", () => {
   it("runs the direct conversation, attachment, streaming, retry, thread, and delegation flow", async () => {

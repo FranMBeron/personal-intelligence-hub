@@ -104,7 +104,7 @@ export type HermesRuntime = Readonly<{
   reconciler: HermesWorker;
   delegationReconciler: HermesWorker;
   maintenance: HermesWorker;
-  /** Signals background workers to halt. */
+  /** Signals background workers to halt and cancels in-flight upstream Hermes calls (aborted first on close). */
   abort: AbortController;
   /** Ends open event streams (preClose). */
   streamAbort: AbortController;
@@ -122,7 +122,16 @@ export const createHermesRuntime = (
 ): HermesRuntime => {
   const { database, clock, idGenerator } = dependencies;
   const profiles = new HermesProfileRegistry(options.config);
-  const nativeClient = new HermesNativeClient({ profiles, ...(options.fetch === undefined ? {} : { fetch: options.fetch }) });
+  // Aborted first on close: in-flight upstream calls end immediately instead of each running to its
+  // client timeout, so draining workers (resume, reconcile, delegation batches) stays prompt on SIGTERM.
+  // An interrupted admission stays reserved/admitted and is resumed with the same key by the next process.
+  const abort = new AbortController();
+  const baseFetch = options.fetch ?? globalThis.fetch;
+  const upstreamFetch: typeof fetch = (input, init) => baseFetch(input, {
+    ...init,
+    signal: init?.signal == null ? abort.signal : AbortSignal.any([init.signal, abort.signal]),
+  });
+  const nativeClient = new HermesNativeClient({ profiles, fetch: upstreamFetch });
   const conversations = new ConversationRepository();
   const messages = new MessageRepository();
   const idempotency = new IdempotencyRepository();
@@ -229,7 +238,7 @@ export const createHermesRuntime = (
     maintenance: overrides.maintenance ?? new HermesMaintenance({
       database, uploads: uploadService, messages: messageService, events, idempotency, clock,
     }),
-    abort: new AbortController(),
+    abort,
     streamAbort,
   });
 };
