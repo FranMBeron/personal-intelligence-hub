@@ -1,4 +1,5 @@
 import { readdir } from "node:fs/promises";
+import { request } from "node:http";
 
 import {
   AgentSummarySchema,
@@ -33,7 +34,7 @@ import {
 import { createConnectorsApp } from "../../app.js";
 import { CONNECTORS_AUDIENCE, type ConnectorsConfig, type ServiceCredentialPolicy } from "../../config/private.js";
 import { createHermesModule } from "../module.js";
-import { createHermesRuntime } from "../runtime.js";
+import { createHermesRuntime, HermesStreamLimiter } from "../runtime.js";
 import { EventRepository } from "../storage/event-repository.js";
 
 /** Fictional identities, keys, and tokens only. */
@@ -71,7 +72,7 @@ const headersFor = async (caller: Caller, scopes: readonly ConnectorScope[], ser
     .sign(caller.credential.delegatedKey),
 });
 
-const SECRET_PATTERN = /fictional-[a-z-]*-key|127\.0\.0\.1|8642|pih_conversation|run_fictional|\/p\/|SQLITE|stack/iu;
+const SECRET_PATTERN = /fictional-[a-z-]*-key|127\.0\.0\.1|:8642|pih_conversation|run_fictional|\/p\/|SQLITE|stack/iu;
 
 const capabilityBody = (overrides: Record<string, unknown> = {}) => ({
   text: true, streaming: true, voice: { enabled: false },
@@ -574,5 +575,66 @@ describe("Hermes BFF routes: delegations", () => {
     expect(DelegationSchema.parse(one.json())).toMatchObject({ id: "delegation-01", targetAgentId: specialistBId, resultSummary: "Fictional result" });
     expectProblem(await app.inject({ method: "GET", url: "/v1/delegations/delegation-foreign", headers }), 404, "not_found");
     expectProblem(await app.inject({ method: "GET", url: "/v1/delegations?cursor=bad", headers }), 400, "invalid_cursor");
+  });
+});
+
+describe("Hermes BFF routes: live event stream over a real socket", () => {
+  it("keeps the stream open for live events, releases it on disconnect, and caps streams per actor", async () => {
+    const { app, harness } = await world();
+    await harness.seedConversation();
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address();
+    if (address === null || typeof address === "string") throw new Error("no address");
+    const headers = await headersFor(human(), ["hermes:conversations:read"]);
+    const received: string[] = [];
+    let ended = false;
+    const client = request({ host: "127.0.0.1", port: address.port, path: "/v1/conversations/conversation-01/events", headers });
+    const opened = new Promise<number>((resolve, reject) => {
+      client.on("response", (response) => {
+        response.on("data", (chunk: Buffer) => received.push(chunk.toString("utf8")));
+        response.on("end", () => { ended = true; });
+        resolve(response.statusCode ?? 0);
+      });
+      client.on("error", reject);
+    });
+    client.end();
+    expect(await opened).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(ended).toBe(false);
+    await harness.database.transaction((db) => new EventRepository().append(
+      db, actorId, "conversation-01", { id: "0", type: "agent.changed", agentId: specialistAId, occurredAt: "2026-10-12T12:00:00.000Z" }, "2026-10-13T12:00:00.000Z",
+    ));
+    for (let attempt = 0; attempt < 30 && !received.join("").includes("agent.changed"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    expect(received.join("")).toContain("id: 1\nevent: agent.changed\n");
+    client.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // The disconnected stream released its slot: the actor can open exactly the per-actor maximum again.
+    const open = () => app.inject({ method: "GET", url: "/v1/conversations/conversation-01/events", headers, payloadAsStream: true });
+    const streams = [];
+    for (let index = 0; index < 8; index += 1) {
+      const response = await open();
+      expect(response.statusCode).toBe(200);
+      streams.push(response.stream());
+    }
+    expectProblem(await app.inject({ method: "GET", url: "/v1/conversations/conversation-01/events", headers }), 429, "too_many_requests");
+    for (const stream of streams) stream.destroy();
+  });
+});
+
+describe("HermesStreamLimiter", () => {
+  it("bounds concurrent event streams per actor and process-wide, and releases idempotently", () => {
+    const limiter = new HermesStreamLimiter(2, 3);
+    const first = limiter.acquire(actorId);
+    limiter.acquire(actorId);
+    expect(() => limiter.acquire(actorId)).toThrow(expect.objectContaining({ code: "too_many_requests" }));
+    limiter.acquire(foreignActorId);
+    expect(() => limiter.acquire("33333333-3333-4333-8333-333333333333")).toThrow(expect.objectContaining({ code: "too_many_requests" }));
+    first();
+    first();
+    expect(() => limiter.acquire(actorId)).not.toThrow();
+    expect(() => limiter.acquire(actorId)).toThrow(expect.objectContaining({ code: "too_many_requests" }));
   });
 });

@@ -62,14 +62,20 @@ export const registerMessageRoutes = async (app: FastifyInstance, services: Herm
     reply.hijack();
     const response = reply.raw;
     const abort = () => connection.abort();
-    request.raw.once("close", abort);
+    // The request emits "close" once its (empty) body is consumed, not on disconnect: follow the response and socket.
     response.once("close", abort);
+    const socket = response.socket;
+    socket?.once("close", abort);
+    // The client may have gone away while the stream was being opened; its close event is already past.
+    if (response.destroyed || socket?.destroyed === true) abort();
     response.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       "x-accel-buffering": "no",
       "x-request-id": request.id,
     });
+    // Send the headers now: an idle stream may not write a frame until the first heartbeat.
+    response.flushHeaders();
     void (async () => {
       try {
         for await (const frame of frames) {
@@ -80,8 +86,8 @@ export const registerMessageRoutes = async (app: FastifyInstance, services: Herm
         // The stream ends; the client reloads history and reconnects with its last event ID.
       } finally {
         release();
-        request.raw.off("close", abort);
         response.off("close", abort);
+        socket?.off("close", abort);
         if (!response.writableEnded) response.end();
       }
     })();

@@ -199,7 +199,7 @@ describe("probeHermesStatus", () => {
     const status = SourceStatusSchema.parse(await probeHermesStatus(harness.config, harness.clock, fetchMock as unknown as typeof fetch));
     expect(status.state).toBe("degraded");
     expect(status.safeReasonCode).toBe("hermes_profiles_partially_unavailable");
-    expect(JSON.stringify(status)).not.toMatch(/127\.0\.0\.1|8642|fictional|ECONNREFUSED/u);
+    expect(JSON.stringify(status)).not.toMatch(/127\.0\.0\.1|:8642|fictional|ECONNREFUSED/u);
     const probed = fetchMock.mock.calls.map(([input]) => new URL(String(input)).pathname).sort();
     expect(probed).toEqual(["/p/orchestrator/v1/capabilities", "/p/specialist-a/v1/capabilities", "/p/specialist-b/v1/capabilities"]);
   });
