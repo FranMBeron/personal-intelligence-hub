@@ -50,6 +50,9 @@
 .time-zone-preference__notice { margin: 0; font-size: 12px; }
 .time-zone-preference__notice--status { color: var(--system-positive); font-weight: 700; }
 
+/* An empty live region stays in the accessibility tree but takes no space or grid gap. */
+.live-region:empty { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
 /* Calendar connection, allowlist and proposal review (Task 11) */
 .calendar-section, .calendar-settings, .calendar-proposal, .calendar-actions { display: grid; gap: 10px; min-width: 0; }
 .calendar-section > h2 { margin: 0; font-size: 16px; }

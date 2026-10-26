@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatInstant } from "../../_lib/time-format";
 import { SystemStatusClient, type SystemStatusLoader } from "../_lib/system-client";
 import { buildSystemViewFromSnapshot, type Loadable, type SystemSnapshot } from "../_lib/system-view";
+import { LiveRegion } from "./live-region";
 import { SourceStatusCard } from "./source-status-card";
 import "./system.css";
 
@@ -75,7 +76,9 @@ export function SystemStatusSection({ initial, now, timeZone, client }: Readonly
           {pending ? "Comprobando…" : "Actualizar estado"}
         </button>
       </header>
-      {failure ? <p className="system-status__error" role="alert">No se pudo actualizar el estado. Se muestran los últimos datos obtenidos.</p> : null}
+      <LiveRegion kind="alert">
+        {failure ? <p className="system-status__error">No se pudo actualizar el estado. Se muestran los últimos datos obtenidos.</p> : null}
+      </LiveRegion>
       <div className="system-status__cards">
         {view.cards.map((card) => <SourceStatusCard key={card.key} card={card} timeZone={timeZone} />)}
       </div>

@@ -6,6 +6,7 @@ import { useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { BffRequestError } from "../../_lib/bff-request";
 import { isValidTimeZone } from "../../_lib/time-format";
 import { PreferencesClient } from "../_lib/preferences-client";
+import { LiveRegion } from "./live-region";
 import "./system.css";
 
 type Notice = Readonly<{ kind: "status" | "alert"; text: string }>;
@@ -105,9 +106,12 @@ export function TimeZonePreference({ initial, client, onSaved }: Readonly<{
       {zones.length === 0 ? null : (
         <datalist id={listId}>{zones.map((zone) => <option key={zone} value={zone} />)}</datalist>
       )}
-      {notice === null ? null : (
-        <p className={`time-zone-preference__notice time-zone-preference__notice--${notice.kind}`} role={notice.kind}>{notice.text}</p>
-      )}
+      <LiveRegion kind="status">
+        {notice?.kind === "status" ? <p className="time-zone-preference__notice time-zone-preference__notice--status">{notice.text}</p> : null}
+      </LiveRegion>
+      <LiveRegion kind="alert">
+        {notice?.kind === "alert" ? <p className="time-zone-preference__notice time-zone-preference__notice--alert">{notice.text}</p> : null}
+      </LiveRegion>
     </form>
   );
 }

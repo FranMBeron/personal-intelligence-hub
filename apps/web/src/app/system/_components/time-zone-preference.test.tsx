@@ -25,6 +25,9 @@ describe("TimeZonePreference", () => {
     render(<TimeZonePreference initial={preferencesFixture({ timeZone: "Europe/Madrid", version: 4 })} />);
     expect((screen.getByLabelText("Zona horaria") as HTMLInputElement).value).toBe("Europe/Madrid");
     expect(calls).toEqual([]);
+    // Both live regions stay mounted (empty) so a later notice is announced.
+    expect(screen.getByRole("status").textContent).toBe("");
+    expect(screen.getByRole("alert").textContent).toBe("");
   });
 
   it("rejects a zone that is not a real IANA zone without a request", () => {
@@ -45,7 +48,7 @@ describe("TimeZonePreference", () => {
     render(<TimeZonePreference initial={preferencesFixture({ timeZone: "Etc/UTC", version: 1 })} onSaved={onSaved} />);
     fill("Asia/Tokyo");
     save();
-    expect((await screen.findByRole("status")).textContent).toMatch(/Zona horaria guardada: Asia\/Tokyo/);
+    await waitFor(() => expect(screen.getByRole("status").textContent).toMatch(/Zona horaria guardada: Asia\/Tokyo/));
     expect(calls).toEqual([{ path: "/api/ui/v1/preferences", method: "PATCH", body: { timeZone: "Asia/Tokyo", expectedVersion: 1 } }]);
     expect(onSaved).toHaveBeenCalledWith({ timeZone: "Asia/Tokyo", version: 2 });
   });
@@ -58,7 +61,7 @@ describe("TimeZonePreference", () => {
     render(<TimeZonePreference initial={preferencesFixture({ timeZone: "Etc/UTC", version: 1 })} />);
     fill("Asia/Tokyo");
     save();
-    expect((await screen.findByRole("alert")).textContent).toMatch(/otro dispositivo/);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/otro dispositivo/));
     await waitFor(() => expect((screen.getByLabelText("Zona horaria") as HTMLInputElement).value).toBe("America/Mexico_City"));
     expect(calls.map((call) => call.method)).toEqual(["PATCH", "GET"]);
 
@@ -90,7 +93,7 @@ describe("TimeZonePreference", () => {
     render(<TimeZonePreference initial={preferencesFixture({ timeZone: "Etc/UTC", version: 1 })} />);
     fill("Asia/Tokyo");
     save();
-    expect((await screen.findByRole("alert")).textContent).toMatch(/No se pudo guardar/);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/No se pudo guardar/));
     expect(screen.getByText(/Zona actual:/).textContent).toContain("Etc/UTC");
   });
 });

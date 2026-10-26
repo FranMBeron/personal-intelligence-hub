@@ -64,8 +64,10 @@ describe("SystemStatusSection", () => {
   it("keeps the last data and says so when a refresh fails entirely", async () => {
     const load = vi.fn(async () => { throw new Error("offline"); });
     render(<SystemStatusSection initial={healthy} now="2026-10-12T12:00:00.000Z" timeZone="Etc/UTC" client={{ load }} />);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toBe("");
     fireEvent.click(screen.getByRole("button", { name: "Actualizar estado" }));
-    expect((await screen.findByRole("alert")).textContent).toMatch(/No se pudo actualizar/);
+    await waitFor(() => expect(alert.textContent).toMatch(/No se pudo actualizar/));
     expect(screen.getByRole("article", { name: "Hermes" })).toBeTruthy();
   });
 });

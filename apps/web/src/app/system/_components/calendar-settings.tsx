@@ -14,6 +14,7 @@ import { BffRequestError } from "../../_lib/bff-request";
 import { formatClock, formatInstant } from "../../_lib/time-format";
 import { reasonLabel } from "../_lib/system-view";
 import { CalendarClient, type CalendarApi } from "./calendar-client";
+import { LiveRegion } from "./live-region";
 import "./system.css";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -412,7 +413,12 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
         </div>
       ) : null}
 
-      {notice === null ? null : <p className={`calendar-settings__notice calendar-settings__notice--${notice.kind}`} role={notice.kind}>{notice.text}</p>}
+      <LiveRegion kind="status">
+        {notice?.kind === "status" ? <p className="calendar-settings__notice calendar-settings__notice--status">{notice.text}</p> : null}
+      </LiveRegion>
+      <LiveRegion kind="alert">
+        {notice?.kind === "alert" ? <p className="calendar-settings__notice calendar-settings__notice--alert">{notice.text}</p> : null}
+      </LiveRegion>
       {notice?.recheck === true ? (
         <button className="button button--quiet" type="button" onClick={recheck} disabled={busy !== null}>Comprobar de nuevo</button>
       ) : null}

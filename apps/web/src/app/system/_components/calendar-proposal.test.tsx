@@ -20,6 +20,18 @@ const updateProposal = proposalFixture({
 });
 
 describe("CalendarProposal", () => {
+  it("keeps its live regions mounted and empty until there is something to announce", async () => {
+    render(<CalendarProposal proposalId="p" client={fakeCalendarClient({ proposal: vi.fn(async () => proposalFixture()), confirm: vi.fn(async () => { throw new BffRequestError(403, null); }) })} now={now} />);
+    await screen.findByRole("button", { name: "Confirmar cambio" });
+    const alert = screen.getByRole("alert");
+    const status = screen.getByRole("status");
+    expect(alert.textContent).toBe("");
+    expect(status.textContent).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar cambio" }));
+    await waitFor(() => expect(alert.textContent).toMatch(/no tiene permiso/));
+    expect(screen.getByRole("alert")).toBe(alert);
+  });
+
   it("opening a proposal never executes it", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if ((init?.method ?? "GET") !== "GET") throw new Error(`Unexpected ${init?.method} ${String(input)}`);
@@ -122,7 +134,7 @@ describe("CalendarProposal", () => {
       .mockResolvedValueOnce(proposalFixture({ version: 2, status: "conflict", safeReasonCode: "provider_state_changed" }));
     render(<CalendarProposal proposalId="p" client={fakeCalendarClient({ proposal, confirm })} now={now} />);
     fireEvent.click(await screen.findByRole("button", { name: "Confirmar cambio" }));
-    expect((await screen.findByRole("alert")).textContent).toMatch(/nueva propuesta/);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/nueva propuesta/));
     await screen.findByRole("heading", { name: "El evento cambió después de la propuesta" });
     expect(confirm).toHaveBeenCalledTimes(1);
   });
@@ -131,7 +143,7 @@ describe("CalendarProposal", () => {
     const confirm = vi.fn(async () => { throw new BffRequestError(403, null); });
     render(<CalendarProposal proposalId="p" client={fakeCalendarClient({ proposal: vi.fn(async () => proposalFixture()), confirm })} now={now} />);
     fireEvent.click(await screen.findByRole("button", { name: "Confirmar cambio" }));
-    expect((await screen.findByRole("alert")).textContent).toMatch(/no tiene permiso para confirmar/);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/no tiene permiso para confirmar/));
     expect((screen.getByRole("button", { name: "Confirmar cambio" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -184,14 +196,14 @@ describe("CalendarProposal", () => {
   it("refuses to offer confirmation for answering an invitation you organize", async () => {
     const invalid = proposalFixture({ summary: { ...updateProposal.summary, operation: "respond_invitation", organizerRelationship: "self", invitationResponse: "declined", after: undefined } });
     render(<CalendarProposal proposalId="x" client={fakeCalendarClient({ proposal: vi.fn(async () => invalid) })} now={now} />);
-    expect((await screen.findByRole("alert")).textContent).toMatch(/organizas/);
+    await screen.findByText(/responder a una invitación de un evento que organizas/);
     expect(screen.queryByRole("button", { name: /Confirmar/ })).toBeNull();
   });
 
   it("refuses to offer confirmation for cancelling an event organized by someone else", async () => {
     const invalid = proposalFixture({ summary: { ...updateProposal.summary, operation: "cancel", organizerRelationship: "other", after: undefined } });
     render(<CalendarProposal proposalId="x" client={fakeCalendarClient({ proposal: vi.fn(async () => invalid) })} now={now} />);
-    expect((await screen.findByRole("alert")).textContent).toMatch(/organiza otra persona/);
+    await screen.findByText(/intenta cancelar un evento que organiza otra persona/);
     expect(screen.queryByRole("button", { name: /Confirmar/ })).toBeNull();
   });
 });
@@ -237,7 +249,7 @@ describe("CalendarEventActions", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Aceptar" }));
     fireEvent.click(screen.getByRole("radio", { name: "No notificar a los invitados" }));
     fireEvent.click(screen.getByRole("button", { name: "Preparar respuesta" }));
-    expect((await screen.findByRole("alert")).textContent).toMatch(/no se creará una propuesta duplicada/);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/no se creará una propuesta duplicada/));
     fireEvent.click(screen.getByRole("button", { name: "Preparar respuesta" }));
     await waitFor(() => expect(propose).toHaveBeenCalledTimes(2));
     fireEvent.click(screen.getByRole("radio", { name: "Quizás" }));
@@ -246,6 +258,16 @@ describe("CalendarEventActions", () => {
     const keys = propose.mock.calls.map((call) => call[1]);
     expect(keys[0]).toBe(keys[1]);
     expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  it("keeps the failure region mounted so a failed preparation is announced", async () => {
+    render(<CalendarEventActions event={eventDetail({ organizerRelationship: "other" })} client={fakeCalendarClient({ propose: vi.fn(async () => { throw new Error("network"); }) })} onProposed={vi.fn()} />);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toBe("");
+    fireEvent.click(screen.getByRole("radio", { name: "Aceptar" }));
+    fireEvent.click(screen.getByRole("radio", { name: "No notificar a los invitados" }));
+    fireEvent.click(screen.getByRole("button", { name: "Preparar respuesta" }));
+    await waitFor(() => expect(alert.textContent).toMatch(/No se pudo preparar/));
   });
 
   it("uses a fresh idempotency key for a new intent after a successful proposal", async () => {

@@ -69,7 +69,7 @@ describe("CalendarSettings connection", () => {
   it("explains a rejected or cancelled OAuth return and allows retrying", async () => {
     const client = fakeCalendarClient({ status: vi.fn(async () => calendarStatusFixture()) });
     render(<CalendarSettings initialStatus={calendarStatusFixture()} initialSelection={calendarSelectionFixture()} timeZone="Etc/UTC" returnState="attention" client={client} />);
-    expect((await screen.findByRole("alert")).textContent).toMatch(/no se completó/);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/no se completó/));
     await waitFor(() => expect(client.status).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("button", { name: "Conectar Google Calendar" })).toBeTruthy();
   });
@@ -166,6 +166,18 @@ describe("CalendarSettings connection", () => {
     expect(selection).not.toHaveBeenCalled();
     await act(async () => release());
     await screen.findByText("Selección guardada.");
+  });
+
+  it("keeps its status and alert regions mounted and empty until there is something to announce", async () => {
+    const client = fakeCalendarClient({ startAuthorization: vi.fn(async () => { throw new BffRequestError(503, null); }) });
+    render(<CalendarSettings initialStatus={calendarStatusFixture()} initialSelection={calendarSelectionFixture()} timeZone="Etc/UTC" client={client} />);
+    const status = screen.getByRole("status");
+    const alert = screen.getByRole("alert");
+    expect(status.textContent).toBe("");
+    expect(alert.textContent).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Conectar Google Calendar" }));
+    await waitFor(() => expect(alert.textContent).toMatch(/No se pudo iniciar/));
+    expect(screen.getByRole("alert")).toBe(alert);
   });
 
   it("asks for reauthorization distinctly from a first connection", () => {
@@ -283,7 +295,7 @@ describe("CalendarSettings selection", () => {
     render(<CalendarSettings initialStatus={connected} initialSelection={selection} timeZone="Etc/UTC" client={client} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "Proponer cambios en Equipo" }));
     fireEvent.click(screen.getByRole("button", { name: "Guardar selección" }));
-    expect((await screen.findByRole("alert")).textContent).toMatch(/cambió en otro lugar/);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/cambió en otro lugar/));
     await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Leer Equipo" })).toBeNull());
     expect(updateSelection).toHaveBeenCalledTimes(1);
     expect((screen.getByRole("checkbox", { name: "Proponer cambios en Principal" }) as HTMLInputElement).checked).toBe(false);

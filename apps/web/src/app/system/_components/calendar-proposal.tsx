@@ -14,6 +14,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { BffRequestError } from "../../_lib/bff-request";
 import { addDays, formatCalendarDate, formatClock, formatInstant } from "../../_lib/time-format";
 import { CalendarClient, type CalendarApi } from "./calendar-client";
+import { LiveRegion } from "./live-region";
 import "./system.css";
 
 const POLL_INTERVAL_MS = 2_000;
@@ -259,11 +260,14 @@ export function CalendarProposal({ proposalId, client, now, timeZone }: Readonly
       {invalidResponse ? (
         <p className="calendar-proposal__error" role="alert">Esta propuesta intenta responder a una invitación de un evento que organizas y no se puede confirmar. Para cambiarlo, pide a Central una modificación o una cancelación.</p>
       ) : null}
-      {notice === null ? null : <p className="calendar-proposal__error" role="alert">{notice}</p>}
+      <LiveRegion kind="alert">{notice === null ? null : <p className="calendar-proposal__error">{notice}</p>}</LiveRegion>
 
-      {effectiveStatus === "executing" ? <p className="calendar-proposal__progress" role="status">Aplicando el cambio en Google Calendar…</p> : null}
+      <LiveRegion kind="status">
+        {effectiveStatus === "executing" ? <p className="calendar-proposal__progress">Aplicando el cambio en Google Calendar…</p> : null}
+      </LiveRegion>
+      {/* The result receives focus after an action, which announces it. */}
       {terminal === undefined ? null : (
-        <div className="calendar-proposal__result" role="status">
+        <div className="calendar-proposal__result">
           <h5 ref={resultRef} tabIndex={-1}>{terminal.heading}</h5>
           <p>{terminal.detail}</p>
           {reason === null ? null : <p>{reason}</p>}
@@ -360,7 +364,7 @@ function EventActionsForm({ event, client, onProposed }: EventActionsProps) {
       {isOrganizer ? null : radios("Tu respuesta", "response", invitationResponseLabels, response, setResponse)}
       {event.recurrence.recurring ? radios("Alcance", "scope", scopeLabels, scope, setScope) : null}
       {radios("Notificaciones", "notification", notificationChoices, notification, setNotification)}
-      {failure === null ? null : <p className="calendar-proposal__error" role="alert">{failure}</p>}
+      <LiveRegion kind="alert">{failure === null ? null : <p className="calendar-proposal__error">{failure}</p>}</LiveRegion>
       <button className="button" type="submit" disabled={!ready || pending}>{isOrganizer ? "Preparar cancelación" : "Preparar respuesta"}</button>
     </form>
   );
