@@ -145,7 +145,7 @@ sudo /srv/personal-intelligence-hub/current/infrastructure/operations/configure-
 - Values are checked with shell builtins before anything is written: blank
   credentials, single quotes, newlines and control characters are rejected;
   the host BFF socket must be `/run/pih-connectors/web/connectors.sock`; the
-  delegation socket must be `/run/pih-connectors/hermes-delegation.sock`; the
+  delegation socket must be `/run/pih-connectors/agents/hermes-delegation.sock`; the
   Hermes origin must be a literal loopback HTTP origin; default, orchestrator,
   peer and device-agent profile IDs must exist in the profile list; and the
   Google redirect must be the Calendar callback
@@ -177,3 +177,18 @@ directory `/run/pih-connectors/web` is mounted read-only at
 `/run/pih-connectors/web/connectors.sock`. The agent-only delegation socket
 stays outside that mount. Only the connectors service and the Hermes gateway
 service identities join the `hermes-agents` group; web never joins it.
+
+Runtime directory layout (all owned by `pih-connectors`):
+
+| Path | Mode | Group | Purpose |
+| --- | --- | --- | --- |
+| `/run/pih-connectors` | `0751` | `pih-connectors` | Service root. Others may traverse it but never list it. |
+| `/run/pih-connectors/web` | `0750` | `pih-connectors-clients` | Host BFF socket, mounted read-only into web. |
+| `/run/pih-connectors/agents` | `0750` | `hermes-agents` | Agent-only delegation socket (`0660`). |
+
+systemd creates only the root (`RuntimeDirectory=pih-connectors`,
+`RuntimeDirectoryMode=0751`). At start the service creates each subdirectory
+`0700`, refuses a symbolic link or a foreign owner, then sets its group and
+`0750`, so neither socket is ever reachable through a permissive directory. A
+gateway that is only in `hermes-agents` can therefore reach the delegation
+socket, but not the BFF socket or anything else in the root.

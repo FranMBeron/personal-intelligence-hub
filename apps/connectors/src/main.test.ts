@@ -49,6 +49,8 @@ describe("connector Unix socket preparation", () => {
     const lstat = vi.fn();
     const fs = { lstat } as unknown as SocketFileSystem;
     await expect(prepareSocketPath("/run/pih-connectors/hermes-delegation.sock", 1001, 1002, { fs })).rejects.toThrow(/BFF socket directory/u);
+    // Not even outside production may the BFF socket share the agent-only directory.
+    await expect(prepareSocketPath("/run/pih-connectors/agents/connectors.sock", 1001, 1002, { fs, production: false })).rejects.toThrow(/BFF socket directory/u);
     expect(lstat).not.toHaveBeenCalled();
   });
 

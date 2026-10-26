@@ -1,4 +1,4 @@
-import { chmod, chown as chownPath, link, lstat, mkdtemp, rm, unlink } from "node:fs/promises";
+import { chmod, chown as chownPath, link, lstat, mkdir, mkdtemp, rm, unlink } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
@@ -115,6 +115,7 @@ export class HermesDelegationServer {
    */
   async start(): Promise<void> {
     if (this.#server !== undefined) throw new Error("hermes_delegation_server_started");
+    await this.#secureDirectory();
     await this.#clearStaleSocket();
     const server = createServer({ requestTimeout: 15_000, headersTimeout: 5_000, maxHeaderSize: 8_192 }, (request, response) => {
       void this.#handle(request, response).catch(() => {
@@ -165,6 +166,47 @@ export class HermesDelegationServer {
       if (status.isSocket() && status.dev === inode.dev && status.ino === inode.ino) await unlink(this.#options.socketPath);
     } catch {
       // Already gone or replaced by someone else: never remove a foreign entry.
+    }
+  }
+
+  /**
+   * The socket directory is dedicated to agents: owned by this service, group the agent group,
+   * mode 0750, so an agent can traverse it without any access to the service root's other entries.
+   * A missing directory is created 0700 and only then handed to the group; a symbolic link, a
+   * foreign owner or a replaced inode is refused.
+   */
+  async #secureDirectory(): Promise<void> {
+    const directory = dirname(this.#options.socketPath);
+    const uid = process.getuid?.();
+    const unsafe = () => new Error("hermes_delegation_socket_unsafe");
+    const inspect = async () => {
+      try {
+        return await lstat(directory);
+      } catch (error) {
+        if (isMissing(error)) return undefined;
+        throw unsafe();
+      }
+    };
+    try {
+      let entry = await inspect();
+      if (entry === undefined) {
+        await mkdir(directory, { mode: 0o700 });
+        entry = await inspect();
+      }
+      if (entry === undefined || entry.isSymbolicLink() || !entry.isDirectory() || (uid !== undefined && entry.uid !== uid)) throw unsafe();
+      await this.#chown(directory, this.#options.socketGroupId);
+      await chmod(directory, 0o750);
+      const secured = await inspect();
+      if (
+        secured === undefined || secured.isSymbolicLink() || !secured.isDirectory() ||
+        secured.dev !== entry.dev || secured.ino !== entry.ino || (secured.mode & 0o777) !== 0o750 ||
+        // An injected test chown cannot change the group; the real one must have.
+        (this.#options.chown === undefined && secured.gid !== this.#options.socketGroupId)
+      ) {
+        throw unsafe();
+      }
+    } catch {
+      throw unsafe();
     }
   }
 

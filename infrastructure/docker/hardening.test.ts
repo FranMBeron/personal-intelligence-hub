@@ -193,7 +193,8 @@ describe("private connectors host bundle", () => {
     expect(unit).toContain("ExecStart=/usr/bin/node /opt/pih-connectors/current/dist/src/main.js");
     expect(unit).toContain("RuntimeDirectory=pih-connectors");
     expect(unit).toContain("RuntimeDirectoryPreserve=yes");
-    expect(unit).toContain("RuntimeDirectoryMode=0750");
+    // Others may traverse (never list) the root so the agent group reaches its own 0750 subdirectory.
+    expect(unit).toContain("RuntimeDirectoryMode=0751");
     expect(unit).toContain("StateDirectory=pih-connectors");
     expect(unit).toContain("StateDirectoryMode=0700");
     expect(unit).toContain("UMask=0007");

@@ -135,6 +135,7 @@ export const prepareSocketPath = async (
     posix.normalize(path) !== path ||
     posix.basename(path).length === 0 ||
     path === "/run/pih-connectors/hermes-delegation.sock" ||
+    path.startsWith("/run/pih-connectors/agents/") ||
     (production && parent !== productionParent)
   ) {
     throw new Error("Connector socket must be inside the BFF socket directory");

@@ -92,7 +92,7 @@ Names only; values are private.
 | `HERMES_EVENT_RETENTION_HOURS` | Normalized event retention (24–720). |
 | `HERMES_IDEMPOTENCY_RETENTION_HOURS` | Terminal idempotency retention (at least the event retention). |
 | `HERMES_DELEGATION_ORCHESTRATOR_ID` | The single profile allowed to delegate. |
-| `HERMES_DELEGATION_SOCKET_PATH` | Agent-only socket path; never inside the BFF socket directory. |
+| `HERMES_DELEGATION_SOCKET_PATH` | Agent-only socket path; production requires `/run/pih-connectors/agents/hermes-delegation.sock` (directory `0750`, agent group). Never inside the BFF socket directory. |
 | `HERMES_DELEGATION_SOCKET_GROUP_ID` | Group allowed to open the delegation socket (mode `0660`). |
 | `HERMES_DELEGATION_PEERS_JSON` | Closed peers: `sourceAgentId`, `ownerActorId`, `targetAgentId`, `tokenEnvironment`. |
 | `HERMES_<PAIR>_PEER_TOKEN` | One token per source/target pair (at least 32 characters, distinct from every profile key). |

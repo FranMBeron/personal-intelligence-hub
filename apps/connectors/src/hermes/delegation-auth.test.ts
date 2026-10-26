@@ -28,7 +28,7 @@ describe("loadDelegationPeerConfig", () => {
   it("binds each token to exactly one source/target pair and authenticates by hash", async () => {
     const { profiles } = await createHermesHarness();
     const config = loadDelegationPeerConfig(delegationEnvironment(), profiles);
-    expect(config.socketPath).toBe("/run/pih-connectors/hermes-delegation.sock");
+    expect(config.socketPath).toBe("/run/pih-connectors/agents/hermes-delegation.sock");
     expect(config.socketGroupId).toBe(1234);
     expect(config.peers.authenticate(peerTokenA)).toMatchObject({ sourceAgentId: orchestratorId, targetAgentId: specialistAId, ownerActorId });
     expect(config.peers.authenticate(peerTokenB)).toMatchObject({ targetAgentId: specialistBId });

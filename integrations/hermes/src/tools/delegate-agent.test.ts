@@ -13,7 +13,7 @@ const delegation = {
 const setup = () => {
   const transport = { postJson: vi.fn<UnixHttpTransport["postJson"]>(async () => ({ status: 201, body: delegation })) };
   const client = new ConnectorsDelegationClient({
-    socketPath: "/run/pih-connectors/hermes-delegation.sock",
+    socketPath: "/run/pih-connectors/agents/hermes-delegation.sock",
     credentialsByTarget: new Map([["fitness", "fictional-fitness-peer-token-32-bytes"]]),
     transport,
   });
@@ -28,7 +28,7 @@ describe("createCentralDelegationTool", () => {
     const { transport, tool } = setup();
     await tool.execute({ targetAgentId: "fitness", message: "Revisá la tendencia semanal." });
     expect(transport.postJson).toHaveBeenCalledWith(expect.objectContaining({
-      socketPath: "/run/pih-connectors/hermes-delegation.sock",
+      socketPath: "/run/pih-connectors/agents/hermes-delegation.sock",
       path: "/internal/v1/hermes/delegations",
       method: "POST",
       headers: expect.objectContaining({
@@ -79,7 +79,7 @@ describe("createCentralDelegationTool", () => {
       return { status: 201, body: byKey.get(key) };
     }) };
     const tool = createCentralDelegationTool(new ConnectorsDelegationClient({
-      socketPath: "/run/pih-connectors/hermes-delegation.sock",
+      socketPath: "/run/pih-connectors/agents/hermes-delegation.sock",
       credentialsByTarget: new Map([["fitness", "fictional-fitness-peer-token-32-bytes"]]),
       transport,
     }));

@@ -62,6 +62,7 @@ describe("device connections configuration", () => {
     "/run/example//bridge.sock",
     "/run/example/bridge",
     "/run/pih-connectors/web/bridge.sock",
+    "/run/pih-connectors/agents/bridge.sock",
     "/" + "a".repeat(100) + ".sock",
     "/run/example/bridge\n.sock",
   ])("rejects the unsafe bridge socket path %j", (path) => {

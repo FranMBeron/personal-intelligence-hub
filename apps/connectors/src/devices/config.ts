@@ -40,6 +40,8 @@ const MAX_AGENT_ACTORS = 16;
 const MAX_SOCKET_PATH_LENGTH = 100;
 /** The BFF-facing connectors socket directory; the bridge socket must never live inside it. */
 const BFF_SOCKET_DIRECTORY = "/run/pih-connectors/web";
+/** The agent-only delegation directory; the bridge socket must never live inside it either. */
+const AGENT_SOCKET_DIRECTORY = "/run/pih-connectors/agents";
 
 /** Errors name the variable only; configured values are never echoed. */
 const invalid = (name: string): never => {
@@ -64,6 +66,7 @@ const socketPath = (environment: Environment): string => {
     !value.endsWith(".sock") ||
     /[\p{Cc}\s]/u.test(value) ||
     value.startsWith(BFF_SOCKET_DIRECTORY + "/") ||
+    value.startsWith(AGENT_SOCKET_DIRECTORY + "/") ||
     value === environment.CONNECTORS_SOCKET_PATH ||
     value === environment.HERMES_DELEGATION_SOCKET_PATH
   ) {

@@ -152,7 +152,7 @@ export const peerTokenB = "fictional-specialist-b-peer-token-32-bytes";
 
 export const delegationEnvironment = (overrides: Readonly<Record<string, string | undefined>> = {}) => ({
   HERMES_DELEGATION_ORCHESTRATOR_ID: orchestratorId,
-  HERMES_DELEGATION_SOCKET_PATH: "/run/pih-connectors/hermes-delegation.sock",
+  HERMES_DELEGATION_SOCKET_PATH: "/run/pih-connectors/agents/hermes-delegation.sock",
   HERMES_DELEGATION_SOCKET_GROUP_ID: "1234",
   HERMES_DELEGATION_PEERS_JSON: JSON.stringify([
     { sourceAgentId: orchestratorId, ownerActorId, targetAgentId: specialistAId, tokenEnvironment: "HERMES_ORCHESTRATOR_TO_SPECIALIST_A_PEER_TOKEN" },
