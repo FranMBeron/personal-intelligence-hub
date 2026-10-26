@@ -83,6 +83,27 @@ test("renders the approved shell and page compositions", async ({ page }, testIn
   }
 });
 
+test("keeps the skip link visually hidden until it receives keyboard focus", async ({ page }) => {
+  await page.goto("/");
+  const skip = page.getByRole("link", { name: "Saltar al contenido" });
+  const viewport = page.viewportSize()!;
+  const onScreen = async () => {
+    const box = await skip.boundingBox();
+    if (box === null) return false;
+    return box.y + box.height > 0 && box.y < viewport.height && box.x + box.width > 0 && box.x < viewport.width;
+  };
+  await expect(skip).not.toBeFocused();
+  expect(await onScreen(), "skip link is off screen while unfocused").toBe(false);
+  await page.keyboard.press("Tab");
+  await expect(skip).toBeFocused();
+  await expect.poll(async () => {
+    const box = await skip.boundingBox();
+    return box !== null && box.y >= 0 && box.y + box.height <= viewport.height;
+  }, { message: "skip link is fully on screen when focused" }).toBe(true);
+  await page.keyboard.press("Shift+Tab");
+  await expect.poll(onScreen, { message: "skip link hides again after focus leaves" }).toBe(false);
+});
+
 test("supports keyboard entry, reduced motion, and contained responsive layouts", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
