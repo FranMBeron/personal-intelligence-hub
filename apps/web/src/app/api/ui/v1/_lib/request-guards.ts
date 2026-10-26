@@ -179,6 +179,11 @@ export const failureResponse = (
       ),
     );
   }
+  if (error instanceof PayloadTooLargeError) {
+    return problemResponse(
+      problem(request, context, 413, "payload_too_large", "Payload too large", error.message),
+    );
+  }
   if (error instanceof GatewayError) return problemResponse(error.problem);
   if (error instanceof ZodError) return problemResponse(validationProblem(request, context, error));
   return problemResponse(
@@ -199,13 +204,52 @@ export const jsonResponse = (value: unknown, requestId: string, status = 200): R
     headers: { "cache-control": "no-store", "x-request-id": requestId },
   });
 
-export const parseJson = async <T>(request: Request, schema: ZodType<T>): Promise<T> =>
-  schema.parse(await request.json());
+/** Upper bound for BFF JSON request bodies; every UI command body is far smaller. */
+export const MAX_JSON_BODY_BYTES = 64 * 1024;
 
+export class PayloadTooLargeError extends Error {
+  constructor() {
+    super("The request body exceeds the configured byte limit.");
+    this.name = "PayloadTooLargeError";
+  }
+}
+
+/** Reads at most `limit` bytes; returns null (after cancelling the body) when exceeded. */
+export const readBoundedBody = async (request: Request, limit: number): Promise<Uint8Array<ArrayBuffer> | null> => {
+  if (request.body === null) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+};
+
+/** Parses a JSON body of at most MAX_JSON_BODY_BYTES; larger bodies raise PayloadTooLargeError (413). */
 export const parseJsonBody = async <T>(request: Request, schema: ZodType<T>): Promise<T> => {
+  const declaredLength = request.headers.get("content-length");
+  if (declaredLength !== null && /^\d+$/u.test(declaredLength) && Number(declaredLength) > MAX_JSON_BODY_BYTES) {
+    throw new PayloadTooLargeError();
+  }
+  const bytes = await readBoundedBody(request, MAX_JSON_BODY_BYTES);
+  if (bytes === null) throw new PayloadTooLargeError();
   let payload: unknown;
   try {
-    payload = await request.json();
+    payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
     throw new ZodError([{ code: "custom", path: [], message: "Expected a valid JSON body." }]);
   }

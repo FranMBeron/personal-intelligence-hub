@@ -22,6 +22,7 @@ import {
   parseResourceId,
   problem,
   problemResponse,
+  readBoundedBody,
   requireContext,
   requireEmptyQuery,
   requireGateway,
@@ -39,31 +40,6 @@ const UPLOAD_FIELDS: ReadonlySet<string> = new Set(["conversationId", "kind", "m
 
 const invalidUpload = (message: string): ZodError =>
   new ZodError([{ code: "custom", path: ["media"], message }]);
-
-/** Reads at most `limit` bytes; returns null (after cancelling the body) when exceeded. */
-const readBoundedBody = async (request: Request, limit: number): Promise<Uint8Array<ArrayBuffer> | null> => {
-  if (request.body === null) return new Uint8Array();
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > limit) {
-      await reader.cancel().catch(() => undefined);
-      return null;
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
-};
 
 /** Strict upload envelope: one existing conversation, optional `kind=attachment`, one media file. */
 const parseUploadForm = async (request: Request, bytes: Uint8Array<ArrayBuffer>): Promise<{ conversationId: string; media: File }> => {
