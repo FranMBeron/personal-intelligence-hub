@@ -90,6 +90,18 @@ describe("AgendaPanel", () => {
   });
 });
 
+describe("AgendaPanel copy", () => {
+  it("addresses the user with tú, like the rest of the app", () => {
+    for (const state of ["unconfigured", "unavailable", "reauthorization", "permission_denied", "attention"] as const) {
+      const { container, unmount } = render(<AgendaPanel result={{ state }} now={now} timeZone="Etc/UTC" />);
+      expect(container.textContent).not.toMatch(/\b(Conectá|Podés|Revisá|tenés)\b/u);
+      unmount();
+    }
+    render(<AgendaPanel result={{ state: "reauthorization" }} now={now} timeZone="Etc/UTC" />);
+    expect(screen.getByText(/Puedes renovarla desde Sistema/)).toBeTruthy();
+  });
+});
+
 describe("toAgendaResult", () => {
   const agenda = { state: "loaded" as const, value: agendaFixture() };
   it("maps calendar status to distinct agenda states", () => {

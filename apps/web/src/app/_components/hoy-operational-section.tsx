@@ -79,8 +79,8 @@ export function HoyOperationalSection({
           {activeCount === null
             ? "Las prioridades no están disponibles en este momento."
             : activeCount === 0
-              ? "No tenés prioridades activas registradas para hoy."
-              : `Tenés ${activeCount} ${activeCount === 1 ? "prioridad activa" : "prioridades activas"} para hoy.`}
+              ? "No tienes prioridades activas registradas para hoy."
+              : `Tienes ${activeCount} ${activeCount === 1 ? "prioridad activa" : "prioridades activas"} para hoy.`}
         </p>
         {timeZone.state === "fallback" ? (
           <p className="hoy-operational__zone">

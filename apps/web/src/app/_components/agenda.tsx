@@ -53,15 +53,15 @@ function Panel({ children }: Readonly<{ children: ReactNode }>) {
 export function AgendaPanel({ result, now, timeZone }: Readonly<{ result: AgendaResult; now: string; timeZone: string }>) {
   switch (result.state) {
     case "unconfigured":
-      return <Panel><SourceState compact headingLevel={4} state="not_configured" title="Calendario no configurado" detail="Conectá un calendario en Sistema para ver tu agenda. No mostramos eventos de ejemplo." /></Panel>;
+      return <Panel><SourceState compact headingLevel={4} state="not_configured" title="Calendario no configurado" detail="Conecta un calendario en Sistema para ver tu agenda. No mostramos eventos de ejemplo." /></Panel>;
     case "unavailable":
       return <Panel><SourceState compact headingLevel={4} state="unavailable" title="Agenda no disponible" detail="El calendario no respondió. No se muestran eventos inventados." /></Panel>;
     case "reauthorization":
-      return <Panel><SourceState compact headingLevel={4} state="requires_reauthorization" title="Hay que volver a autorizar el calendario" detail="La autorización venció o fue revocada. Podés renovarla desde Sistema." /></Panel>;
+      return <Panel><SourceState compact headingLevel={4} state="requires_reauthorization" title="Hay que volver a autorizar el calendario" detail="La autorización venció o fue revocada. Puedes renovarla desde Sistema." /></Panel>;
     case "permission_denied":
       return <Panel><SourceState compact headingLevel={4} state="error" title="Sin permiso para leer el calendario" detail="El proveedor rechazó la lectura de los calendarios seleccionados." /></Panel>;
     case "attention":
-      return <Panel><SourceState compact headingLevel={4} state="requires_attention" title="El calendario necesita atención" detail="Revisá la configuración del calendario en Sistema." /></Panel>;
+      return <Panel><SourceState compact headingLevel={4} state="requires_attention" title="El calendario necesita atención" detail="Revisa la configuración del calendario en Sistema." /></Panel>;
     case "available":
     case "stale":
       break;

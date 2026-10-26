@@ -118,6 +118,10 @@ const baseRow = (item: CalendarAgendaItem) => ({
   tentative: item.status === "tentative",
 });
 
+/** Day and short month ("9 oct") of an instant in `timeZone`, for events that start or end on another day. */
+const formatDayMonth = (iso: string, timeZone: string): string =>
+  new Intl.DateTimeFormat("es", { day: "numeric", month: "short", timeZone }).format(new Date(iso)).replace(/\.$/u, "");
+
 const compareText = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
 
 /** Projects an agenda onto the user's local day in `timeZone` at `now`. */
@@ -125,6 +129,8 @@ export const buildAgendaView = (agenda: CalendarAgenda, now: Date, timeZone: str
   const dayKey = localDayKey(now, timeZone);
   const dayStart = startOfLocalDay(dayKey, timeZone);
   const dayEnd = startOfLocalDay(addDays(dayKey, 1), timeZone);
+  const yesterdayStart = startOfLocalDay(addDays(dayKey, -1), timeZone);
+  const tomorrowEnd = startOfLocalDay(addDays(dayKey, 2), timeZone);
   const nowMs = now.getTime();
   const items = agenda.items.filter((item) => visibleStatuses.has(item.status));
 
@@ -143,8 +149,10 @@ export const buildAgendaView = (agenda: CalendarAgenda, now: Date, timeZone: str
       || compareText(left.item.title, right.item.title) || compareText(left.item.eventRef, right.item.eventRef));
 
   const timed = timedItems.map(({ item, start, end }): AgendaRow => {
-    const from = start < dayStart ? "Desde ayer" : formatClock(item.time.start, timeZone);
-    const to = end > dayEnd ? "continúa mañana" : formatClock(item.time.end, timeZone);
+    const from = start >= dayStart ? formatClock(item.time.start, timeZone)
+      : start >= yesterdayStart ? "Desde ayer" : `Desde el ${formatDayMonth(item.time.start, timeZone)}`;
+    const to = end <= dayEnd ? formatClock(item.time.end, timeZone)
+      : end <= tomorrowEnd ? "continúa mañana" : `hasta el ${formatDayMonth(item.time.end, timeZone)}`;
     const phase: AgendaPhase = end <= nowMs ? "past" : start <= nowMs ? "current" : "upcoming";
     return { ...baseRow(item), timeLabel: `${from} – ${to}`, startsAt: item.time.start, phase };
   });

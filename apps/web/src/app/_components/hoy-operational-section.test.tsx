@@ -34,6 +34,12 @@ describe("HoyOperationalSection", () => {
     expect(within(screen.getByRole("region", { name: "Prioridades de hoy" })).getByRole("status").textContent).toMatch(/Prioridades no disponibles/);
   });
 
+  it("addresses the user with tú, like the rest of the app", () => {
+    render(<HoyOperationalSection priorities={{ state: "loaded", value: snapshot }} agenda={{ state: "unconfigured" }} timeZone={{ state: "loaded", value: "Etc/UTC" }} now={now} />);
+    expect(screen.getByText("Tienes 1 prioridad activa para hoy.")).toBeTruthy();
+    expect(screen.getByText(/Conecta un calendario en Sistema/)).toBeTruthy();
+  });
+
   it("never lets task freshness label the agenda as updated", () => {
     render(<HoyOperationalSection priorities={{ state: "loaded", value: snapshot }} agenda={{ state: "unavailable" }} timeZone={{ state: "loaded", value: "Etc/UTC" }} now={now} />);
     const agendaRegion = screen.getByRole("region", { name: "Agenda de hoy" });

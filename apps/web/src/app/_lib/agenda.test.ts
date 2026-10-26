@@ -112,6 +112,20 @@ describe("buildAgendaView", () => {
     expect(buildAgendaView(agenda, now, "Etc/UTC").timed[0]?.timeLabel).toBe("Desde ayer – 02:00");
   });
 
+  it("shows the real start and end dates of an event spanning several days", () => {
+    const agenda = agendaFixture({ items: [
+      timed("conference", "2026-10-09T08:00:00.000Z", "2026-10-12T15:00:00.000Z"),
+      timed("trip", "2026-10-12T09:00:00.000Z", "2026-10-15T18:00:00.000Z"),
+      timed("night", "2026-10-12T22:00:00.000Z", "2026-10-13T06:00:00.000Z"),
+    ] });
+    const labels = buildAgendaView(agenda, now, "Etc/UTC").timed.map((row) => [row.eventRef, row.timeLabel]);
+    expect(labels).toEqual([
+      ["conference", "Desde el 9 oct – 15:00"],
+      ["trip", "09:00 – hasta el 15 oct"],
+      ["night", "22:00 – continúa mañana"],
+    ]);
+  });
+
   it("reports the agenda's own generation time as its freshness", () => {
     const view = buildAgendaView(agendaFixture({ generatedAt: "2026-10-12T12:20:00.000Z" }), now, "Etc/UTC");
     expect(view.generatedAt).toBe("2026-10-12T12:20:00.000Z");
