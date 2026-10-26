@@ -1,3 +1,7 @@
+/**
+ * Fictional personal-data API for the default web server, which runs without private connectors.
+ * Hermes, Calendar and every other connector-backed journey run against e2e/connectors-stack.ts.
+ */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 const port = 4_401;
@@ -81,29 +85,7 @@ const snapshot = {
   ],
 };
 
-const capabilities = {
-  text: true,
-  streaming: true,
-  voice: { enabled: false },
-  attachments: { enabled: false },
-  agentConversations: true,
-};
-
-const agents = [
-  {
-    id: "research-agent",
-    displayName: "Research Agent",
-    status: "available",
-    currentWork: "Reviewing fictional sources",
-    lastResult: "Architecture note indexed",
-    modelLabel: "Fictional local model",
-  },
-];
-
-let availability: Readonly<{
-  api: "available" | "unavailable";
-  hermes: "available" | "unavailable";
-}> = { api: "available", hermes: "available" };
+let availability: Readonly<{ api: "available" | "unavailable" }> = { api: "available" };
 
 const json = (response: ServerResponse, status: number, value: unknown) => {
   response.writeHead(status, {
@@ -123,20 +105,12 @@ const body = async (request: IncomingMessage): Promise<unknown> => {
 const authorizedPersonalRequest = (request: IncomingMessage): boolean =>
   request.headers.authorization === "Bearer e2e-fictional-delegated-token";
 
-const authorizedHermesRequest = (request: IncomingMessage): boolean =>
-  request.headers.authorization === "Bearer e2e-fictional-service-token" &&
-  request.headers["x-delegated-authorization"] ===
-    "Bearer e2e-fictional-delegated-token";
-
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${host}:${port}`);
 
   if (url.pathname === "/__control" && request.method === "POST") {
     const value = await body(request) as Partial<typeof availability>;
-    availability = {
-      api: value.api === "unavailable" ? "unavailable" : "available",
-      hermes: value.hermes === "unavailable" ? "unavailable" : "available",
-    };
+    availability = { api: value.api === "unavailable" ? "unavailable" : "available" };
     json(response, 200, availability);
     return;
   }
@@ -157,77 +131,6 @@ const server = createServer(async (request, response) => {
       return;
     }
     json(response, 200, snapshot);
-    return;
-  }
-
-  if (url.pathname.startsWith("/v1/") && availability.hermes === "unavailable") {
-    json(response, 503, { error: "unavailable" });
-    return;
-  }
-  if (url.pathname.startsWith("/v1/") && !authorizedHermesRequest(request)) {
-    json(response, 401, { error: "unauthorized" });
-    return;
-  }
-
-  if (url.pathname === "/v1/capabilities") {
-    json(response, 200, capabilities);
-    return;
-  }
-  if (url.pathname === "/v1/agents") {
-    json(response, 200, agents);
-    return;
-  }
-  if (url.pathname === "/v1/conversations" && request.method === "POST") {
-    const value = await body(request) as { agentId?: unknown };
-    const agentId = typeof value.agentId === "string" ? value.agentId : null;
-    json(response, 201, {
-      id: agentId === null ? "conversation-hoy" : `conversation-${agentId}`,
-      agentId,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-    return;
-  }
-
-  const messageMatch = url.pathname.match(/^\/v1\/conversations\/([^/]+)\/messages$/u);
-  if (messageMatch !== null && request.method === "POST") {
-    const value = await body(request) as { parts?: unknown };
-    json(response, 202, {
-      id: `user-${messageMatch[1]}`,
-      conversationId: messageMatch[1],
-      role: "user",
-      parts: value.parts,
-      deliveryState: "accepted",
-      createdAt: timestamp,
-    });
-    return;
-  }
-
-  const eventsMatch = url.pathname.match(/^\/v1\/conversations\/([^/]+)\/events$/u);
-  if (eventsMatch !== null && request.method === "GET") {
-    const conversationId = eventsMatch[1];
-    const text = conversationId.includes("research-agent")
-      ? "Research Agent está listo."
-      : "Tu prioridad principal es revisar la nota.";
-    const event = {
-      id: `event-${conversationId}`,
-      occurredAt: timestamp,
-      type: "message.completed",
-      message: {
-        id: `assistant-${conversationId}`,
-        conversationId,
-        role: "assistant",
-        parts: [{ kind: "text", text }],
-        deliveryState: "completed",
-        createdAt: timestamp,
-      },
-    };
-    response.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache",
-      connection: "close",
-    });
-    response.end(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
     return;
   }
 
