@@ -264,6 +264,13 @@ const handleConnectors = async (request: IncomingMessage, response: ServerRespon
         operation: "create",
         calendarDisplayName: scenario === "long" ? long("Calendario personal", 200) : "Personal",
         timeZone: "Europe/Madrid", recurrenceScope: "single", organizerRelationship: "self", guestNotification: "none",
+        after: {
+          title: scenario === "long" ? long("Revisión del plan", 300) : "Revisión del plan",
+          time: { kind: "timed", start: isoOffset(86_400_000), end: isoOffset(90_000_000), timeZone: "Europe/Madrid" },
+          description: scenario === "long" ? long("Notas de la reunión", 800) : "Notas de la reunión",
+          attendeeCount: 1,
+          attendeeEmails: ["persona@example.test"],
+        },
       },
       createdAt: isoOffset(-600_000), expiresAt: isoOffset(3_600_000),
     }));
