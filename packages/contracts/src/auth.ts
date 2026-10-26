@@ -49,6 +49,8 @@ export const ConnectorScopeSchema = z.enum([
   "system:read",
   "preferences:read",
   "preferences:write",
+  "devices:read",
+  "devices:write",
 ]);
 
 export const ConnectorServiceIdSchema = z.enum([

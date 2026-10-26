@@ -12,3 +12,4 @@ export * from "./relations.js";
 export * from "./tags.js";
 export * from "./tasks.js";
 export * from "./calendar.js";
+export * from "./device-connections.js";
