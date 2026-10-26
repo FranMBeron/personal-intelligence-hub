@@ -222,6 +222,15 @@ for argument do case "$argument" in cyclonedx-json=*) : > "\${argument#*=}" ;; e
   curl: "#!/bin/sh\nexit 0\n",
 };
 
+/**
+ * Prepended to every fake: records each child that received a deployer credential in its
+ * environment, so tests can prove only the readiness check ever does.
+ */
+const deployerEnvironmentProbe =
+  "if env | grep -Eq '^CONNECTORS_DEPLOYER_(SERVICE_TOKEN|ISSUER|SIGNING_KEY|ACTOR_ID)='; then printf 'deployer-env %s %s\\n' \"${0##*/}\" \"${1:-}\" >> \"$EVENT_LOG\"; fi\n";
+const withDeployerEnvironmentProbe = (contents: string): string =>
+  contents.startsWith("#!/bin/sh\n") ? `#!/bin/sh\n${deployerEnvironmentProbe}${contents.slice("#!/bin/sh\n".length)}` : contents;
+
 export type ReleaseFixture = Awaited<ReturnType<typeof createReleaseFixture>>;
 
 export const createReleaseFixture = async (options: Readonly<{
@@ -319,7 +328,7 @@ export const createReleaseFixture = async (options: Readonly<{
   if (database) await writeFile(databasePath, "old-data\n", { mode: 0o600 });
   await writeFile(systemdState, `${options.systemdState ?? (previousRuntime ? "enabled active" : "disabled inactive")}\n`);
   for (const [name, contents] of Object.entries({ ...fakes, ...options.extraFakes })) {
-    await writeFile(join(bin, name), contents, { mode: 0o700 });
+    await writeFile(join(bin, name), withDeployerEnvironmentProbe(contents), { mode: 0o700 });
   }
 
   const environment = (extra: Readonly<Record<string, string>> = {}): NodeJS.ProcessEnv => ({

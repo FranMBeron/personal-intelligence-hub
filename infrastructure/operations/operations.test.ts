@@ -166,7 +166,7 @@ describe("connectors atomic release", () => {
     expect(rollback.indexOf('restore_connectors_state || echo')).toBeLessThan(rollback.indexOf('docker compose --project-name "$compose_project" --env-file "$previous_environment"'));
 
     const restart = deploy.indexOf('systemctl restart "$connectors_service"');
-    const readiness = deploy.indexOf('check-connectors-readiness.mjs', restart);
+    const readiness = deploy.indexOf('check_connectors_readiness ||', restart);
     const webRollout = deploy.indexOf('up --detach --wait --remove-orphans', deploy.indexOf('image_inspect_temporary='));
     expect(restart).toBeGreaterThan(-1);
     expect(readiness).toBeGreaterThan(restart);

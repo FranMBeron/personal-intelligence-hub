@@ -47,6 +47,30 @@ const releaseEvents = (raw: readonly string[]): string[] => raw.flatMap((line) =
   return [];
 });
 
+/** Children that received a deployer credential, as "<command> <first argument>". */
+const deployerCredentialRecipients = (raw: readonly string[]): string[] =>
+  raw.filter((line) => line.startsWith("deployer-env ")).map((line) => line.slice("deployer-env ".length));
+
+describe("deployer credential scope", () => {
+  it("passes deployer credentials to the readiness check only, never to docker, syft, grype, curl or restic", async () => {
+    const release = await fixture();
+    await release.run("deploy-release.sh", [candidateSha]);
+    const recipients = deployerCredentialRecipients(await release.events());
+    expect(recipients.length).toBeGreaterThan(0);
+    expect(recipients.filter((recipient) => !/^node \S*check-connectors-readiness\.mjs$/u.test(recipient))).toEqual([]);
+  });
+
+  it("does the same during rollback", async () => {
+    const release = await fixture();
+    await release.run("deploy-release.sh", [candidateSha]);
+    await rm(join(release.root, "events.log"));
+    await release.run("rollback-release.sh", [oldSha]);
+    const recipients = deployerCredentialRecipients(await release.events());
+    expect(recipients.length).toBeGreaterThan(0);
+    expect(recipients.filter((recipient) => !/^node \S*check-connectors-readiness\.mjs$/u.test(recipient))).toEqual([]);
+  });
+});
+
 describe("connectors upgrade with database recovery", () => {
   it("backs up into encrypted Restic before stopping the old service and never restores on success", async () => {
     const release = await fixture();
