@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
-import { buildAgendaView, type AgendaResult, type AgendaRow } from "../_lib/agenda";
-import { formatClock } from "../_lib/time-format";
+import { buildAgendaView, localDayKey, type AgendaResult, type AgendaRow } from "../_lib/agenda";
+import { formatClock, formatInstant } from "../_lib/time-format";
 import { SourceState } from "./source-state";
 
 export { toAgendaResult, type AgendaResult } from "../_lib/agenda";
@@ -75,7 +75,9 @@ export function AgendaPanel({ result, now, timeZone }: Readonly<{ result: Agenda
   const freshness = (
     <p className="agenda-freshness">
       {stale ? "Última agenda leída: " : "Agenda actualizada: "}
-      <time dateTime={view.generatedAt}>{formatClock(view.generatedAt, timeZone)}</time>
+      <time dateTime={view.generatedAt}>
+        {localDayKey(new Date(view.generatedAt), timeZone) === view.dayKey ? formatClock(view.generatedAt, timeZone) : formatInstant(view.generatedAt, timeZone)}
+      </time>
     </p>
   );
 
@@ -89,7 +91,7 @@ export function AgendaPanel({ result, now, timeZone }: Readonly<{ result: Agenda
       {view.next === null ? null : <Highlight label="Siguiente" row={view.next} />}
       {view.isEmpty ? null : (
         <ol className="agenda-list" aria-label="Eventos de hoy">
-          {[...view.allDay, ...view.timed].map((row) => <AgendaItem key={row.eventRef} row={row} />)}
+          {[...view.allDay, ...view.timed].map((row) => <AgendaItem key={row.key} row={row} />)}
         </ol>
       )}
       {freshness}

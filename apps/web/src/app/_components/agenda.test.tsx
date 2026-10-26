@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { agendaFixture, calendarStatusFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
 import { AgendaPanel, toAgendaResult } from "./agenda";
@@ -59,6 +59,22 @@ describe("AgendaPanel", () => {
     render(<AgendaPanel result={{ state: "available", agenda }} now={now} timeZone="Europe/Madrid" />);
     expect(screen.getByRole("status").getAttribute("data-state")).toBe("unavailable");
     expect(screen.queryByText(/No hay eventos hoy/)).toBeNull();
+  });
+
+  it("dates a stale agenda read on a previous local day instead of showing a bare clock", () => {
+    const agenda = agendaFixture({ generatedAt: "2026-10-11T09:00:00.000Z", items: [event("e1", "Viejo", "2026-10-12T15:00:00.000Z", "2026-10-12T16:00:00.000Z")] });
+    render(<AgendaPanel result={{ state: "stale", agenda }} now={now} timeZone="Etc/UTC" />);
+    expect(screen.getByText(/Última agenda leída/).querySelector("time")?.textContent).toMatch(/11/);
+  });
+
+  it("renders the same event visible from two calendars as two rows", () => {
+    const shared = event("same-ref", "Compartido", "2026-10-12T15:00:00.000Z", "2026-10-12T16:00:00.000Z");
+    const agenda = agendaFixture({ items: [shared, { ...shared, calendarRef: "cal-b", calendarDisplayName: "Equipo" }] });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    render(<AgendaPanel result={{ state: "available", agenda }} now={now} timeZone="Etc/UTC" />);
+    expect(screen.getByRole("list", { name: "Eventos de hoy" }).querySelectorAll("li")).toHaveLength(2);
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("asks for attention when the calendar selection is incomplete", () => {

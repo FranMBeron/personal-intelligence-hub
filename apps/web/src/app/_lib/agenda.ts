@@ -80,6 +80,8 @@ export const agendaRequestWindow = (now: Date, timeZone: string): Readonly<{ fro
 export type AgendaPhase = "past" | "current" | "upcoming";
 
 export type AgendaRow = Readonly<{
+  /** Unique within a view: the same event can be visible through more than one selected calendar. */
+  key: string;
   eventRef: string;
   title: string;
   calendarDisplayName: string;
@@ -107,6 +109,7 @@ export type AgendaView = Readonly<{
 const visibleStatuses: ReadonlySet<string> = new Set(["confirmed", "tentative"]);
 
 const baseRow = (item: CalendarAgendaItem) => ({
+  key: `${item.calendarRef}\u0000${item.eventRef}`,
   eventRef: item.eventRef,
   title: item.title,
   calendarDisplayName: item.calendarDisplayName,
