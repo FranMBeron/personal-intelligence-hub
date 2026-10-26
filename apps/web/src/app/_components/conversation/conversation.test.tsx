@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Conversation } from "./conversation";
 
-vi.mock("./event-stream", () => ({ subscribeToConversationEvents: vi.fn(async () => undefined) }));
+vi.mock("./event-stream", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./event-stream")>(),
+  subscribeToConversationEvents: vi.fn(async () => undefined),
+}));
 
 const capabilities: HermesCapabilities = {
   text: true,
