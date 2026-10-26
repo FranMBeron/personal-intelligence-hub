@@ -39,7 +39,7 @@ compose() {
 }
 
 restic() {
-  "$restic_bin" "$@"
+  command "$restic_bin" "$@"
 }
 
 release_sha=$(jq -er '.gitSha | select(test("^[0-9a-f]{40}$"))' "$release_manifest")
