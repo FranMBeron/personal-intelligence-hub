@@ -7,6 +7,7 @@ import { SignJWT } from "jose";
 import { UuidSchema } from "@personal-intelligence-hub/contracts";
 
 import type {
+  IdentityRequestMetadata,
   IdentityResolution,
   RequestIdentityAdapter,
   VerifiedPrincipal,
@@ -95,7 +96,10 @@ export class TailscaleRequestIdentity implements RequestIdentityAdapter {
     this.#clock = clock;
   }
 
-  async resolve(headers: Headers): Promise<IdentityResolution> {
+  async resolve(headers: Headers, metadata?: IdentityRequestMetadata): Promise<IdentityResolution> {
+    // Tailscale Serve strips and re-adds this header, but only connections from Serve are trusted:
+    // they arrive on the private Unix listener. Any TCP client could forge the header.
+    if (metadata?.trustedProxy !== true) return missingIdentity();
     const suppliedLogin = headers.get("tailscale-user-login");
     if (suppliedLogin === null) return missingIdentity();
     const login = normalizeLogin(suppliedLogin);

@@ -107,6 +107,8 @@ services:
 
   web:
     image: ${PIH_WEB_IMAGE:?set PIH_WEB_IMAGE to an immutable image reference}
+    # Dedicated non-login host account; never a human or agent UID (see private-tailscale.md).
+    user: "${PIH_WEB_UID:?set PIH_WEB_UID to the dedicated pih-web UID}:${PIH_WEB_GID:?set PIH_WEB_GID to the dedicated pih-web GID}"
     env_file:
       - ${PIH_WEB_ENV_FILE:?set PIH_WEB_ENV_FILE outside Git}
     depends_on:
@@ -145,6 +147,9 @@ services:
       - "${PIH_CONNECTORS_CLIENT_GID:?required}"
     volumes:
       - /run/pih-connectors/web:/run/pih-connectors:ro
+      # Trusted proxy socket for Tailscale Serve: host /run/pih-web is root 0700,
+      # /run/pih-web/proxy is pih-web 0700. TCP requests never carry identity.
+      - /run/pih-web/proxy:/run/pih-web-proxy
     networks:
       - edge
 

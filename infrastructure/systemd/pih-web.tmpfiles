@@ -1,0 +1,4 @@
+# Private trusted-proxy socket directory for the PIH web container.
+# Only root (tailscaled) can traverse /run/pih-web; the web container owns proxy/.
+d /run/pih-web 0700 root root -
+d /run/pih-web/proxy 0700 pih-web pih-web -

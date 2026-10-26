@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { jwtVerify } from "jose";
 import { describe, expect, it } from "vitest";
 
@@ -21,6 +22,7 @@ describe("Tailscale request identity", () => {
         authorization: "Bearer forged-browser-token",
         "tailscale-user-login": "Owner@Example.Test",
       }),
+      { trustedProxy: true },
     );
 
     expect(resolution.ok).toBe(true);
@@ -68,13 +70,14 @@ describe("Tailscale request identity", () => {
   });
 
   it("distinguishes missing proxy identity from a disallowed user", async () => {
-    await expect(createIdentity().resolve(new Headers())).resolves.toMatchObject({
+    await expect(createIdentity().resolve(new Headers(), { trustedProxy: true })).resolves.toMatchObject({
       ok: false,
       status: 401,
     });
     await expect(
       createIdentity().resolve(
         new Headers({ "tailscale-user-login": "outsider@example.test" }),
+        { trustedProxy: true },
       ),
     ).resolves.toMatchObject({ ok: false, status: 403 });
   });
@@ -85,9 +88,21 @@ describe("Tailscale request identity", () => {
       "=?utf-8?q?owner=C3=A9@example.test?=",
     ]) {
       await expect(
-        createIdentity().resolve(new Headers({ "tailscale-user-login": value })),
+        createIdentity().resolve(new Headers({ "tailscale-user-login": value }), { trustedProxy: true }),
       ).resolves.toMatchObject({ ok: false });
     }
   });
+
+  it("ignores identity headers that did not arrive on the trusted proxy listener", async () => {
+    for (const metadata of [
+      undefined,
+      { trustedProxy: false },
+      { peerAddress: "127.0.0.1", trustedProxy: false },
+      { peerAddress: "100.64.0.42", trustedProxy: false },
+    ]) {
+      await expect(
+        createIdentity().resolve(new Headers({ "tailscale-user-login": "owner@example.test" }), metadata),
+      ).resolves.toMatchObject({ ok: false, status: 401 });
+    }
+  });
 });
-// @vitest-environment node

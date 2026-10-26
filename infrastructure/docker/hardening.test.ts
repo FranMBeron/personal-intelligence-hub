@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 type Service = {
+  user?: string;
   cap_drop?: string[];
   cpus?: number | string;
   image?: string;
@@ -79,6 +80,31 @@ describe("web peer-aware Next host", () => {
     expect(peerServer).toContain("dispatchWithSocketPeer(request");
     expect(peerDispatch).toContain("request.socket?.remoteAddress");
     expect(peerDispatch).not.toContain("x-forwarded-for");
+  });
+});
+
+describe("web trusted proxy socket", () => {
+  it("serves Tailscale identity only on a private Unix listener next to the TCP health listener", async () => {
+    const peerServer = await read("apps/web/peer-server.mjs");
+    const peerDispatch = await read("apps/web/peer-http-server.mjs");
+    expect(peerServer).toContain("trustedProxySocketPathFromEnvironment(process.env)");
+    expect(peerServer).toContain("dispatchFromTrustedProxyListener(request");
+    expect(peerServer).toContain("listenOnTrustedProxySocket(trustedProxyServer, trustedProxySocketPath)");
+    expect(peerDispatch).toContain('TRUSTED_PROXY_PEER = "unix:trusted-proxy"');
+  });
+
+  it("runs production web as a dedicated user with only the private proxy socket directory mounted", async () => {
+    const { services } = await readCompose("infrastructure/docker/compose.production.yaml");
+    const web = services.web;
+    expect(web?.user).toBe(
+      "${PIH_WEB_UID:?set PIH_WEB_UID to the dedicated pih-web UID}:${PIH_WEB_GID:?set PIH_WEB_GID to the dedicated pih-web GID}",
+    );
+    expect(web?.volumes).toContain("/run/pih-web/proxy:/run/pih-web-proxy");
+    expect(JSON.stringify(web?.volumes)).not.toContain("/run/pih-web:");
+    const tmpfiles = await read("infrastructure/systemd/pih-web.tmpfiles");
+    expect(tmpfiles).toMatch(/^d \/run\/pih-web 0700 root root -$/m);
+    expect(tmpfiles).toMatch(/^d \/run\/pih-web\/proxy 0700 pih-web pih-web -$/m);
+    expect(await read("infrastructure/systemd/pih-web.sysusers")).toMatch(/^u pih-web - .+ \/usr\/sbin\/nologin$/m);
   });
 });
 

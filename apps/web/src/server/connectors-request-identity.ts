@@ -26,7 +26,8 @@ export const createConnectorsRequestIdentity = (
         if (!existing.ok) return existing;
         const verified = await verifier.resolve(headers);
         if (!verified.ok) return verified;
-        return { ...existing, principal: verified.principal };
+        // Rate and concurrency limits follow the verified person, not whichever token they present.
+        return { ...existing, concurrencyKey: `oidc:${verified.principal.subject}`, principal: verified.principal };
       },
     };
   }
@@ -39,6 +40,7 @@ export const createConnectorsRequestIdentity = (
     async resolve(headers, metadata) {
       const verified = await resolver.resolve({
         headers,
+        trustedProxy: metadata?.trustedProxy === true,
         ...(metadata?.peerAddress === undefined ? {} : { peerAddress: metadata.peerAddress }),
       });
       if (!verified.ok) return verified;

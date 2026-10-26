@@ -487,6 +487,24 @@ describe("calendar change proposals and human confirmation", () => {
     }
   });
 
+  it("caps JSON request bodies at 64 KiB with a 413 problem before parsing", async () => {
+    const gateway = gatewayStub();
+    const handler = createCalendarConfirmationHandler(gateway, policy);
+    const route = () => params({ proposalId: "fictional-proposal" });
+    const oversized = await handler(
+      call("/change-proposals/fictional-proposal/confirmation", "POST", { expectedVersion: 0, padding: "x".repeat(70 * 1024) }),
+      route(),
+    );
+    expect(oversized.status).toBe(413);
+    expect(await oversized.json()).toMatchObject({ status: 413, code: "payload_too_large" });
+    const withinCap = await handler(
+      call("/change-proposals/fictional-proposal/confirmation", "POST", { expectedVersion: 0, padding: "x".repeat(60 * 1024) }),
+      route(),
+    );
+    expect(withinCap.status).toBe(422);
+    expect(gateway.confirm).not.toHaveBeenCalled();
+  });
+
   it("forwards duplicate confirmation clicks unchanged so provider idempotency decides", async () => {
     const completed = proposalFixture({ status: "completed", version: 1, completedAt: "2026-10-12T12:05:00.000Z" });
     const gateway = gatewayStub({ confirm: vi.fn(async () => completed) });
