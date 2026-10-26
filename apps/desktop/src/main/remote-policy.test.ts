@@ -164,4 +164,27 @@ describe("installRemotePolicy", () => {
     disposeSecond();
     expect(first.session.listenerCount("will-download")).toBe(0);
   });
+  it("never loads an OAuth provider in the app and only routes its popup to confirmation", async () => {
+    const oauth = "https://accounts.example.test/o/oauth2/auth?client_id=fixture&state=opaque";
+    const f = fixture();
+    const confirm = vi.fn().mockResolvedValue(false);
+    installRemotePolicy(f.webContents, f.electronSession, allowed, confirm);
+    for (const name of ["will-navigate", "will-redirect"]) {
+      const event = navigation(oauth);
+      f.contents.emit(name, event, event.url, false, true, 1, 1);
+      expect(event.preventDefault).toHaveBeenCalledOnce();
+    }
+    expect(confirm).not.toHaveBeenCalled();
+    expect(f.open(openDetails(oauth))).toEqual(denied);
+    await Promise.resolve();
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(oauth);
+  });
+  it("does not ask to open a downgraded HTTP OAuth popup", async () => {
+    const f = fixture();
+    const confirm = vi.fn();
+    installRemotePolicy(f.webContents, f.electronSession, allowed, confirm);
+    expect(f.open(openDetails("http://accounts.example.test/o/oauth2/auth?state=opaque"))).toEqual(denied);
+    await Promise.resolve();
+    expect(confirm).not.toHaveBeenCalled();
+  });
 });
