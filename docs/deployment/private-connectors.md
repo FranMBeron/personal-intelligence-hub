@@ -116,3 +116,59 @@ service starts. Plaintext staging directories are removed on every exit path.
 Retention: Restic groups snapshots by path by default, and each backup uses a
 new staging path, so review the repository's `forget` grouping before relying
 on retention to prune pre-activation snapshots.
+
+## Private runtime configuration
+
+`infrastructure/operations/configure-private-connectors.sh` writes the host
+file `/etc/pih-connectors/connectors.env` (owner and group `root:root`, mode
+`0600`). The systemd manager reads it through the connectors unit's
+`EnvironmentFile=` before starting the unprivileged `pih-connectors` process;
+nothing sources or `eval`s it.
+
+```sh
+sudo /srv/personal-intelligence-hub/current/infrastructure/operations/configure-private-connectors.sh
+```
+
+- Run it interactively on the private host after the connectors runtime is
+  installed. It takes no arguments and refuses non-terminal input, so values
+  never enter argv, shell history or logs.
+- Every credential prompt (service credential map, Hermes profile API keys,
+  delegation peer tokens, Google client ID and secret, Calendar keyring and
+  blind-index key) disables terminal echo. Non-secret prompts (socket paths,
+  group IDs, profile and peer JSON without credentials, origins) echo
+  normally.
+- Values are checked with shell builtins before anything is written: blank
+  credentials, single quotes, newlines and control characters are rejected;
+  the host BFF socket must be `/run/pih-connectors/web/connectors.sock`; the
+  delegation socket must be `/run/pih-connectors/hermes-delegation.sock`; the
+  Hermes origin must be a literal loopback HTTP origin; default, orchestrator,
+  peer and device-agent profile IDs must exist in the profile list; and the
+  Google redirect must be the Calendar callback
+  (`/api/ui/v1/calendar/oauth/callback`) on the configured private HTTPS
+  origin.
+- Values are written single-quoted, which systemd reads verbatim, so compact
+  JSON needs no escaping.
+- The script writes a candidate next to the live file under `umask 077`, sets
+  `root:root` and `0600`, verifies both, then runs the installed runtime's
+  `validate-config-command.js --production --require <provider>...` in a
+  transient, network-isolated systemd unit that loads the candidate through
+  `EnvironmentFile=`. Only after `configuration_valid` does it atomically
+  rename the candidate over the live file. On any failure the candidate is
+  removed and the live file is unchanged.
+- The validation command parses the complete environment with the Foundation
+  loader and every registered provider namespace (Calendar, Hermes including
+  delegation peers, device connections). It prints only
+  `configuration_valid` or `configuration_invalid section=<name>
+  [field=<variable or setting>] [reason=<code>]`.
+- The Telegram bot token, authorized sender and chat routes are never asked
+  for or written here; they stay in the Hermes gateway's separate private
+  configuration.
+
+The tracked `infrastructure/operations/config/connectors.env.example` stays
+secret-free. The web container receives only its own `pih-web` credential and
+the container socket path `/run/pih-connectors/connectors.sock` (the host
+directory `/run/pih-connectors/web` is mounted read-only at
+`/run/pih-connectors`); the host connectors file contains the host BFF socket
+`/run/pih-connectors/web/connectors.sock`. The agent-only delegation socket
+stays outside that mount. Only the connectors service and the Hermes gateway
+service identities join the `hermes-agents` group; web never joins it.

@@ -24,6 +24,7 @@ describe("host operation scripts", () => {
   const scripts = [
     "backup.sh",
     "compose-current.sh",
+    "configure-private-connectors.sh",
     "deploy-release.sh",
     "restic-lock-guard.sh",
     "restore-rehearsal.sh",
