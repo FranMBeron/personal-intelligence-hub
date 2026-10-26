@@ -84,7 +84,23 @@ const expectComposerClearOfNavigation = async (page: Page, label: string) => {
   const textarea = page.locator("main .composer textarea").first();
   if (await textarea.count() === 0) return;
   await textarea.focus();
-  await page.waitForTimeout(50);
+  // Measure once focus scrolling and late layout have settled: the composer's position must be
+  // unchanged across several animation frames. A persistent overlap still fails below.
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    const composer = document.querySelector("main .composer");
+    let last = "";
+    let stableFrames = 0;
+    const deadline = performance.now() + 3_000;
+    const tick = () => {
+      const rect = composer?.getBoundingClientRect();
+      const key = `${window.scrollY}:${rect?.top}:${rect?.height}`;
+      stableFrames = key === last ? stableFrames + 1 : 0;
+      last = key;
+      if (stableFrames >= 5 || performance.now() > deadline) resolve();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }));
   const composer = await box(page, "main .composer");
   const navigation = await box(page, ".app-shell > .app-navigation");
   expect(overlaps(composer, navigation), `${label}: composer must not sit under the navigation`).toBe(false);

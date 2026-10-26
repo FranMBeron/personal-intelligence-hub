@@ -2,15 +2,16 @@
  * Fictional private-connectors stack for layout and keyboard e2e checks.
  *
  * It runs the production web build behind the real peer-aware server in connectors mode
- * (Tailscale LocalAPI identity), with three fictional dependencies:
+ * (Tailscale LocalAPI identity) behind a Tailscale Serve simulator on the private proxy socket,
+ * with three fictional dependencies:
  * - a LocalAPI Unix socket that identifies one fictional tailnet user;
  * - a connectors Unix socket answering the BFF's `/v1` routes with schema-valid fictional data;
  * - a personal-data API on TCP that also exposes `/__control` to switch scenarios.
  * Nothing here is real account data, and every response is parsed by the shared contract schemas.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +35,8 @@ import { agentFixture, conversationFixture, sourceStatusFixture } from "@persona
 
 const CONNECTORS_WEB_PORT = 4_410;
 const CONNECTORS_CONTROL_PORT = 4_411;
+// The web's own TCP port carries no identity; the browser reaches the app through the Serve simulator on 4410.
+const WEB_INTERNAL_PORT = 4_412;
 const FICTIONAL_TAILNET_ADDRESS = "100.64.0.10";
 
 type Scenario = "normal" | "long" | "empty" | "error" | "pending";
@@ -43,6 +46,9 @@ const webDirectory = fileURLToPath(new URL("..", import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), "pih-connectors-e2e-"));
 const connectorsSocket = join(directory, "connectors.sock");
 const localApiSocket = join(directory, "localapi.sock");
+const proxyDirectory = join(directory, "proxy");
+mkdirSync(proxyDirectory, { mode: 0o700 });
+const trustedProxySocket = join(proxyDirectory, "web.sock");
 const loginName = "owner@example.test";
 const actorId = "00000000-0000-4000-8000-0000000000aa";
 
@@ -329,6 +335,30 @@ const handleApi = async (request: IncomingMessage, response: ServerResponse) => 
   return json(response, 404, { error: "not_found" });
 };
 
+// ---- Tailscale Serve simulator --------------------------------------------------------------------
+// Like Serve, it accepts the browser's connection, replaces X-Forwarded-For with the tailnet client
+// address it observed (here, the fictional owner device) and forwards over the private Unix socket.
+
+const handleServe = (request: IncomingMessage, response: ServerResponse) => {
+  const headers = { ...request.headers };
+  delete headers["x-forwarded-for"];
+  delete headers["tailscale-user-login"];
+  const upstream = httpRequest({
+    socketPath: trustedProxySocket,
+    path: request.url,
+    method: request.method,
+    headers: { ...headers, "x-forwarded-for": FICTIONAL_TAILNET_ADDRESS },
+  }, (upstreamResponse) => {
+    response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+    upstreamResponse.pipe(response);
+  });
+  upstream.on("error", () => {
+    if (!response.headersSent) response.writeHead(502);
+    response.end();
+  });
+  request.pipe(upstream);
+};
+
 // ---- Startup --------------------------------------------------------------------------------------
 
 const listen = (server: Server, target: string | number) => new Promise<void>((resolve) => {
@@ -340,10 +370,12 @@ const servers = [
   createServer((request, response) => { void handleConnectors(request, response); }),
   createServer(handleLocalApi),
   createServer((request, response) => { void handleApi(request, response); }),
+  createServer(handleServe),
 ];
 await listen(servers[0]!, connectorsSocket);
 await listen(servers[1]!, localApiSocket);
 await listen(servers[2]!, CONNECTORS_CONTROL_PORT);
+await listen(servers[3]!, CONNECTORS_WEB_PORT);
 
 const web = spawn(process.execPath, ["peer-server.mjs"], {
   cwd: webDirectory,
@@ -352,7 +384,7 @@ const web = spawn(process.execPath, ["peer-server.mjs"], {
     PATH: process.env.PATH ?? "",
     NODE_ENV: "production",
     HOSTNAME: host,
-    PORT: String(CONNECTORS_WEB_PORT),
+    PORT: String(WEB_INTERNAL_PORT),
     NEXT_TELEMETRY_DISABLED: "1",
     PUBLIC_ORIGIN: `http://${host}:${CONNECTORS_WEB_PORT}`,
     PIH_API_INTERNAL_URL: `http://${host}:${CONNECTORS_CONTROL_PORT}`,
@@ -362,7 +394,7 @@ const web = spawn(process.execPath, ["peer-server.mjs"], {
     CONNECTORS_SERVICE_TOKEN: "fictional-e2e-connectors-service-token-0001",
     CONNECTORS_DELEGATED_JWT_KEY: Buffer.alloc(32, 7).toString("base64url"),
     CONNECTORS_HUMAN_AUTH_MODE: "tailscale-localapi",
-    CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR: `${host}/32`,
+    PIH_WEB_TRUSTED_PROXY_SOCKET: trustedProxySocket,
     CONNECTORS_TAILSCALE_LOCALAPI_SOCKET: localApiSocket,
     CONNECTORS_TAILSCALE_ALLOWED_USERS: `${loginName}=${actorId}`,
     PIH_CENTRAL_AGENT_ID: "central-fictional",
