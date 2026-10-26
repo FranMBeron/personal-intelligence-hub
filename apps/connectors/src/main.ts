@@ -311,7 +311,7 @@ export const startConnectors = async (
         }
       }
       if (socketPathChanged) {
-        processRef.stderr?.write("Connector socket path changed before shutdown; verify the BFF socket directory ownership\\n");
+        processRef.stderr?.write("Connector socket path changed before shutdown; verify the BFF socket directory ownership\n");
       }
       processRef.off?.("SIGINT", onInterrupt);
       processRef.off?.("SIGTERM", onInterrupt);
@@ -344,7 +344,7 @@ export const startConnectors = async (
 
   const onInterrupt = () => {
     void shutdown().catch(() => {
-      processRef.stderr?.write("Connector service shutdown failed safely\\n");
+      processRef.stderr?.write("Connector service shutdown failed safely\n");
     });
   };
 

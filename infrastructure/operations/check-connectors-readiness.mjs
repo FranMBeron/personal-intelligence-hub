@@ -167,7 +167,7 @@ export const checkConnectorsReadiness = async (
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   checkConnectorsReadiness().catch(() => {
-    process.stderr.write("Connector readiness check failed.\\n");
+    process.stderr.write("Connector readiness check failed.\n");
     process.exitCode = 1;
   });
 }
