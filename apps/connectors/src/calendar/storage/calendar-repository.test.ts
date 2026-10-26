@@ -314,7 +314,7 @@ describe("Calendar repository", () => {
       repository.insertProposal(db, proposal({ id: "new-pending", expiresAt: "2026-10-12T13:00:00.000Z" }), "idem-new-pending", "hash-new-pending");
     });
 
-    await expect(database.write((db) => repository.expirePendingProposals(db, now))).resolves.toBe(1);
+    await expect(database.write((db) => repository.expirePendingProposals(db, { now, requestId: "request-retention" }))).resolves.toBe(1);
     await expect(database.write((db) => repository.purgeOAuthTransactions(db, "2026-10-12T12:00:00.000Z"))).resolves.toBe(1);
     await expect(count(database, "calendar_oauth_transactions")).resolves.toBe(1);
     await expect(database.read((db) => repository.getProposal(db, actorId, "old-pending"))).resolves.toMatchObject({ status: "expired" });

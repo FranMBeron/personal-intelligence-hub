@@ -78,9 +78,9 @@ const accessRole = (role: GoogleCalendarRecord["accessRole"]): CalendarRecord["p
   writer: "writer",
   owner: "owner",
 })[role] as CalendarRecord["providerAccessRole"];
-const requirePrincipal = (principal: DelegatedPrincipal, scope: "calendar:read" | "calendar:configure"): void => {
-  if (!principal.scopes.includes(scope)) fail("forbidden");
-  if (scope === "calendar:configure" && (principal.serviceId !== "pih-web" || principal.actorType !== "human")) {
+// Discovery, selection reads and selection writes are configuration: a pih-web human only.
+const requireConfigure = (principal: DelegatedPrincipal): void => {
+  if (!principal.scopes.includes("calendar:configure") || principal.serviceId !== "pih-web" || principal.actorType !== "human") {
     fail("forbidden");
   }
 };
@@ -95,7 +95,8 @@ const openRecord = (record: CalendarRecord, keyring: CalendarKeyring): CalendarS
     isPrimary: record.isPrimary,
   };
 };
-const connectionStatus = (
+/** Source status derived only from stored connection health and selection; never calls the provider. */
+export const connectionStatus = (
   connection: CalendarConnectionRecord | null,
   calendars: readonly CalendarRecord[],
   now: string,
@@ -175,7 +176,7 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
   }
 
   async discover(principal: DelegatedPrincipal): Promise<CalendarSelection> {
-    requirePrincipal(principal, "calendar:read");
+    requireConfigure(principal);
     return this.#exclusive(principal.actorId, async () => {
       const token = await this.#token(principal.actorId);
       let providerCalendars: readonly GoogleCalendarRecord[];
@@ -216,7 +217,7 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
   }
 
   async get(principal: DelegatedPrincipal): Promise<CalendarSelection> {
-    requirePrincipal(principal, "calendar:read");
+    requireConfigure(principal);
     const result = await this.#database.read((db) => ({
       version: this.#repository.getConnection(db, principal.actorId)?.selectionVersion ?? 0,
       calendars: this.#repository.listCalendars(db, principal.actorId),
@@ -228,7 +229,7 @@ export class CalendarSelectionServiceImpl implements CalendarSelectionService {
   }
 
   async update(principal: DelegatedPrincipal, body: UpdateCalendarSelectionBody): Promise<CalendarSelection> {
-    requirePrincipal(principal, "calendar:configure");
+    requireConfigure(principal);
     const parsedBody = UpdateCalendarSelectionBodySchema.safeParse(body);
     if (!parsedBody.success) return fail("calendar_selection_invalid");
     return this.#exclusive(principal.actorId, async () => {

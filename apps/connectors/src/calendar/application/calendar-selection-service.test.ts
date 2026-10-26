@@ -541,3 +541,24 @@ describe("Calendar selection service", () => {
   });
 });
 
+
+describe("Calendar selection authorization", () => {
+  it("limits discovery and selection reads to a pih-web human holding calendar:configure", async () => {
+    const db = await openDb();
+    await seedConnection(db);
+    const { service, google } = makeService(db);
+    const readOnlyHuman: DelegatedPrincipal = { ...principal(), scopes: ["calendar:read"] };
+    const central: DelegatedPrincipal = {
+      ...principal(), serviceId: "hermes-central", actorType: "agent", scopes: ["calendar:read", "calendar:propose"],
+    };
+    const forgedCentral: DelegatedPrincipal = { ...central, scopes: ["calendar:read", "calendar:configure"] };
+    for (const caller of [readOnlyHuman, central, forgedCentral]) {
+      await expect(service.discover(caller)).rejects.toThrow("forbidden");
+      await expect(service.get(caller)).rejects.toThrow("forbidden");
+    }
+    expect(google.listCalendars).not.toHaveBeenCalled();
+    const configureOnly: DelegatedPrincipal = { ...principal(), scopes: ["calendar:configure"] };
+    await expect(service.discover(configureOnly)).resolves.toMatchObject({ version: 1 });
+    await expect(service.get(configureOnly)).resolves.toMatchObject({ version: 1, items: [] });
+  });
+});

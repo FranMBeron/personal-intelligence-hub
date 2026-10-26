@@ -181,6 +181,8 @@ export interface CalendarRepository {
   getOAuthTransactionReplay(database: SqliteHandle, stateHash: string, actorId: string, now: string): OAuthTransaction | null;
   markOAuthAuthorizationCompleted(database: SqliteHandle, stateHash: string, completedAt: string): void;
   getConnection(database: SqliteHandle, actorId: string): CalendarConnectionRecord | null;
+  /** Every stored connection, ordered by actor; used for content-free source health. */
+  listConnections(database: SqliteHandle): readonly CalendarConnectionRecord[];
   /** Inserts a connection with a fresh authorization id, or updates fields while keeping the stored id. */
   saveConnection(database: SqliteHandle, connection: CalendarConnectionInput): void;
   saveConnectionIfUnchanged(
@@ -213,9 +215,11 @@ export interface CalendarRepository {
   listExecutingProposals(database: SqliteHandle, limit: number, after?: ProposalKeyset): readonly ProposalRecord[];
   transitionProposal(database: SqliteHandle, input: ProposalTransition): ProposalRecord;
   appendAudit(database: SqliteHandle, record: SanitizedCalendarAuditRecord): void;
-  expirePendingProposals(database: SqliteHandle, now: string): number;
+  /** pending -> expired for every proposal due at `system.now`, each with one content-free audit row. */
+  expirePendingProposals(database: SqliteHandle, system: SystemTransitionContext): number;
   purgeOAuthTransactions(database: SqliteHandle, olderThan: string): number;
   purgeStaleEventReferences(database: SqliteHandle, olderThan: string): number;
+  /** Erases encrypted proposal content and provider ETags of proposals terminal since `olderThan`. */
   purgeTerminalProposalPayloads(database: SqliteHandle, olderThan: string): number;
   purgeIdempotencyRecords(database: SqliteHandle, olderThan: string): number;
 }
@@ -241,6 +245,9 @@ export const createCalendarRepository = (): CalendarRepository => ({
     const result = database.prepare("UPDATE calendar_oauth_transactions SET authorization_completed_at = :completedAt WHERE state_hash = :stateHash AND consumed_at IS NOT NULL AND authorization_completed_at IS NULL")
       .run({ stateHash, completedAt });
     requireChanges(result.changes, "calendar_oauth_transaction_unavailable");
+  },
+  listConnections(database) {
+    return database.prepare("SELECT * FROM calendar_connections ORDER BY actor_id").all<ConnectionRow>().map((row) => mapConnection(row)!);
   },
   getConnection(database, actorId) {
     return mapConnection(selectConnection(database, actorId));
@@ -459,9 +466,23 @@ export const createCalendarRepository = (): CalendarRepository => ({
   appendAudit(database, record) {
     insertAudit(database, record);
   },
-  expirePendingProposals(database, now) {
-    return database.prepare("UPDATE calendar_change_proposals SET status = 'expired', version = version + 1, completed_at = :now, safe_reason_code = 'proposal_expired' WHERE status = 'pending' AND expires_at <= :now")
-      .run({ now }).changes;
+  expirePendingProposals(database, system) {
+    const due = database.prepare(
+      "SELECT actor_id, id, version, operation FROM calendar_change_proposals WHERE status = 'pending' AND expires_at <= :now ORDER BY actor_id, id",
+    ).all<{ actor_id: string; id: string; version: number; operation: ProposalRecord["operation"] }>({ now: system.now });
+    // Completion is the expiry instant, matching on-access expiry in the proposal service.
+    const expire = database.prepare(
+      "UPDATE calendar_change_proposals SET status = 'expired', version = version + 1, completed_at = expires_at, safe_reason_code = 'proposal_expired' " +
+      "WHERE actor_id = :actorId AND id = :id AND version = :version AND status = 'pending'",
+    );
+    for (const row of due) {
+      requireChanges(expire.run({ actorId: row.actor_id, id: row.id, version: row.version }).changes, "calendar_proposal_transition_conflict");
+      insertAudit(database, {
+        id: randomUUID(), actorId: row.actor_id, proposalId: row.id, operation: row.operation, outcome: "expired",
+        requestId: system.requestId, occurredAt: system.now,
+      });
+    }
+    return due.length;
   },
   purgeOAuthTransactions(database, olderThan) {
     return database.prepare("DELETE FROM calendar_oauth_transactions WHERE expires_at <= :olderThan").run({ olderThan }).changes;
@@ -475,7 +496,7 @@ export const createCalendarRepository = (): CalendarRepository => ({
     ).run({ olderThan }).changes;
   },
   purgeTerminalProposalPayloads(database, olderThan) {
-    return database.prepare("UPDATE calendar_change_proposals SET encrypted_payload = NULL, payload_purged_at = :olderThan WHERE status IN ('completed', 'rejected', 'expired', 'conflict', 'failed') AND encrypted_payload IS NOT NULL AND COALESCE(completed_at, expires_at) <= :olderThan")
+    return database.prepare("UPDATE calendar_change_proposals SET encrypted_payload = NULL, provider_etag_ciphertext = NULL, payload_purged_at = :olderThan WHERE status IN ('completed', 'rejected', 'expired', 'conflict', 'failed') AND encrypted_payload IS NOT NULL AND COALESCE(completed_at, expires_at) <= :olderThan")
       .run({ olderThan }).changes;
   },
   purgeIdempotencyRecords(database, olderThan) {
