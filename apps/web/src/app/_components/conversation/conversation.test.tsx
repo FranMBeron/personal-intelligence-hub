@@ -37,6 +37,25 @@ describe("Conversation", () => {
     expect(fetcher.mock.calls[0]?.[0]).toContain("/conversations/conversation-01/messages");
   });
 
+  it.each([
+    ["sending", "Enviando…"],
+    ["accepted", "Recibido"],
+    ["streaming", "Respondiendo…"],
+    ["completed", "Completado"],
+    ["failed", "No se pudo completar"],
+  ] as const)("shows the %s delivery state as a Spanish label and keeps the machine value in a data attribute", async (deliveryState, label) => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      items: [{ id: "state-message", conversationId: "conversation-01", role: "assistant", parts: [{ kind: "text", text: "Mensaje ficticio" }], deliveryState, createdAt: timestamp }],
+      pageInfo: { nextCursor: null, hasNextPage: false }, streamCursor: "1",
+    })));
+    const { container } = render(<Conversation conversationId="conversation-01" agentName="Research" capabilities={capabilities} onResolveMain={async () => {
+      throw new Error("unused");
+    }} />);
+    expect(await screen.findByText(label)).toBeTruthy();
+    expect(screen.queryByText(deliveryState)).toBeNull();
+    expect(container.querySelector(".message__state")?.getAttribute("data-state")).toBe(deliveryState);
+  });
+
   it("uses the supplied thread and never allocates another conversation while sending", async () => {
     vi.stubGlobal("crypto", { randomUUID: vi.fn()
       .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")
@@ -194,7 +213,7 @@ describe("Conversation", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: /Enviar/u }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.submit(screen.getByRole("form", { name: "Conversación con Research" }));
     await waitFor(() => expect(keys).toHaveLength(2));
-    await waitFor(() => expect(container.querySelector('article[data-role="user"] .message__state')?.textContent).toBe("accepted"));
+    await waitFor(() => expect(container.querySelector('article[data-role="user"] .message__state')?.textContent).toBe("Recibido"));
     expect(keys[1]).toBe(keys[0]);
     expect(container.querySelectorAll('article[data-role="user"]')).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Reintentar" })).toBeNull();

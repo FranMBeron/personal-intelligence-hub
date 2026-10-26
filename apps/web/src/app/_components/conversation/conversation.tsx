@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  type Conversation, type HermesCapabilities, type MessageHistory, type MessagePart,
+  type Conversation, type HermesCapabilities, type MessageDeliveryState, type MessageHistory, type MessagePart,
 } from "@personal-intelligence-hub/contracts";
 import { useCallback, useEffect, useId, useReducer, useRef, useState } from "react";
 
@@ -25,6 +25,14 @@ const sendErrorMessage = (error: unknown): string => {
     return "El mensaje no se pudo validar. Revisa el contenido e inténtalo de nuevo.";
   }
   return "No se pudo enviar el mensaje. Revisa tu conexión e inténtalo de nuevo.";
+};
+
+const deliveryStateLabels: Record<MessageDeliveryState, string> = {
+  sending: "Enviando…",
+  accepted: "Recibido",
+  streaming: "Respondiendo…",
+  completed: "Completado",
+  failed: "No se pudo completar",
 };
 
 const historyErrorMessage = "No se pudo cargar el historial de esta conversación.";
@@ -308,7 +316,7 @@ export function Conversation({
           <article className="message" data-role={message.role} key={message.id}>
             <p className="message__author">{message.role === "user" ? "Tú" : "Hermes"}</p>
             {message.parts.map((part, index) => <p key={`${part.kind}-${index}`}>{part.kind === "text" ? part.text : part.kind === "voice" ? "Nota de voz" : part.name}</p>)}
-            <p className="message__state">{message.deliveryState}</p>
+            <p className="message__state" data-state={message.deliveryState}>{deliveryStateLabels[message.deliveryState]}</p>
             {message.deliveryState === "failed" ? <button className="button button--quiet" type="button" onClick={() => void retry(message)}>Reintentar</button> : null}
           </article>
         ))}
