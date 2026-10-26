@@ -71,7 +71,7 @@ const calendarGateway = (
   request: Request,
   context: RequestContext,
   gateway: CalendarGateway | null,
-): CalendarGateway | Response => requireGateway(request, context, gateway, "Calendar");
+): CalendarGateway | Response => requireGateway(request, context, gateway, "Calendar", { notConfiguredStatus: 501 });
 
 type Operation = (gateway: CalendarGateway, context: RequestContext) => Promise<Response>;
 

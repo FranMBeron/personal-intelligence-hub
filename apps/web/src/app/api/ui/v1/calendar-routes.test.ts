@@ -363,9 +363,11 @@ describe("calendar reads", () => {
     expect(gateway.selection).toHaveBeenCalledTimes(1);
   });
 
-  it("returns 503 when Calendar is not configured and 401 without identity", async () => {
+  it("returns 501 when Calendar is not configured and 401 without identity", async () => {
     const unconfigured = await createCalendarStatusHandler(null, policy)(call("/status"));
-    expect(unconfigured.status).toBe(503);
+    // Not configured is permanent for this deployment (501); a configured but failing gateway stays 503.
+    expect(unconfigured.status).toBe(501);
+    expect(await unconfigured.json()).toMatchObject({ status: 501, code: "dependency_unavailable" });
     const anonymous = await createCalendarStatusHandler(gatewayStub(), policy)(call("/status", "GET", undefined, { authorization: "" }));
     expect(anonymous.status).toBe(401);
   });

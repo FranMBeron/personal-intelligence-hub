@@ -5,8 +5,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Conversation } from "./conversation";
+import type * as EventStream from "./event-stream";
 
-vi.mock("./event-stream", () => ({ subscribeToConversationEvents: vi.fn(async () => undefined) }));
+vi.mock("./event-stream", async (importOriginal) => ({
+  ...await importOriginal<typeof EventStream>(),
+  subscribeToConversationEvents: vi.fn(async () => undefined),
+}));
 
 const capabilities: HermesCapabilities = {
   text: true,
