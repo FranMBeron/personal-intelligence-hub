@@ -24,11 +24,14 @@ export function AgentRoster({
   result,
   capabilities,
   onProfileToggle,
+  timeZone = null,
 }: Readonly<{
   result: RosterResult;
   capabilities: HermesCapabilities | null;
   /** Called when the user (not the URL) opens or closes a profile from a card. */
   onProfileToggle?: () => void;
+  /** User's preferred IANA zone; `null` renders explicit UTC. */
+  timeZone?: string | null;
 }>) {
   const view = useMemo(() => buildAgentsView(result), [result]);
   const [rawFilter, setFilter] = useQueryParam("filter");
@@ -56,6 +59,7 @@ export function AgentRoster({
               agent={agent}
               capabilities={capabilities}
               headingLevel={3}
+              timeZone={timeZone}
               selected={selectedId === agent.id}
               onOpen={(agentId) => {
                 onProfileToggle?.();

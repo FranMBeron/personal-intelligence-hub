@@ -87,6 +87,19 @@ describe("DelegationLedger", () => {
     await waitFor(() => expect(get).toHaveBeenCalledWith("d-central", expect.any(AbortSignal)));
   });
 
+  it.each([
+    ["Asia/Tokyo", [", 18:00", ", 18:30"], false],
+    [null, [", 9:00", ", 9:30"], true],
+  ] as const)("shows delegation times in zone %s and marks UTC only as the fallback", async (timeZone, clocks, utc) => {
+    const { client } = fakeClient([fromCentral]);
+    render(<DelegationLedger agentId="coordinator" agentNames={names} client={client} timeZone={timeZone} />);
+    fireEvent.click(await waitFor(() => row("Preparar resumen semanal")));
+    const detail = screen.getByRole("group", { name: /Detalle de la delegación/u });
+    const times = within(detail).getAllByRole("time").map((node) => node.textContent ?? "");
+    for (const clock of clocks) expect(times.some((text) => text.includes(clock))).toBe(true);
+    expect(times.every((text) => text.endsWith(" UTC") === utc)).toBe(true);
+  });
+
   it("only points aria-controls at a detail region that exists", async () => {
     const { client } = fakeClient([fromCentral, fromTelegram]);
     render(<DelegationLedger agentId="coordinator" agentNames={names} client={client} />);

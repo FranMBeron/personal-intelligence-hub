@@ -1,7 +1,7 @@
 import { agentFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
 import { describe, expect, it } from "vitest";
 
-import { buildAgentsView, filterAgents, parseAgentFilter } from "./agents-view";
+import { buildAgentsView, filterAgents, formatAgentTime, parseAgentFilter } from "./agents-view";
 
 const metric = (view: ReturnType<typeof buildAgentsView>, id: string) => {
   const found = view.metrics.find((item) => item.id === id);
@@ -91,5 +91,21 @@ describe("filters", () => {
     ["<script>", "all"],
   ] as const)("parses %s as %s", (value, expected) => {
     expect(parseAgentFilter(value)).toBe(expected);
+  });
+});
+
+describe("formatAgentTime", () => {
+  it("renders in the user's preferred zone without a UTC suffix", () => {
+    const text = formatAgentTime("2026-10-12T12:00:00.000Z", "Asia/Tokyo");
+    expect(text).toContain("21:00");
+    expect(text).not.toContain("UTC");
+  });
+
+  it("labels times explicitly as UTC when the preferred zone is unavailable", () => {
+    for (const zone of [null, "Not/AZone"]) {
+      const text = formatAgentTime("2026-10-12T12:00:00.000Z", zone);
+      expect(text).toContain("12:00");
+      expect(text).toMatch(/ UTC$/u);
+    }
   });
 });
