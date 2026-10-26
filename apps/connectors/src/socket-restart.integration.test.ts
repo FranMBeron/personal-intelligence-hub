@@ -239,13 +239,22 @@ describe("directory-mounted connector socket restart", () => {
       await assertClientGroupRequired(web, inspectorUid, inspectorPrimaryGid);
       await inspectMountedSocket(root, inspector.project);
 
-      const firstInode = (await stat(webSocket)).ino;
+      // The filesystem may hand the replacement the same inode number after unlink + create
+      // (ext4 reuses freed inodes), so the replacement is proven by the old listener closing,
+      // its path being removed, and a new inode identity (number plus change time) answering.
+      const firstSocket = await stat(webSocket, { bigint: true });
+      const firstApp = first.app;
       await first.shutdown();
       first = undefined;
+      expect(firstApp.server.listening).toBe(false);
+      await expect(stat(webSocket)).rejects.toMatchObject({ code: "ENOENT" });
 
       second = await startBuiltConnectors();
       await waitForPath(webSocket);
-      expect((await stat(webSocket)).ino).not.toBe(firstInode);
+      const secondSocket = await stat(webSocket, { bigint: true });
+      expect(secondSocket.isSocket()).toBe(true);
+      expect([secondSocket.ino, secondSocket.ctimeNs]).not.toEqual([firstSocket.ino, firstSocket.ctimeNs]);
+      expect(second.app.server.listening).toBe(true);
       await inspectMountedSocket(root, inspector.project);
 
       await second.shutdown();
