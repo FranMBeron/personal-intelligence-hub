@@ -71,6 +71,12 @@ export class UploadRepository {
     const remove=connection.prepare("DELETE FROM hermes_uploads WHERE reference=:reference AND expires_at<=:now AND (claimed_by_admission IS NULL OR consumed_at IS NOT NULL)");
     return rows.filter(({reference})=>remove.run({reference,now}).changes===1).map(({storage_path})=>storage_path);
   }
+  /** Live (unexpired, unconsumed) uploads one actor holds: count and total bytes. */
+  liveUsage(connection:SqliteHandle,actorId:string,now:string):Readonly<{count:number;bytes:number}> {
+    const row=connection.prepare("SELECT count(*) AS count, coalesce(sum(size_bytes),0) AS bytes FROM hermes_uploads WHERE actor_id=:actorId AND expires_at>:now AND consumed_at IS NULL")
+      .get<{count:number;bytes:number}>({actorId,now});
+    return {count:row?.count??0,bytes:row?.bytes??0};
+  }
   isStorageReferenced(connection:SqliteHandle,storagePath:string):boolean {
     return connection.prepare("SELECT 1 AS present FROM hermes_uploads WHERE storage_path=:storagePath").get<{present:number}>({storagePath})!==undefined;
   }

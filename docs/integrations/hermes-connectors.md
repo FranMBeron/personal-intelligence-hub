@@ -88,7 +88,7 @@ Names only; values are private.
 | `HERMES_<PROFILE>_API_KEY` | One distinct API key per enabled profile, named by its `keyEnvironment`. |
 | `HERMES_UPLOAD_DIRECTORY` | Absolute directory outside the repository for pending images. |
 | `HERMES_IMAGE_MAX_BYTES` | Per-image ceiling (at most 10 MiB). |
-| `HERMES_UPLOAD_TTL_SECONDS` | Unclaimed upload lifetime (60–3600). |
+| `HERMES_UPLOAD_TTL_SECONDS` | Unclaimed upload lifetime (60–3600). Each actor may hold at most 24 live (unexpired, unconsumed) uploads and 64 MiB in total; beyond that, uploads answer `429 too_many_requests` or `413 payload_too_large` until earlier ones are sent or expire. |
 | `HERMES_EVENT_RETENTION_HOURS` | Normalized event retention (24–720). |
 | `HERMES_IDEMPOTENCY_RETENTION_HOURS` | Terminal idempotency retention (at least the event retention). |
 | `HERMES_DELEGATION_ORCHESTRATOR_ID` | The single profile allowed to delegate. |
