@@ -381,4 +381,55 @@ describe("ThreadWorkspace", () => {
     expect(screen.getByRole("button", { name: "Seleccionar Planning main" }).getAttribute("aria-pressed")).toBe("true");
     expect(fetcher.mock.calls.some(([input]) => String(input).includes("/agents/planning/conversation-selection"))).toBe(true);
   });
+  it("shows a linked thread without changing the persisted selection until the user makes it active", async () => {
+    const active = conversationFixture({ id: "active-thread", agentId: "central", isMain: true, title: "Principal" });
+    const linked = conversationFixture({ id: "linked-thread", agentId: "central", title: "Origen de delegación" });
+    const calls: Array<{ path: string; method: string }> = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ path, method });
+      if (path.endsWith("/agents/central/conversation-selection")) return Response.json(method === "PUT"
+        ? selectionFixture({ agentId: "central", conversationId: linked.id, version: 5 })
+        : selectionFixture({ agentId: "central", conversationId: active.id, version: 4 }));
+      if (path.endsWith("/conversations?agentId=central&archived=false&limit=50")) return Response.json({ items: [active], pageInfo: emptyList.pageInfo });
+      if (path.endsWith("/conversations?agentId=central&archived=true&limit=50")) return Response.json(emptyList);
+      if (path.endsWith("/conversations/linked-thread")) return Response.json(linked);
+      if (path.includes("/messages?limit=50")) return Response.json(history);
+      throw new Error(`Unexpected request ${method} ${path}`);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<ThreadWorkspace agentId="central" agentName="Central" capabilities={capabilities} requestedConversationId="linked-thread" />);
+    const linkedButton = await screen.findByRole("button", { name: "Seleccionar Origen de delegación" });
+    await waitFor(() => expect(linkedButton.getAttribute("aria-pressed")).toBe("true"));
+    expect(screen.getByText(/Tu conversación activa no cambió/u)).toBeTruthy();
+    expect(screen.queryByText("Hilo activo")).toBeNull();
+    expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Usar como conversación activa" }));
+    await waitFor(() => expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1));
+    const write = fetcher.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(write?.[1]?.body))).toEqual({ conversationId: "linked-thread", expectedVersion: 4 });
+    await waitFor(() => expect(screen.queryByText(/Tu conversación activa no cambió/u)).toBeNull());
+  });
+
+  it("never shows a linked thread that belongs to another agent", async () => {
+    const active = conversationFixture({ id: "active-thread", agentId: "central", isMain: true, title: "Principal" });
+    const foreign = conversationFixture({ id: "foreign-thread", agentId: "finance", title: "Hilo ajeno" });
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (init?.method !== undefined && init.method !== "GET") throw new Error("Unexpected mutation");
+      if (path.endsWith("/conversation-selection")) return Response.json(selectionFixture({ agentId: "central", conversationId: active.id, version: 1 }));
+      if (path.includes("/conversations?agentId=central&archived=false")) return Response.json({ items: [active], pageInfo: emptyList.pageInfo });
+      if (path.includes("/conversations?agentId=central&archived=true")) return Response.json(emptyList);
+      if (path.endsWith("/conversations/foreign-thread")) return Response.json(foreign);
+      if (path.includes("/messages?limit=50")) return Response.json(history);
+      throw new Error(`Unexpected request ${path}`);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<ThreadWorkspace agentId="central" agentName="Central" capabilities={capabilities} requestedConversationId="foreign-thread" />);
+    expect(await screen.findByText("La conversación solicitada no está disponible. Se muestra tu conversación activa.")).toBeTruthy();
+    expect(screen.queryByText("Hilo ajeno")).toBeNull();
+    expect(screen.getByRole("button", { name: "Seleccionar Principal" }).getAttribute("aria-pressed")).toBe("true");
+  });
 });

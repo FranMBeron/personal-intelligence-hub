@@ -40,7 +40,8 @@ const queryString = (values: Readonly<Record<string, string | number | undefined
 };
 
 export class ConversationClient {
-  constructor(private readonly fetcher: Fetcher = fetch) {}
+  // The default calls the global fetch unbound: browsers reject it with any other receiver.
+  constructor(private readonly fetcher: Fetcher = (input, init) => fetch(input, init)) {}
 
   async #request<T>(
     path: string,

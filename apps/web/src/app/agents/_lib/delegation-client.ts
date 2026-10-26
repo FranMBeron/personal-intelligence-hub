@@ -24,7 +24,8 @@ export type DelegationReader = Readonly<{
 const QUERY_KEYS = ["sourceAgentId", "targetAgentId", "sourceConversationId", "state", "cursor", "limit"] as const;
 
 export class DelegationClient implements DelegationReader {
-  constructor(private readonly fetcher: typeof fetch = fetch) {}
+  // The default calls the global fetch unbound: browsers reject it with any other receiver.
+  constructor(private readonly fetcher: typeof fetch = (input, init) => fetch(input, init)) {}
 
   async #request<T>(path: string, schema: { parse(value: unknown): T }, signal?: AbortSignal): Promise<T> {
     const response = await this.fetcher(path, {

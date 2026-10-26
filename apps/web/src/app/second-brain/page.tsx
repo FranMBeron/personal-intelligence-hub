@@ -1,26 +1,16 @@
-import type { HermesCapabilities, Snapshot } from "@personal-intelligence-hub/contracts";
-import { headers } from "next/headers";
+import type { Snapshot } from "@personal-intelligence-hub/contracts";
 
 import { PageHeader } from "../_components/app-shell";
-import { Conversation } from "../_components/conversation/conversation";
+import { CentralEntry } from "../_components/conversation/central-entry";
 import { SourceState } from "../_components/source-state";
 import { StatusBadge } from "../_components/status-badge";
 import { BoardView } from "./_components/board-view";
 import { Filters } from "./_components/filters";
 import { buildSecondBrainView, type SecondBrainFilters } from "./_lib/view";
-import { deriveRequestContext } from "../../server/context";
+import { loadHermesPageData, pageRequestContext, readGateway } from "../../server/page-data";
 import { serverRuntime } from "../../server/runtime";
 
 export const dynamic = "force-dynamic";
-
-type Result<T> = { ok: true; value: T } | { ok: false };
-const safely = async <T,>(operation: Promise<T>): Promise<Result<T>> => {
-  try {
-    return { ok: true, value: await operation };
-  } catch {
-    return { ok: false };
-  }
-};
 
 type SearchParams = Record<string, string | string[] | undefined>;
 const scalar = (value: string | string[] | undefined): string | undefined =>
@@ -45,23 +35,12 @@ export default async function SecondBrainPage({
   searchParams,
 }: Readonly<{ searchParams: Promise<SearchParams> }>) {
   const filters = parseFilters(await searchParams);
-  const requestContext = await deriveRequestContext(
-    await headers(),
-    undefined,
-    serverRuntime.identity,
-  );
-  const snapshotPromise: Promise<Result<Snapshot>> = requestContext.ok
-    ? safely(serverRuntime.personalData.snapshot(requestContext.context))
-    : Promise.resolve({ ok: false });
-  const capabilitiesPromise: Promise<Result<HermesCapabilities>> =
-    requestContext.ok && serverRuntime.hermes !== null
-      ? safely(serverRuntime.hermes.capabilities(requestContext.context))
-      : Promise.resolve({ ok: false });
-  const [snapshotResult, capabilitiesResult] = await Promise.all([
-    snapshotPromise,
-    capabilitiesPromise,
+  const context = await pageRequestContext();
+  const [snapshotResult, hermes] = await Promise.all([
+    readGateway(serverRuntime.personalData, context, (gateway, current): Promise<Snapshot> => gateway.snapshot(current)),
+    loadHermesPageData(context),
   ]);
-  const view = snapshotResult.ok
+  const view = snapshotResult.state === "loaded"
     ? buildSecondBrainView(snapshotResult.value, filters)
     : null;
   const stale =
@@ -81,11 +60,8 @@ export default async function SecondBrainPage({
         )}
       />
 
-      <div className="brain-capture">
-        <Conversation
-          capabilities={capabilitiesResult.ok ? capabilitiesResult.value : null}
-          unavailableState={serverRuntime.hermes === null ? "not_configured" : "unavailable"}
-        />
+      <div className="brain-capture page-central">
+        <CentralEntry {...hermes.central} />
       </div>
 
       <div className="brain-workspace">
@@ -103,7 +79,7 @@ export default async function SecondBrainPage({
               </span>
             ))
           )}
-          <p className="collections-hint">Pedile a Hermes que cree o reorganice un tablero.</p>
+          <p className="collections-hint">Pide a Hermes que cree o reorganice un tablero.</p>
         </aside>
 
         <section className="brain-board-area" aria-label="Tablero activo">

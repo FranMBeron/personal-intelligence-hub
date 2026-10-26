@@ -72,6 +72,7 @@ const sourceTitles: Readonly<Record<string, string>> = {
   hermes: "Hermes",
   calendar: "Google Calendar",
   preferences: "Preferencias",
+  "device-connections": "Conexión de dispositivo",
 };
 
 const reasonLabels: Readonly<Record<string, string>> = {
