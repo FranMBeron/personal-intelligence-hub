@@ -39,6 +39,7 @@ export const createConnectorsRequestIdentity = (
     async resolve(headers, metadata) {
       const verified = await resolver.resolve({
         headers,
+        trustedProxy: metadata?.trustedProxy === true,
         ...(metadata?.peerAddress === undefined ? {} : { peerAddress: metadata.peerAddress }),
       });
       if (!verified.ok) return verified;

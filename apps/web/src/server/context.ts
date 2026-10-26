@@ -1,10 +1,11 @@
 import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 
 import { UuidSchema, type ApiProblem } from "@personal-intelligence-hub/contracts";
 
-import { getImmediatePeerAddress } from "./peer-address";
+import { getImmediatePeerAddress, isTrustedProxyPeer } from "./peer-address";
 
 export type VerifiedPrincipal = Readonly<{
   actorId: string;
@@ -39,7 +40,11 @@ export type IdentityResolution =
     }>
   | IdentityFailure;
 
-export type IdentityRequestMetadata = Readonly<{ peerAddress?: string }>;
+/**
+ * Transport facts captured by the peer server. `trustedProxy` is true only for requests that
+ * arrived on the private trusted-proxy Unix listener; `peerAddress` is the TCP peer IP otherwise.
+ */
+export type IdentityRequestMetadata = Readonly<{ peerAddress?: string; trustedProxy: boolean }>;
 
 export interface RequestIdentityAdapter {
   resolve(headers: Headers, metadata?: IdentityRequestMetadata): Promise<IdentityResolution>;
@@ -76,8 +81,13 @@ export const deriveRequestContext = (
     const requestId = UuidSchema.safeParse(suppliedRequestId).success
       ? suppliedRequestId!
       : requestIdFactory();
-    const peerAddress = getImmediatePeerAddress();
-    const resolution = await identity.resolve(headers, peerAddress === undefined ? undefined : { peerAddress });
+    const peer = getImmediatePeerAddress();
+    const metadata: IdentityRequestMetadata = isTrustedProxyPeer(peer)
+      ? { trustedProxy: true }
+      : peer === undefined || isIP(peer) === 0
+        ? { trustedProxy: false }
+        : { peerAddress: peer, trustedProxy: false };
+    const resolution = await identity.resolve(headers, metadata);
 
     if (!resolution.ok) {
       return {

@@ -1,7 +1,6 @@
 import "server-only";
 
-import { isIP } from "node:net";
-import { isAbsolute } from "node:path";
+import { isAbsolute, posix } from "node:path";
 
 import { z } from "zod";
 
@@ -89,20 +88,19 @@ const privateSocketPath = z.string().min(1).superRefine((value, context) => {
   }
 });
 
-const trustedProxyCidr = z.string().superRefine((value, context) => {
-  const [address, prefix, extra] = value.split("/");
-  const family = address === undefined ? 0 : isIP(address);
-  const bits = prefix === undefined ? Number.NaN : Number(prefix);
+const trustedProxySocketPath = z.string().superRefine((value, context) => {
   if (
-    extra !== undefined ||
-    family === 0 ||
-    prefix === undefined ||
-    !/^\d+$/u.test(prefix) ||
-    !Number.isInteger(bits) ||
-    bits < 0 ||
-    bits > (family === 4 ? 32 : 128)
+    value.includes("\0") ||
+    !isAbsolute(value) ||
+    posix.normalize(value) !== value ||
+    !value.endsWith(".sock") ||
+    posix.basename(value) === ".sock" ||
+    Buffer.byteLength(value, "utf8") > 100
   ) {
-    context.addIssue({ code: "custom", message: "Expected an IP CIDR for the trusted proxy." });
+    context.addIssue({
+      code: "custom",
+      message: "PIH_WEB_TRUSTED_PROXY_SOCKET must be a normalized absolute *.sock path of at most 100 bytes.",
+    });
   }
 });
 
@@ -129,7 +127,6 @@ const ConnectorsConfigSchema = z.discriminatedUnion("humanAuthMode", [
     delegatedJwtKey: DelegatedJwtKeySchema,
     humanAuthMode: z.literal("tailscale-localapi"),
     tailscale: z.object({
-      trustedProxyCidr,
       localApiSocketPath: privateSocketPath,
       allowedUsers: connectorAllowedUsersSchema,
     }).strict(),
@@ -147,7 +144,6 @@ const connectorEnvironmentKeys = [
   "CONNECTORS_OIDC_ISSUER",
   "CONNECTORS_OIDC_AUDIENCE",
   "CONNECTORS_OIDC_JWKS_URI",
-  "CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR",
   "CONNECTORS_TAILSCALE_LOCALAPI_SOCKET",
   "CONNECTORS_TAILSCALE_ALLOWED_USERS",
 ] as const;
@@ -179,7 +175,6 @@ const loadConnectorsConfig = (environment: Environment): ConnectorsConfig | unde
     environment.CONNECTORS_OIDC_JWKS_URI,
   ].some((value) => value !== undefined);
   const hasTailscaleSettings = [
-    environment.CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR,
     environment.CONNECTORS_TAILSCALE_LOCALAPI_SOCKET,
     environment.CONNECTORS_TAILSCALE_ALLOWED_USERS,
   ].some((value) => value !== undefined);
@@ -206,7 +201,6 @@ const loadConnectorsConfig = (environment: Environment): ConnectorsConfig | unde
   return ConnectorsConfigSchema.parse({
     ...common,
     tailscale: {
-      trustedProxyCidr: environment.CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR,
       localApiSocketPath: environment.CONNECTORS_TAILSCALE_LOCALAPI_SOCKET,
       allowedUsers: parseConnectorsAllowedUsers(environment.CONNECTORS_TAILSCALE_ALLOWED_USERS),
     },
@@ -264,7 +258,32 @@ const ServerConfigSchema = z
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema> & Readonly<{
   connectors?: ConnectorsConfig;
+  /** Private Unix socket that Tailscale Serve targets; the only listener whose requests carry identity. */
+  trustedProxySocketPath?: string;
 }>;
+
+/**
+ * Tailscale identity is accepted only from the private trusted-proxy Unix listener, so every
+ * Tailscale mode requires its socket path, and the socket is rejected when no Tailscale mode is on.
+ * Mirrors trustedProxySocketPathFromEnvironment in peer-http-server.mjs, which enforces it at startup.
+ */
+const loadTrustedProxySocketPath = (
+  environment: Environment,
+  existing: z.infer<typeof ServerConfigSchema>,
+  connectors: ConnectorsConfig | undefined,
+): string | undefined => {
+  if (environment.CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR !== undefined) {
+    throw new Error("CONNECTORS_TAILSCALE_TRUSTED_PROXY_CIDR was removed; set PIH_WEB_TRUSTED_PROXY_SOCKET and point Tailscale Serve at that Unix socket.");
+  }
+  const tailscale = existing.authMode === "tailscale" || connectors?.humanAuthMode === "tailscale-localapi";
+  const path = environment.PIH_WEB_TRUSTED_PROXY_SOCKET;
+  if (path === undefined) {
+    if (tailscale) throw new Error("Tailscale identity requires PIH_WEB_TRUSTED_PROXY_SOCKET.");
+    return undefined;
+  }
+  if (!tailscale) throw new Error("PIH_WEB_TRUSTED_PROXY_SOCKET is only valid with a Tailscale identity mode.");
+  return trustedProxySocketPath.parse(path);
+};
 
 export const loadServerConfig = (
   environment: Environment = process.env,
@@ -291,7 +310,9 @@ export const loadServerConfig = (
     hermesDashboardUrl: environment.HERMES_DASHBOARD_URL,
   });
   const connectors = loadConnectorsConfig(environment);
-  if (connectors === undefined) return existing;
+  const socketPath = loadTrustedProxySocketPath(environment, existing, connectors);
+  const withProxy = socketPath === undefined ? existing : { ...existing, trustedProxySocketPath: socketPath };
+  if (connectors === undefined) return withProxy;
   if (existing.hermesInternalUrl !== undefined || existing.hermesServiceToken !== undefined) {
     throw new Error("Legacy HERMES_INTERNAL_URL/HERMES_SERVICE_TOKEN cannot be combined with CONNECTORS_ENABLED; migrate Hermes traffic to the private connectors socket.");
   }
@@ -301,7 +322,7 @@ export const loadServerConfig = (
   if (existing.internalAuthKey !== undefined && Buffer.from(existing.internalAuthKey, "utf8").equals(Buffer.from(connectors.delegatedJwtKey))) {
     throw new Error("The connectors delegated JWT key must be distinct from the Second Brain key.");
   }
-  return { ...existing, connectors };
+  return { ...withProxy, connectors };
 };
 
 export const serverConfig = Object.freeze(loadServerConfig());

@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ConnectorsConfig } from "../config/server";
 import { deriveRequestContext } from "./context";
 import { createConnectorsRequestIdentity } from "./connectors-request-identity";
-import { withImmediatePeerAddress } from "./peer-address";
+import { withImmediatePeerAddress, withTrustedProxyPeer } from "./peer-address";
 
 const actorId = "a03f7492-09f0-4e8f-95d0-12b7c616aaea";
 const config: ConnectorsConfig = {
@@ -15,7 +15,6 @@ const config: ConnectorsConfig = {
   delegatedJwtKey: new Uint8Array(32).fill(4),
   humanAuthMode: "tailscale-localapi",
   tailscale: {
-    trustedProxyCidr: "172.30.0.0/16",
     localApiSocketPath: "/var/run/tailscale/tailscaled.sock",
     allowedUsers: { "allowed@example.test": actorId },
   },
@@ -24,13 +23,13 @@ const signingKey = "fictional-second-brain-internal-key-at-least-32-bytes";
 const now = new Date("2026-10-12T12:00:00.000Z");
 
 describe("production connectors identity wiring", () => {
-  it("uses socket peer metadata and LocalAPI identity before producing a principal", async () => {
+  it("uses the trusted proxy listener and LocalAPI identity before producing a principal", async () => {
     const whoIs = vi.fn(async (_socketPath: string, peerIp: string) => ({
       nodeAddresses: [`${peerIp}/32`],
       loginName: "allowed@example.test",
     }));
     const identity = createConnectorsRequestIdentity(config, signingKey, { whoIs, clock: () => now });
-    const context = await withImmediatePeerAddress("::ffff:172.30.0.9", () =>
+    const context = await withTrustedProxyPeer(() =>
       deriveRequestContext(new Headers({
         "x-forwarded-for": "100.64.0.42",
         "tailscale-user-login": "attacker@example.test",
@@ -55,6 +54,23 @@ describe("production connectors identity wiring", () => {
     expect(payload).toMatchObject({ actor_id: actorId, sub: "tailscale:allowed@example.test" });
   });
 
+  it("rejects a TCP peer (including loopback) forging the owner's forwarded address", async () => {
+    const whoIs = vi.fn(async (_socketPath: string, peerIp: string) => ({
+      nodeAddresses: [`${peerIp}/32`],
+      loginName: "allowed@example.test",
+    }));
+    const identity = createConnectorsRequestIdentity(config, signingKey, { whoIs, clock: () => now });
+    for (const peer of ["127.0.0.1", "::1", "172.30.0.9", "100.64.0.42"]) {
+      await expect(withImmediatePeerAddress(peer, () =>
+        deriveRequestContext(new Headers({
+          "x-forwarded-for": "100.64.0.42",
+          "tailscale-user-login": "allowed@example.test",
+        }), () => "99acb7b5-9dbe-44bf-a590-00824cfd2893", identity),
+      )).resolves.toMatchObject({ ok: false, problem: { status: 401 } });
+    }
+    expect(whoIs).not.toHaveBeenCalled();
+  });
+
   it("fails closed without server-captured peer metadata", async () => {
     const whoIs = vi.fn();
     const identity = createConnectorsRequestIdentity(config, signingKey, { whoIs });
@@ -65,3 +81,4 @@ describe("production connectors identity wiring", () => {
     expect(whoIs).not.toHaveBeenCalled();
   });
 });
+

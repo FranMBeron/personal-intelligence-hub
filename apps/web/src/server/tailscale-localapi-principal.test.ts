@@ -3,16 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import { TailscaleLocalApiPrincipalResolver } from "./tailscale-localapi-principal";
 
 const config = {
-  trustedProxyCidr: "172.30.0.0/16",
   localApiSocketPath: "/var/run/tailscale/tailscaled.sock",
   allowedUsers: { "allowed@example.test": "a03f7492-09f0-4e8f-95d0-12b7c616aaea" },
 };
 const forwardedRequest = (overrides: {
-  peerAddress?: string;
+  trustedProxy?: boolean;
   forwardedFor?: string;
   headers?: Record<string, string>;
 } = {}) => ({
-  peerAddress: overrides.peerAddress ?? "172.30.0.9",
+  trustedProxy: overrides.trustedProxy ?? true,
   headers: new Headers({
     "x-forwarded-for": overrides.forwardedFor ?? "100.64.0.42",
     ...overrides.headers,
@@ -44,17 +43,27 @@ describe("Tailscale LocalAPI verified principal", () => {
     expect(whoIs).toHaveBeenCalledTimes(1);
   });
 
-  it("does not derive identity from headers without a trusted immediate peer", async () => {
-    const whoIs = vi.fn();
+  it("does not derive identity from headers that did not arrive on the trusted proxy listener", async () => {
+    const whoIs = vi.fn(async () => allowedWhoIs);
     const resolver = new TailscaleLocalApiPrincipalResolver(config, whoIs);
     await expect(resolver.resolve(forwardedRequest({
-      peerAddress: "100.64.0.42",
+      trustedProxy: false,
       headers: { "tailscale-user-login": "allowed@example.test" },
-    }))).resolves.toMatchObject({ ok: false });
+    }))).resolves.toMatchObject({ ok: false, status: 401 });
     await expect(resolver.resolve({ headers: new Headers({
       "x-forwarded-for": "100.64.0.42",
       "tailscale-user-login": "allowed@example.test",
     }) })).resolves.toMatchObject({ ok: false });
+    expect(whoIs).not.toHaveBeenCalled();
+  });
+
+  it("rejects a local TCP client (loopback peer) forging the owner's forwarded address", async () => {
+    const whoIs = vi.fn(async () => allowedWhoIs);
+    const resolver = new TailscaleLocalApiPrincipalResolver(config, whoIs);
+    await expect(resolver.resolve({
+      peerAddress: "127.0.0.1",
+      headers: new Headers({ "x-forwarded-for": "100.64.0.42", "tailscale-user-login": "allowed@example.test" }),
+    })).resolves.toMatchObject({ ok: false, status: 401 });
     expect(whoIs).not.toHaveBeenCalled();
   });
 

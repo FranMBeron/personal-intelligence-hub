@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { deriveRequestContext } from "./context";
-import { withImmediatePeerAddress } from "./peer-address";
+import { withImmediatePeerAddress, withTrustedProxyPeer } from "./peer-address";
 
 const generatedRequestId = "5af093d0-84f1-4759-a92e-bbe2949ab957";
 
@@ -155,5 +155,29 @@ describe("transport peer context", () => {
     await withImmediatePeerAddress("172.30.0.9", () =>
       deriveRequestContext(new Headers({ "x-forwarded-for": "100.64.0.42" }), () => generatedRequestId, identity),
     );
+  });
+
+  it("reports trusted proxy listener traffic explicitly and without an IP peer", async () => {
+    const seen: unknown[] = [];
+    const identity = {
+      resolve: async (_headers: Headers, metadata?: unknown) => {
+        seen.push(metadata);
+        return { ok: true as const, authorization: "Bearer verified", concurrencyKey: "verified" };
+      },
+    };
+    await withTrustedProxyPeer(() =>
+      deriveRequestContext(new Headers({ "x-forwarded-for": "100.64.0.42" }), () => generatedRequestId, identity),
+    );
+    await withImmediatePeerAddress("127.0.0.1", () =>
+      deriveRequestContext(new Headers(), () => generatedRequestId, identity),
+    );
+    await withImmediatePeerAddress("unix:trusted-proxy", () =>
+      deriveRequestContext(new Headers(), () => generatedRequestId, identity),
+    );
+    expect(seen).toEqual([
+      { trustedProxy: true },
+      { peerAddress: "127.0.0.1", trustedProxy: false },
+      { trustedProxy: false },
+    ]);
   });
 });

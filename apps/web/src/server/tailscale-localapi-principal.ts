@@ -10,7 +10,16 @@ import type { PrincipalResolution } from "./oidc-principal";
 type TailscaleConfig = Extract<ConnectorsConfig, { humanAuthMode: "tailscale-localapi" }>["tailscale"];
 type WhoIsResult = Readonly<{ nodeAddresses: readonly string[]; loginName: string }>;
 type WhoIsLookup = (socketPath: string, peerIp: string) => Promise<WhoIsResult>;
-type TailscaleRequest = Readonly<{ peerAddress?: string; headers: Headers }>;
+/**
+ * `trustedProxy` must be true only for requests that arrived on the private trusted-proxy Unix
+ * listener, which only Tailscale Serve can reach. TCP requests never carry identity in this mode.
+ */
+type TailscaleRequest = Readonly<{
+  trustedProxy?: boolean;
+  /** Informational TCP peer only; it never grants trust. */
+  peerAddress?: string;
+  headers: Headers;
+}>;
 
 const unauthorized: PrincipalResolution = {
   ok: false,
@@ -93,10 +102,9 @@ export class TailscaleLocalApiPrincipalResolver {
   ) {}
 
   async resolve(request: TailscaleRequest): Promise<PrincipalResolution> {
-    const peerAddress = request.peerAddress;
-    if (peerAddress === undefined || isIP(peerAddress) === 0 || !ipInSubnet(peerAddress, this.config.trustedProxyCidr)) {
-      return unauthorized;
-    }
+    // X-Forwarded-For is only meaningful when Tailscale Serve itself wrote it, i.e. on the trusted
+    // Unix listener. Any TCP peer (including loopback) can forge it, so it is never read for TCP.
+    if (request.trustedProxy !== true) return unauthorized;
 
     const forwardedHeader = request.headers.get("x-forwarded-for");
     if (forwardedHeader === null || forwardedHeader.includes(",")) return unauthorized;
