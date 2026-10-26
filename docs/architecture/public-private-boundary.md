@@ -18,7 +18,8 @@ production configuration.
   protocol headers never authorize a request. Client code may import only the
   explicit `NEXT_PUBLIC_*` allow-list.
 - `AUTH_MODE=oidc` is the generic default. `AUTH_MODE=tailscale` is an optional
-  localhost-only ingress adapter: web validates the Tailscale login against an
+  ingress adapter that reads identity only from the private trusted proxy Unix
+  socket that Tailscale Serve targets (never from TCP, including loopback): web validates the Tailscale login against an
   external `login=actor-uuid` allow-list, discards browser credentials, and
   signs a 30-second internal JWT. API accepts that JWT only in the matching
   mode with fixed HS256 issuer and audience checks. The shared key and

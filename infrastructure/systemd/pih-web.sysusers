@@ -1,0 +1,2 @@
+# Dedicated non-login account for the PIH web container (also creates group pih-web).
+u pih-web - "PIH web container" - /usr/sbin/nologin
