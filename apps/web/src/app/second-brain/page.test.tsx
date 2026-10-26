@@ -1,15 +1,35 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import type { AgentSummary, HermesCapabilities } from "@personal-intelligence-hub/contracts";
+import { agentFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next/headers", () => ({
-  headers: async () =>
-    new Headers({
-      authorization: "Bearer delegated-access-token",
-      "x-request-id": "5af093d0-84f1-4759-a92e-bbe2949ab957",
-    }),
+import { createBffFake } from "../../../test/bff-fake";
+
+const harness = vi.hoisted(() => ({
+  runtime: {
+    personalData: { snapshot: async (): Promise<unknown> => { throw new Error("unset"); } },
+    hermes: null as { capabilities: () => Promise<HermesCapabilities>; agents: () => Promise<readonly AgentSummary[]> } | null,
+    identity: {},
+  },
+  installation: { centralAgentId: "coordinator-custom", deviceConnectionId: null },
 }));
+
+vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
+vi.mock("../../server/context", () => ({
+  deriveRequestContext: async () => ({
+    ok: true,
+    context: { authorization: "Bearer fictional", concurrencyKey: "fictional", requestId: "fictional-request" },
+  }),
+}));
+vi.mock("../../server/runtime", () => ({ serverRuntime: harness.runtime }));
+vi.mock("../../server/installation", () => ({ installationSettings: harness.installation }));
+
+const capabilities: HermesCapabilities = {
+  text: true, streaming: false, voice: { enabled: false },
+  attachments: { enabled: false, acceptedMimeTypes: [], maxFiles: 1, maxBytes: 1024 }, agentConversations: true,
+};
 
 const timestamp = "2026-09-18T12:00:00.000Z";
 const id = (value: number) =>
@@ -89,21 +109,28 @@ const completeSnapshot = {
   ],
 };
 
-const configureSnapshot = (response: Response) => {
-  vi.stubEnv("PIH_API_INTERNAL_URL", "https://api.example.test");
-  vi.stubGlobal("fetch", vi.fn(async () => response));
+const configureSnapshot = (value: unknown | Error) => {
+  harness.runtime.personalData.snapshot = async () => {
+    if (value instanceof Error) throw value;
+    return value;
+  };
+  harness.runtime.hermes = {
+    capabilities: async () => capabilities,
+    agents: async () => [agentFixture({ id: "coordinator-custom", displayName: "Planner" })],
+  };
+  const bff = createBffFake();
+  vi.stubGlobal("fetch", bff.fetcher);
+  return bff;
 };
 
 afterEach(() => {
   cleanup();
-  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
-  vi.resetModules();
 });
 
 describe("SecondBrainPage", () => {
   it("renders every entity read-only with URL-addressable GET filters and safe links", async () => {
-    configureSnapshot(Response.json(completeSnapshot));
+    const bff = configureSnapshot(completeSnapshot);
     const { default: SecondBrainPage } = await import("./page");
     const { container } = render(
       await SecondBrainPage({ searchParams: Promise.resolve({ q: "source" }) }),
@@ -129,26 +156,27 @@ describe("SecondBrainPage", () => {
     expect(container.querySelector(".brain-capture")).not.toBeNull();
     expect(container.querySelector(".brain-workspace")).not.toBeNull();
     expect(container.querySelector(".brain-collections")).not.toBeNull();
+    // The same configured Central entry as every other tab; rendering never mutates.
+    expect(screen.getByRole("region", { name: "Espacio de conversación de Planner" })).toBeTruthy();
+    await waitFor(() => expect(bff.calls.some((call) => call.path === "/api/ui/v1/agents/coordinator-custom/conversation-selection")).toBe(true));
+    expect(bff.mutations()).toEqual([]);
   });
 
   it("distinguishes empty and unavailable results", async () => {
-    configureSnapshot(
-      Response.json({
-        ...completeSnapshot,
-        boards: [],
-        cards: [],
-        relations: [],
-        tasks: [],
-      }),
-    );
+    configureSnapshot({
+      ...completeSnapshot,
+      boards: [],
+      cards: [],
+      relations: [],
+      tasks: [],
+    });
     const { default: EmptyPage } = await import("./page");
     const empty = render(await EmptyPage({ searchParams: Promise.resolve({}) }));
     expect(screen.getByText("No hay contenido que coincida")).toBeTruthy();
     expect(empty.container.querySelector(".brain-workspace")).not.toBeNull();
     empty.unmount();
 
-    vi.resetModules();
-    configureSnapshot(new Response(null, { status: 503 }));
+    configureSnapshot(new Error("unavailable"));
     const { default: UnavailablePage } = await import("./page");
     const unavailable = render(
       await UnavailablePage({ searchParams: Promise.resolve({}) }),

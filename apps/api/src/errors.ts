@@ -85,10 +85,20 @@ const problems: Readonly<Record<ApiProblemCode, ProblemDefinition>> = {
     title: "Cursor expired",
     detail: "The cursor is older than the retained event history.",
   },
+  event_cursor_expired: {
+    status: 410,
+    title: "Event cursor expired",
+    detail: "The event cursor is older than the retained event history.",
+  },
   conflict: {
     status: 409,
     title: "Conflict",
     detail: "The operation conflicts with the current resource state.",
+  },
+  rate_limit_exceeded: {
+    status: 429,
+    title: "Rate limit exceeded",
+    detail: "The connector request rate limit was exceeded.",
   },
   internal_error: {
     status: 500,

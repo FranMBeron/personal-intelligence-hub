@@ -7,9 +7,11 @@ import { describe, expect, it } from "vitest";
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 type Service = {
+  user?: string;
   cap_drop?: string[];
   cpus?: number | string;
   image?: string;
+  group_add?: string[];
   mem_limit?: string;
   pids_limit?: number;
   ports?: string[];
@@ -62,6 +64,47 @@ describe.each([
       "node",
       "node_modules/@personal-intelligence-hub/database/dist/src/migrate.js",
     ]);
+  });
+});
+
+describe("web peer-aware Next host", () => {
+  it("starts the production app through the socket-peer adapter", async () => {
+    const dockerfile = await read("infrastructure/docker/web.Dockerfile");
+    const packageJson = JSON.parse(await read("apps/web/package.json")) as { scripts: { start: string } };
+    const peerServer = await read("apps/web/peer-server.mjs");
+    const peerDispatch = await read("apps/web/peer-http-server.mjs");
+
+    expect(packageJson.scripts.start).toBe("node peer-server.mjs");
+    expect(dockerfile).toContain("COPY --chown=node:node apps/web/peer-server.mjs apps/web/peer-http-server.mjs ./apps/web/");
+    expect(dockerfile).toContain('CMD ["node", "apps/web/peer-server.mjs"]');
+    expect(peerServer).toContain("dispatchWithSocketPeer(request");
+    expect(peerDispatch).toContain("request.socket?.remoteAddress");
+    expect(peerDispatch).not.toContain("x-forwarded-for");
+  });
+});
+
+describe("web trusted proxy socket", () => {
+  it("serves Tailscale identity only on a private Unix listener next to the TCP health listener", async () => {
+    const peerServer = await read("apps/web/peer-server.mjs");
+    const peerDispatch = await read("apps/web/peer-http-server.mjs");
+    expect(peerServer).toContain("trustedProxySocketPathFromEnvironment(process.env)");
+    expect(peerServer).toContain("dispatchFromTrustedProxyListener(request");
+    expect(peerServer).toContain("listenOnTrustedProxySocket(trustedProxyServer, trustedProxySocketPath)");
+    expect(peerDispatch).toContain('TRUSTED_PROXY_PEER = "unix:trusted-proxy"');
+  });
+
+  it("runs production web as a dedicated user with only the private proxy socket directory mounted", async () => {
+    const { services } = await readCompose("infrastructure/docker/compose.production.yaml");
+    const web = services.web;
+    expect(web?.user).toBe(
+      "${PIH_WEB_UID:?set PIH_WEB_UID to the dedicated pih-web UID}:${PIH_WEB_GID:?set PIH_WEB_GID to the dedicated pih-web GID}",
+    );
+    expect(web?.volumes).toContain("/run/pih-web/proxy:/run/pih-web-proxy");
+    expect(JSON.stringify(web?.volumes)).not.toContain("/run/pih-web:");
+    const tmpfiles = await read("infrastructure/systemd/pih-web.tmpfiles");
+    expect(tmpfiles).toMatch(/^d \/run\/pih-web 0700 root root -$/m);
+    expect(tmpfiles).toMatch(/^d \/run\/pih-web\/proxy 0700 pih-web pih-web -$/m);
+    expect(await read("infrastructure/systemd/pih-web.sysusers")).toMatch(/^u pih-web - .+ \/usr\/sbin\/nologin$/m);
   });
 });
 
@@ -143,5 +186,96 @@ describe("Docker build context", () => {
     expect(dockerignore).toMatch(/^\.local-docs$/m);
     expect(dockerignore).toMatch(/^\.env\.\*$/m);
     expect(dockerignore).toMatch(/^secrets$/m);
+  });
+});
+
+describe("private connectors host bundle", () => {
+  it("mounts only the recreated BFF socket directory into web", async () => {
+    const { services } = await readCompose("infrastructure/docker/compose.production.yaml");
+    const web = services.web;
+    expect(web?.volumes).toContain("/run/pih-connectors/web:/run/pih-connectors:ro");
+    expect(web?.group_add).toContain("${PIH_CONNECTORS_CLIENT_GID:?required}");
+    expect(JSON.stringify(web?.volumes)).not.toContain("connectors.sock:");
+    expect(JSON.stringify(web?.volumes)).not.toContain("/run/pih-connectors:/run/pih-connectors:ro");
+    expect(JSON.stringify(web?.volumes)).not.toContain("hermes-delegation.sock");
+    expect(JSON.stringify(services)).not.toContain("3010:3010");
+  });
+
+  it("configures the local web service with the same directory mount and client group", async () => {
+    const { services } = await readCompose("infrastructure/docker/compose.yaml");
+    expect(services.web?.volumes).toContain(
+      "${PIH_CONNECTORS_SOCKET_SOURCE:-/run/pih-connectors/web}:/run/pih-connectors:ro",
+    );
+    expect(services.web?.group_add).toContain("${PIH_CONNECTORS_CLIENT_GID:?required}");
+  });
+
+  it("runs connectors as a hardened unprivileged host service", async () => {
+    const unit = await read("infrastructure/systemd/personal-intelligence-hub-connectors.service");
+    const sysusers = await read("infrastructure/systemd/pih-connectors.sysusers");
+    expect(unit).toContain("User=pih-connectors");
+    expect(unit).toContain("Group=pih-connectors");
+    expect(unit).toContain("SupplementaryGroups=pih-connectors-clients hermes-agents");
+    expect(unit).toContain("EnvironmentFile=/etc/pih-connectors/connectors.env");
+    expect(unit).toContain("ExecStart=/usr/bin/node /opt/pih-connectors/current/dist/src/main.js");
+    expect(unit).toContain("RuntimeDirectory=pih-connectors");
+    expect(unit).toContain("RuntimeDirectoryPreserve=yes");
+    // Others may traverse (never list) the root so the agent group reaches its own 0750 subdirectory.
+    expect(unit).toContain("RuntimeDirectoryMode=0751");
+    expect(unit).toContain("StateDirectory=pih-connectors");
+    expect(unit).toContain("StateDirectoryMode=0700");
+    expect(unit).toContain("UMask=0007");
+    expect(unit).toContain("NoNewPrivileges=yes");
+    expect(unit).toContain("ProtectSystem=strict");
+    expect(unit).toContain("ReadWritePaths=/var/lib/pih-connectors /run/pih-connectors");
+    expect(sysusers).toContain("g pih-connectors -");
+    expect(sysusers).toContain("g pih-connectors-clients -");
+    expect(sysusers).toContain("g hermes-agents -");
+    expect(sysusers).toContain('u pih-connectors - "PIH private connectors" /var/lib/pih-connectors /usr/sbin/nologin');
+  });
+
+  it("confines the connectors service to what Node, Unix sockets and outbound HTTPS need", async () => {
+    const unit = await read("infrastructure/systemd/personal-intelligence-hub-connectors.service");
+    const directives = unit.split("\n");
+    for (const directive of [
+      "CapabilityBoundingSet=",
+      "AmbientCapabilities=",
+      "PrivateDevices=yes",
+      "ProtectKernelTunables=yes",
+      "ProtectKernelModules=yes",
+      "ProtectKernelLogs=yes",
+      "ProtectControlGroups=yes",
+      "RestrictNamespaces=yes",
+      "LockPersonality=yes",
+      "RestrictSUIDSGID=yes",
+      "RestrictRealtime=yes",
+      "SystemCallFilter=@system-service",
+      "SystemCallArchitectures=native",
+      // A filtered call fails with EPERM instead of killing Node, so libuv falls back cleanly.
+      "SystemCallErrorNumber=EPERM",
+    ]) expect(directives).toContain(directive);
+    // V8 JIT needs writable executable memory.
+    expect(unit).not.toMatch(/^MemoryDenyWriteExecute=/mu);
+    // Unix sockets and outbound HTTPS keep working.
+    expect(directives).toContain("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6");
+    expect(unit).not.toMatch(/^PrivateNetwork=/mu);
+  });
+
+  it("exports only the compiled runtime bundle from a scratch final image", async () => {
+    const dockerfile = await read("infrastructure/docker/connectors-build.Dockerfile");
+    expect(dockerfile).toContain("ARG NODE_IMAGE");
+    expect(dockerfile).toContain("FROM ${NODE_IMAGE} AS build");
+    expect(dockerfile).toContain("pnpm install --frozen-lockfile");
+    expect(dockerfile).toContain("pnpm --filter @personal-intelligence-hub/connectors deploy --prod /opt/connectors");
+    expect(dockerfile).toContain("cp -R apps/connectors/dist /opt/connectors/dist");
+    // pnpm deploy leaves a hoisted self-link pointing back into /workspace; docker cp rejects symlinks that
+    // escape the copied tree, so the bundle must drop it and fail the build if any other link escapes.
+    expect(dockerfile).toContain(
+      "rm -f /opt/connectors/node_modules/.pnpm/node_modules/@personal-intelligence-hub/connectors",
+    );
+    expect(dockerfile).toContain("find /opt/connectors -type l");
+    expect(dockerfile).toContain('case "$target" in /opt/connectors/*) ;; *) echo "Symlink escapes connectors bundle: $link" >&2; exit 1 ;; esac');
+    const finalStage = dockerfile.split("FROM scratch AS export")[1];
+    expect(finalStage).toBeDefined();
+    expect(finalStage?.trim().split("\n")).toEqual(["COPY --from=build /opt/connectors /opt/connectors"]);
   });
 });

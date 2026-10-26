@@ -1,0 +1,38 @@
+# OPTIONAL example: route exact Telegram group chats to specialist Hermes
+# profiles through the one existing bot. Every value below is fictional.
+#
+# Not required. An installation where the default profile owns the bot and
+# answers every chat (the single-route setup) remains fully supported and needs
+# none of this block. Enable it only as a deliberate, separately reviewed
+# change; see docs/integrations/hermes-telegram.md.
+#
+# Invariants:
+# - This block belongs ONLY in the default (gateway) profile's private
+#   configuration. Never commit a real copy, real profile slug, or real chat ID.
+# - The Telegram bot token and the sender allowlist stay exclusively in the
+#   default profile. Specialist profiles contain neither.
+# - Senders are validated against the default profile's allowlist before any
+#   route is considered; an unknown sender produces no agent turn.
+# - chat_id values are exact negative numeric group IDs, quoted as strings.
+#   A positive ID (a user or private chat) is never a specialist route.
+# - multiplex_profile_allowlist is closed: the default profile first, then each
+#   routed specialist exactly once. No profile appears in two routes and no
+#   chat_id appears twice. The default profile is never a route target.
+# - Direct messages and every unrouted chat stay on the default profile.
+# - Generate or check this block with buildTelegramProfileRoutes() from
+#   @personal-intelligence-hub/hermes-integration.
+gateway:
+  multiplex_profiles: true
+  multiplex_profile_allowlist:
+    - orchestrator
+    - specialist-a
+    - specialist-b
+  profile_routes:
+    - name: telegram-specialist-a
+      platform: telegram
+      chat_id: "-1000000000001"
+      profile: specialist-a
+    - name: telegram-specialist-b
+      platform: telegram
+      chat_id: "-1000000000002"
+      profile: specialist-b

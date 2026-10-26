@@ -1,245 +1,330 @@
 "use client";
 
 import {
-  ConversationSchema,
-  MessageSchema,
-  UploadedMediaSchema,
-  type HermesCapabilities,
-  type MessagePart,
+  type Conversation, type HermesCapabilities, type MessageDeliveryState, type MessageHistory, type MessagePart,
 } from "@personal-intelligence-hub/contracts";
-import { useEffect, useId, useReducer, useState } from "react";
+import { useCallback, useEffect, useId, useReducer, useRef, useState } from "react";
 
 import { SourceState } from "../source-state";
 import { Composer } from "./composer";
-import { subscribeToConversationEvents } from "./event-stream";
-import {
-  conversationReducer,
-  initialConversationState,
-  type ConversationMessage,
-} from "./state";
+import { reconnectDelay, subscribeToConversationEvents, waitForReconnect } from "./event-stream";
+import { ConversationClient, ConversationClientError } from "./conversation-client";
+import { conversationReducer, initialConversationState, type ConversationMessage } from "./state";
+import { UserFacingError } from "./user-facing-error";
 
-const problemDetail = async (response: Response): Promise<string> => {
-  try {
-    const value = (await response.json()) as { detail?: unknown };
-    return typeof value.detail === "string"
-      ? value.detail
-      : "No se pudo completar la operación.";
-  } catch {
-    return "No se pudo completar la operación.";
+const sendErrorMessage = (error: unknown): string => {
+  if (error instanceof UserFacingError) return error.message;
+  if (error instanceof ConversationClientError) {
+    if (error.status === 401) return "Tu sesión expiró. Vuelve a iniciar sesión.";
+    if (error.status === 403) return "No tienes acceso a esta conversación.";
+    if (error.status === 404) return "Esta conversación ya no está disponible.";
+    if (error.status === 409) return "El envío entró en conflicto con otro cambio. Revisa la conversación antes de reintentar.";
+    if (error.status === 413) return "El mensaje o sus adjuntos superan el tamaño permitido.";
+    if (error.status === 429) return "Demasiados envíos seguidos. Espera un momento e inténtalo de nuevo.";
+    if (error.status >= 500) return "Hermes no pudo procesar el mensaje. Inténtalo de nuevo en unos minutos.";
+    return "El mensaje no se pudo validar. Revisa el contenido e inténtalo de nuevo.";
   }
+  return "No se pudo enviar el mensaje. Revisa tu conexión e inténtalo de nuevo.";
 };
 
-const postJson = (
-  path: string,
-  body: unknown,
-  headers?: HeadersInit,
-): Promise<Response> =>
-  fetch(
-    new Request(new URL(path, window.location.origin), {
-      method: "POST",
-      cache: "no-store",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json", ...headers },
-      body: JSON.stringify(body),
-    }),
-  );
+const deliveryStateLabels: Record<MessageDeliveryState, string> = {
+  sending: "Enviando…",
+  accepted: "Recibido",
+  streaming: "Respondiendo…",
+  completed: "Completado",
+  failed: "No se pudo completar",
+};
+
+const historyErrorMessage = "No se pudo cargar el historial de esta conversación.";
+const historyStoppedMessage = "No se pudo cargar el historial de esta conversación. Recarga la página para intentarlo de nuevo.";
+const streamStoppedMessage = "La actualización en tiempo real se detuvo. Recarga la página para continuar.";
+const maxHistoryAttempts = 5;
+
+type PendingSend = {
+  readonly idempotencyKey: string;
+  readonly text: string;
+  readonly attachments: readonly File[];
+  readonly voice: File | null;
+  parts?: MessagePart[];
+};
+
+const isSameDraft = (pending: PendingSend, text: string, attachments: readonly File[], voice: File | null): boolean =>
+  pending.text === text && pending.voice === voice && pending.attachments.length === attachments.length
+  && pending.attachments.every((file, index) => file === attachments[index]);
 
 export function Conversation({
-  capabilities,
-  agentId,
+  conversationId = null, agentName = "Hermes", capabilities, onResolveMain, client: suppliedClient, canSend = true,
   unavailableState = "not_configured",
 }: Readonly<{
+  conversationId?: string | null;
+  agentName?: string;
   capabilities: HermesCapabilities | null;
-  agentId?: string;
+  /**
+   * Thread source. Send requires either a selected `conversationId` or `onResolveMain` (which resolves and persists the
+   * agent's main thread on first send). Without both, the component renders an explicit "no disponible" state.
+   */
+  onResolveMain?: () => Promise<Conversation>;
+  canSend?: boolean;
+  client?: ConversationClient;
   unavailableState?: "not_configured" | "unavailable";
 }>) {
-  const [state, dispatch] = useReducer(conversationReducer, initialConversationState);
+  const client = useRef(suppliedClient ?? new ConversationClient()).current;
+  const [state, dispatch] = useReducer(conversationReducer, conversationId, (initialId) => ({
+    ...initialConversationState,
+    conversationId: initialId,
+  }));
   const titleId = useId();
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<readonly File[]>([]);
   const [voice, setVoice] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
+  const [completionAnnouncement, setCompletionAnnouncement] = useState("");
+  const previousDelivery = useRef(new Map<string, string>());
+  const generation = useRef(0);
+  const activeId = useRef(conversationId);
+  const pendingResolvedMain = useRef<string | null>(null);
+  const previousId = useRef(conversationId);
+  const sendController = useRef<AbortController | null>(null);
+  const drafts = useRef(new Map<string, { text: string; attachments: readonly File[]; voice: File | null }>());
+  // Sends whose outcome is unknown (interrupted or failed), keyed by thread; resending the same draft reuses the idempotency key and uploads.
+  const pendingSends = useRef(new Map<string, PendingSend>());
+  const draftKey = conversationId ?? "__main__";
+
+  activeId.current = conversationId;
+
+  const updateDraft = useCallback((next: { text: string; attachments: readonly File[]; voice: File | null }) => {
+    drafts.current.set(draftKey, next);
+  }, [draftKey]);
 
   useEffect(() => {
-    if (state.conversationId === null) return;
+    const previous = previousId.current;
+    if (previous === conversationId) return;
+    previousId.current = conversationId;
+    previousDelivery.current.clear();
+    setCompletionAnnouncement("");
+    const isResolvedMain = pendingResolvedMain.current === conversationId;
+    if (isResolvedMain) {
+      pendingResolvedMain.current = null;
+    } else {
+      sendController.current?.abort();
+      generation.current += 1;
+      if (conversationId === null) dispatch({ type: "thread.cleared", generation: generation.current });
+      else dispatch({ type: "thread.selected", conversationId, generation: generation.current });
+    }
+    const nextDraft = drafts.current.get(draftKey) ?? { text: "", attachments: [], voice: null };
+    setText(nextDraft.text);
+    setAttachments(nextDraft.attachments);
+    setVoice(nextDraft.voice);
+    setOperationError(null);
+  }, [conversationId, draftKey]);
+
+  useEffect(() => () => sendController.current?.abort(), []);
+
+  useEffect(() => {
+    let completed: ConversationMessage | undefined;
+    for (const message of state.messages) {
+      const previous = previousDelivery.current.get(message.id);
+      if (message.deliveryState === "completed" && previous !== undefined && previous !== "completed") completed = message;
+      previousDelivery.current.set(message.id, message.deliveryState);
+    }
+    if (completed !== undefined) {
+      const summary = completed.parts.filter((part) => part.kind === "text").map((part) => part.text).join(" ").slice(0, 240);
+      setCompletionAnnouncement(summary === "" ? "Llegó una respuesta completa." : `Respuesta completa: ${summary}`);
+    }
+  }, [state.messages]);
+
+  useEffect(() => {
+    if (conversationId === null || capabilities === null) return;
+    const currentGeneration = generation.current;
     const controller = new AbortController();
-    void subscribeToConversationEvents({
-      conversationId: state.conversationId,
-      signal: controller.signal,
-      onEvent: (event) => dispatch({ type: "event.received", event }),
-      onUnavailable: () =>
-        setOperationError(
-          "La actualización en tiempo real está intentando reconectar.",
-        ),
-    });
+    const { signal } = controller;
+    // Hydrate first, then stream from the snapshot's atomic cursor; a 410 means the cursor expired, so re-snapshot once and resubscribe.
+    const run = async () => {
+      let rebaseCursor = false;
+      let expiriesWithoutProgress = 0;
+      while (!signal.aborted) {
+        let history: MessageHistory | undefined;
+        // Bounded backoff keeps the error visible while retrying; aborting (unmount or thread switch) ends the wait at once.
+        for (let attempt = 0; history === undefined; attempt += 1) {
+          try {
+            history = await client.history(conversationId, { limit: 50 }, signal);
+          } catch {
+            if (signal.aborted) return;
+            if (attempt + 1 >= maxHistoryAttempts) { setOperationError(historyStoppedMessage); return; }
+            setOperationError(historyErrorMessage);
+            await waitForReconnect(signal, reconnectDelay(attempt));
+            if (signal.aborted) return;
+          }
+        }
+        if (signal.aborted) return;
+        setOperationError((current) => current === historyErrorMessage ? null : current);
+        dispatch({ type: "history.loaded", conversationId, generation: currentGeneration, history, rebaseCursor });
+        let expired = false;
+        await subscribeToConversationEvents({
+          conversationId,
+          signal,
+          initialCursor: history.streamCursor,
+          onEvent: (event) => {
+            expiriesWithoutProgress = 0;
+            dispatch({ type: "event.received", event, conversationId, generation: currentGeneration });
+          },
+          onCursorExpired: () => { expired = true; },
+          onAccessDenied: () => setOperationError("Las actualizaciones en tiempo real se detuvieron porque la sesión no tiene acceso. Vuelve a iniciar sesión."),
+          onUnavailable: () => setOperationError("La actualización en tiempo real está intentando reconectar."),
+          onStalled: () => setOperationError(streamStoppedMessage),
+        });
+        if (!expired || signal.aborted) return;
+        expiriesWithoutProgress += 1;
+        if (expiriesWithoutProgress > 1) {
+          setOperationError(streamStoppedMessage);
+          return;
+        }
+        rebaseCursor = true;
+      }
+    };
+    void run();
     return () => controller.abort();
-  }, [state.conversationId]);
-
-  if (capabilities === null) {
-    return (
-      <section className="conversation conversation--unavailable surface">
-        <SourceState
-          compact
-          state={unavailableState}
-          title={unavailableState === "not_configured" ? "Hermes no configurado" : "Hermes no disponible"}
-          detail={unavailableState === "not_configured"
-            ? "Configura el adaptador del servidor para activar la conversación."
-            : "La integración está configurada, pero no respondió a esta consulta."}
-        />
-      </section>
-    );
-  }
-
-  const ensureConversation = async (): Promise<string> => {
-    if (state.conversationId !== null) return state.conversationId;
-    const response = await postJson("/api/ui/v1/conversations", {
-      ...(agentId === undefined ? {} : { agentId }),
-    });
-    if (!response.ok) throw new Error(await problemDetail(response));
-    const conversation = ConversationSchema.parse(await response.json());
-    dispatch({ type: "conversation.created", conversationId: conversation.id });
-    return conversation.id;
-  };
-
-  const upload = async (file: File, kind: "attachment" | "voice") => {
-    const form = new FormData();
-    form.set("kind", kind);
-    form.set("media", file);
-    const response = await fetch("/api/ui/v1/hermes/uploads", {
-      method: "POST",
-      cache: "no-store",
-      credentials: "same-origin",
-      body: form,
-    });
-    if (!response.ok) throw new Error(await problemDetail(response));
-    return UploadedMediaSchema.parse(await response.json());
-  };
+  }, [capabilities, client, conversationId]);
 
   const sendExisting = async (
-    conversationId: string,
-    localMessage: ConversationMessage,
+    targetId: string,
+    message: ConversationMessage,
     idempotencyKey: string,
+    signal: AbortSignal,
   ) => {
-    const response = await postJson(
-      `/api/ui/v1/conversations/${encodeURIComponent(conversationId)}/messages`,
-      { parts: localMessage.parts },
-      { "idempotency-key": idempotencyKey },
-    );
-    if (!response.ok) throw new Error(await problemDetail(response));
-    const accepted = MessageSchema.parse(await response.json());
-    dispatch({
-      type: "message.acknowledged",
-      localMessageId: localMessage.id,
-      message: accepted,
-    });
+    const accepted = await client.sendMessage(targetId, idempotencyKey, { parts: message.parts }, signal);
+    dispatch({ type: "message.acknowledged", localMessageId: message.id, message: accepted });
   };
 
   const submit = async () => {
+    if (submitting || !canSend || capabilities === null || (conversationId === null && onResolveMain === undefined)) return;
     setSubmitting(true);
     setOperationError(null);
-    const idempotencyKey = crypto.randomUUID();
-    const localMessageId = crypto.randomUUID();
-    let localMessage: ConversationMessage | undefined;
+    const controller = new AbortController();
+    sendController.current?.abort();
+    sendController.current = controller;
+    let targetGeneration = generation.current;
+    let optimistic: ConversationMessage | undefined;
+    let targetId = conversationId;
+    const isCurrent = () => !controller.signal.aborted && activeId.current === targetId && generation.current === targetGeneration;
     try {
-      const uploadedAttachments = await Promise.all(
-        attachments.map((file) => upload(file, "attachment")),
-      );
-      const uploadedVoice = voice === null ? null : await upload(voice, "voice");
-      const parts: MessagePart[] = [];
-      if (text.trim() !== "") parts.push({ kind: "text", text: text.trim() });
-      parts.push(
-        ...uploadedAttachments.map((media) => ({
-          kind: "attachment" as const,
-          reference: media.reference,
-          name: media.name,
-          mimeType: media.mimeType,
-          size: media.size,
-        })),
-      );
-      if (uploadedVoice !== null) {
-        parts.push({
-          kind: "voice",
-          reference: uploadedVoice.reference,
-          mimeType: uploadedVoice.mimeType,
-          size: uploadedVoice.size,
-        });
+      if (targetId === null) {
+        if (onResolveMain === undefined) throw new Error("Selecciona un espacio de conversación antes de enviar.");
+        const main = await onResolveMain();
+        targetId = main.id;
+        const mainDraft = drafts.current.get("__main__");
+        if (mainDraft !== undefined) drafts.current.set(main.id, mainDraft);
+        if (previousId.current !== main.id) {
+          pendingResolvedMain.current = main.id;
+          activeId.current = main.id;
+          generation.current += 1;
+          targetGeneration = generation.current;
+          dispatch({ type: "thread.selected", conversationId: main.id, generation: targetGeneration });
+        } else {
+          targetGeneration = generation.current;
+        }
       }
-      localMessage = {
-        id: localMessageId,
-        conversationId: state.conversationId ?? "pending",
-        role: "user",
-        parts,
-        deliveryState: "sending",
-        createdAt: new Date().toISOString(),
-        idempotencyKey,
+      if (!isCurrent()) return;
+      const previous = pendingSends.current.get(targetId);
+      const pending: PendingSend = previous !== undefined && isSameDraft(previous, text.trim(), attachments, voice)
+        ? previous
+        : { idempotencyKey: crypto.randomUUID(), text: text.trim(), attachments, voice };
+      pendingSends.current.set(targetId, pending);
+      const { idempotencyKey } = pending;
+      const localMessageId = crypto.randomUUID();
+      let parts = pending.parts;
+      if (parts === undefined) {
+        const uploadedAttachments = await Promise.all(attachments.map((file) => client.upload(targetId!, file, controller.signal)));
+        if (!isCurrent()) return;
+        const uploadedVoice = voice === null ? null : await client.upload(targetId!, voice, controller.signal);
+        if (!isCurrent()) return;
+        const built: MessagePart[] = [];
+        if (text.trim() !== "") built.push({ kind: "text", text: text.trim() });
+        built.push(...uploadedAttachments.map((media) => ({
+          kind: "attachment" as const, reference: media.reference, name: media.name, mimeType: media.mimeType, size: media.size,
+        })));
+        if (uploadedVoice !== null) built.push({ kind: "voice", reference: uploadedVoice.reference, mimeType: uploadedVoice.mimeType, size: uploadedVoice.size });
+        parts = built;
+        pending.parts = built;
+      }
+      optimistic = {
+        id: localMessageId, conversationId: targetId, role: "user", parts,
+        deliveryState: "sending", createdAt: new Date().toISOString(), idempotencyKey,
       };
-      dispatch({ type: "message.submitted", message: localMessage, idempotencyKey });
-      setText("");
-      setAttachments([]);
-      setVoice(null);
-      const conversationId = await ensureConversation();
-      await sendExisting(conversationId, localMessage, idempotencyKey);
+      dispatch({ type: "message.submitted", message: optimistic, idempotencyKey });
+      if (!isCurrent()) return;
+      await sendExisting(targetId, optimistic, idempotencyKey, controller.signal);
+      if (pendingSends.current.get(targetId) === pending) pendingSends.current.delete(targetId);
+      if (!isCurrent()) return;
+      const emptyDraft = { text: "", attachments: [], voice: null };
+      drafts.current.set(targetId, emptyDraft);
+      if (conversationId === null) drafts.current.set("__main__", emptyDraft);
+      setText(""); setAttachments([]); setVoice(null);
     } catch (error) {
-      const detail =
-        error instanceof Error ? error.message : "No se pudo enviar el mensaje.";
+      if (controller.signal.aborted) return;
+      const detail = sendErrorMessage(error);
       setOperationError(detail);
-      if (localMessage !== undefined) {
-        dispatch({ type: "message.failed", messageId: localMessage.id, detail });
-      }
+      if (optimistic !== undefined) dispatch({ type: "message.failed", messageId: optimistic.id, detail });
     } finally {
+      if (sendController.current === controller) sendController.current = null;
       setSubmitting(false);
     }
   };
 
   const retry = async (message: ConversationMessage) => {
     if (message.idempotencyKey === undefined || state.conversationId === null) return;
+    const controller = new AbortController();
+    sendController.current?.abort();
+    sendController.current = controller;
     dispatch({ type: "message.retrying", messageId: message.id });
-    try {
-      await sendExisting(state.conversationId, message, message.idempotencyKey);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "No se pudo reenviar.";
-      dispatch({ type: "message.failed", messageId: message.id, detail });
+    try { await sendExisting(state.conversationId, message, message.idempotencyKey, controller.signal); }
+    catch (error) {
+      if (!controller.signal.aborted) {
+        const detail = sendErrorMessage(error);
+        dispatch({ type: "message.failed", messageId: message.id, detail });
+      }
     }
   };
 
+  const changeText = (value: string) => { setText(value); updateDraft({ text: value, attachments, voice }); };
+  const changeAttachments = (files: readonly File[]) => { setAttachments(files); updateDraft({ text, attachments: files, voice }); };
+  const changeVoice = (file: File | null) => { setVoice(file); updateDraft({ text, attachments, voice: file }); };
+
+  if (capabilities === null) {
+    return <section className="conversation conversation--unavailable surface">
+      <SourceState compact state={unavailableState} title={unavailableState === "not_configured" ? "Hermes no configurado" : "Hermes no disponible"}
+        detail={unavailableState === "not_configured" ? "Configura el adaptador del servidor para activar la conversación." : "La integración está configurada, pero no respondió a esta consulta."} />
+    </section>;
+  }
+
+  if (conversationId === null && onResolveMain === undefined) {
+    return <section className="conversation conversation--unavailable surface">
+      <SourceState compact state="unavailable" title="Conversación no disponible en esta vista"
+        detail={`Esta vista no tiene un hilo de conversación asignado para ${agentName}. Abre la conversación desde el espacio del agente para escribir.`} />
+    </section>;
+  }
+
   return (
-    <section
-      className={`conversation surface ${state.messages.length === 0 ? "conversation--empty" : "conversation--active"}`}
-      aria-labelledby={titleId}
-    >
+    <section className={`conversation surface ${state.messages.length === 0 ? "conversation--empty" : "conversation--active"}`} aria-labelledby={titleId}>
       <header className="conversation__header">
-        <div><p className="eyebrow">Hermes</p><h2 id={titleId}>Conversa con tu sistema</h2></div>
+        <div><p className="eyebrow">Hermes</p><h2 id={titleId}>Conversa con {agentName}</h2></div>
         <span className="conversation__privacy">No se guarda en el navegador</span>
       </header>
-      <div className="conversation__log" role="log" aria-live="polite" aria-relevant="additions text">
-        {state.messages.length === 0 ? (
-          <p className="conversation__welcome">Hermes puede leer el contexto visible y ejecutar solo lo que le pidas.</p>
-        ) : state.messages.map((message) => (
+      <div className="conversation__log" role="log" aria-live="polite" aria-relevant="additions">
+        {state.messages.length === 0 ? <p className="conversation__welcome">Hermes puede leer el contexto visible y ejecutar solo lo que le pidas.</p> : state.messages.map((message) => (
           <article className="message" data-role={message.role} key={message.id}>
             <p className="message__author">{message.role === "user" ? "Tú" : "Hermes"}</p>
-            {message.parts.map((part, index) => (
-              <p key={`${part.kind}-${index}`}>{part.kind === "text" ? part.text : part.kind === "voice" ? "Nota de voz" : part.name}</p>
-            ))}
-            <p className="message__state">{message.deliveryState}</p>
-            {message.deliveryState === "failed" ? (
-              <button className="button button--quiet" type="button" onClick={() => void retry(message)}>Reintentar</button>
-            ) : null}
+            {message.parts.map((part, index) => <p key={`${part.kind}-${index}`}>{part.kind === "text" ? part.text : part.kind === "voice" ? "Nota de voz" : part.name}</p>)}
+            <p className="message__state" data-state={message.deliveryState}>{deliveryStateLabels[message.deliveryState]}</p>
+            {message.deliveryState === "failed" ? <button className="button button--quiet" type="button" onClick={() => void retry(message)}>Reintentar</button> : null}
           </article>
         ))}
       </div>
+      {completionAnnouncement === "" ? null : <p className="sr-only" role="status">{completionAnnouncement}</p>}
       {operationError === null ? null : <p className="conversation__error" role="status">{operationError}</p>}
-      <Composer
-        capabilities={capabilities}
-        text={text}
-        submitting={submitting}
-        attachments={attachments}
-        voice={voice}
-        onTextChange={setText}
-        onAttachmentsChange={setAttachments}
-        onVoiceChange={setVoice}
-        onSubmit={() => void submit()}
-      />
+      <Composer agentName={agentName} capabilities={capabilities} text={text} submitting={submitting} attachments={attachments} voice={voice}
+        onTextChange={changeText} onAttachmentsChange={changeAttachments} onVoiceChange={changeVoice} onSubmit={() => void submit()} submitDisabled={!canSend} />
     </section>
   );
 }

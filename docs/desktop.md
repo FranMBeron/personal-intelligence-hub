@@ -82,6 +82,36 @@ Quit terminates the application. Server changes repeat URL validation and
 the health check. The launch-at-login preference displays the state reported
 by macOS, because an unsigned build may not register a reliable login item.
 
+## Connectors in the app
+
+The app shows the same server-side state as the browser, because both use
+your server's web interface. Server operators configure connectors as
+described in
+[Private Tailscale deployment](deployment/private-tailscale.md#bff-settings-and-user-flows).
+
+- **Time zone:** set it in **Sistema > Tu zona horaria**. It is stored on
+  the server, so the app and every browser show the same day and times. The
+  Mac's own zone is not used.
+- **Chats:** conversations and each agent's selected thread live on the
+  server. Quitting and reopening the app, or opening the hub in a browser,
+  restores the same thread and history. Nothing is stored in the app's
+  settings, and the window states that conversations are not saved in the
+  browser.
+- **Calendar:** **Conectar Google Calendar** prepares a one-time link and
+  **Continuar en navegador** asks you to confirm the destination before
+  opening it in your system browser. Authorization never loads inside the
+  app window. When you return to the app, Sistema refreshes the connection
+  status. If the link expires, start again.
+- **Proposals:** a `/system?proposal=<id>` link opens a review. Nothing
+  changes until you choose **Confirmar cambio**, and the review shows every
+  guest and the full description first.
+- **Device:** **Sistema > Dispositivo** shows the bridge-reported status.
+  **Reconectar** shows **Reconectando…** while it works and **Conectada** only
+  when the bridge confirms it; otherwise it tells you what to do next.
+
+The menu bar **Reconnect** action repeats the server health check. It is
+separate from the device **Reconectar** button.
+
 ## Security and local storage
 
 Remote web content runs in a sandboxed, context-isolated window with no Node.js

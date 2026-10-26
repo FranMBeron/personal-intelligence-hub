@@ -32,6 +32,13 @@ export default defineConfig({
   ],
   webServer: [
     {
+      // Fictional private-connectors stack (production build behind the peer-aware server) on 4410.
+      command: "pnpm --filter @personal-intelligence-hub/contracts build && pnpm exec next build --webpack && node --conditions=development --import tsx e2e/connectors-stack.ts",
+      url: "http://127.0.0.1:4410/health",
+      reuseExistingServer: false,
+      timeout: 300_000,
+    },
+    {
       command: "node --conditions=development --import tsx e2e/fixture-server.ts",
       url: `${fixtureURL}/health/live`,
       reuseExistingServer: false,

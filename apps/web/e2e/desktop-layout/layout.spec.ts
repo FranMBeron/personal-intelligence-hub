@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-for (const viewport of [{ width: 720, height: 672 }, { width: 480, height: 612 }]) {
+// Content areas (window minus a 28px title bar): default control, its minimum, a
+// low-height work area that clamps height only, and the remote hub's initial size.
+for (const viewport of [
+  { width: 720, height: 672 }, { width: 480, height: 612 },
+  { width: 720, height: 612 }, { width: 1024, height: 740 },
+]) {
   for (const view of ["setup", "invalid", "settings", "unavailable"] as const) {
     test(`${view} controls fit the supported ${viewport.width}x${viewport.height} viewport`, async ({ page }) => {
       await page.setViewportSize(viewport);

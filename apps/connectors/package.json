@@ -1,0 +1,25 @@
+{
+  "name": "@personal-intelligence-hub/connectors",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/src/migrations && cp src/migrations/*.sql dist/src/migrations/",
+    "test": "vitest run --passWithNoTests --exclude '**/*.integration.test.ts'",
+    "test:integration": "vitest run .integration.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "backup": "node dist/src/operations/backup-command.js",
+    "restore": "node dist/src/operations/restore-command.js"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "11.2.1",
+    "@fastify/sensible": "6.0.5",
+    "@personal-intelligence-hub/contracts": "workspace:*",
+    "fastify": "5.12.6",
+    "fastify-type-provider-zod": "7.0.0",
+    "jose": "6.2.12",
+    "zod": "4.6.6"
+  },
+  "devDependencies": { "vitest": "5.0.3" }
+}

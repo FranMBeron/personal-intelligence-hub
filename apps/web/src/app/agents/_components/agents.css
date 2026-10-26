@@ -1,0 +1,110 @@
+/* Agentes component styles (Task 8). Page-level layout belongs to the page owner. */
+
+/* Components size themselves from their own inline size (container queries),
+   so they stay correct inside whatever column the page places them in. */
+
+/* Roster: metrics row, separate filter bar, card list (normal flow, no overlap) */
+.agents-roster { container-type: inline-size; display: grid; gap: 12px; min-width: 0; }
+.agents-roster__metrics { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
+.agents-roster__metric { display: grid; gap: 3px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.agents-roster__metric-label { color: var(--muted); font-size: 10px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; overflow-wrap: anywhere; }
+.agents-roster__metric-value { font-size: 19px; line-height: 1.1; overflow-wrap: anywhere; }
+.agents-roster__metric-detail { color: var(--muted); font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; }
+.agents-roster__metric[data-tone="positive"] .agents-roster__metric-detail { color: var(--positive); }
+.agents-roster__metric[data-tone="accent"] .agents-roster__metric-detail { color: var(--accent); }
+.agents-roster__metric[data-tone="danger"] .agents-roster__metric-detail { color: var(--danger); }
+
+.agents-roster__filters { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; min-width: 0; }
+.agents-roster__filter { min-height: 32px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; }
+.agents-roster__filter[aria-pressed="true"] { border-color: var(--accent-strong); background: var(--accent-strong); color: #fff; }
+.agents-roster__filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.agents-roster__filter:disabled { cursor: not-allowed; opacity: .5; }
+
+.agents-roster__roster { min-width: 0; }
+.agents-roster__list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
+.agents-roster__item { display: flex; min-width: 0; }
+.agents-roster__item > .agent-card { flex: 1; min-height: 0; }
+.agents-roster__item .agent-card h3 { margin: 0; overflow-wrap: anywhere; font-size: 13px; }
+.agent-card[data-selected="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* Colours are declared here for every state so `.button--quiet` (and its hover) can never leak
+   low-contrast text onto the dark fill, whatever order the stylesheets load in. */
+.agent-card .agent-conversation > .button { border-color: var(--accent); background: var(--accent); color: var(--surface); }
+.agent-card .agent-conversation > .button[aria-pressed="true"] { border-color: var(--accent-strong); background: var(--accent-strong); color: var(--surface); }
+@media (hover: hover) and (pointer: fine) {
+  .agent-card .agent-conversation > .button:hover,
+  .agent-card .agent-conversation > .button[aria-pressed="true"]:hover { border-color: var(--accent-strong); background: var(--accent-strong); color: var(--surface); }
+}
+.agent-card .agent-conversation > .button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@container (min-width: 420px) {
+  .agents-roster__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (min-width: 760px) {
+  .agents-roster__metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@container (max-width: 419px) {
+  .agents-roster__filters { justify-content: stretch; }
+  .agents-roster__filter { flex: 1 1 auto; }
+}
+
+/* Workspace: full width after the roster; chat first, ledger as its own section */
+.agents-section { display: grid; gap: 14px; min-width: 0; }
+.agent-workspace { container-type: inline-size; display: grid; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+.agent-workspace__header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.agent-workspace__title { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 16px; }
+.agent-workspace__title:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.agent-workspace__body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
+.agent-workspace__direct { display: grid; gap: 10px; min-width: 0; }
+.agent-workspace__section-title { margin: 0; font-size: 11px; font-weight: 900; letter-spacing: .075em; text-transform: uppercase; }
+.agent-workspace__direct .conversation { box-shadow: none; }
+
+@container (min-width: 1100px) {
+  .agent-workspace__body { grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); }
+}
+
+/* Activity: real reported state only */
+.agents-activity { display: grid; gap: 10px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+.agents-activity__title { margin: 0; font-size: 11px; font-weight: 900; letter-spacing: .075em; text-transform: uppercase; }
+.agents-activity__list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.agents-activity__item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; padding: 8px 10px; border-radius: 10px; background: var(--surface-quiet); font-size: 12px; }
+.agents-activity__item strong { min-width: 0; overflow-wrap: anywhere; }
+.agents-activity__item span { color: var(--muted); }
+.agents-activity__item time { margin-left: auto; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.agents-activity__item[data-kind="attention"] span { color: var(--danger); }
+
+@media (pointer: coarse) {
+  .agents-roster__filter { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agents-roster__filter, .delegation-ledger__row { transition: none; }
+}
+
+/* Delegation ledger */
+.delegation-ledger { display: grid; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+.delegation-ledger__header { display: grid; gap: 4px; }
+.delegation-ledger__header :is(h2, h3) { margin: 0; font-size: 11px; font-weight: 900; letter-spacing: .075em; text-transform: uppercase; }
+.delegation-ledger__header p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.delegation-ledger__status, .delegation-ledger__note { margin: 0; color: var(--muted); font-size: 11px; }
+.delegation-ledger__list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.delegation-ledger__item { min-width: 0; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--surface-quiet); }
+.delegation-ledger__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "route badge" "summary time"; align-items: center; gap: 4px 10px; width: 100%; min-height: 44px; padding: 10px 12px; border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.delegation-ledger__row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.delegation-ledger__row[aria-expanded="true"] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; background: var(--surface-deep); }
+.delegation-ledger__route { grid-area: route; min-width: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 800; }
+.delegation-ledger__summary { grid-area: summary; min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 11px; }
+.delegation-ledger__row > .status-badge { grid-area: badge; justify-self: end; }
+.delegation-ledger__time { grid-area: time; justify-self: end; color: var(--muted); font-size: 10px; white-space: nowrap; }
+.delegation-ledger__detail { display: grid; gap: 10px; padding: 12px; }
+.delegation-ledger__facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 8px; margin: 0; }
+.delegation-ledger__facts div { min-width: 0; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--surface); }
+.delegation-ledger__facts .delegation-ledger__wide { grid-column: 1 / -1; }
+.delegation-ledger__facts dt { color: var(--muted); font-size: 9px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.delegation-ledger__facts dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 12px; line-height: 1.4; }
+.delegation-ledger__origin { justify-self: start; margin: 0; color: var(--muted); font-size: 11px; }
+a.delegation-ledger__origin { color: inherit; }
+
+@media (max-width: 480px) {
+  .delegation-ledger { padding: 12px; }
+  .delegation-ledger__row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "route" "summary" "badge" "time"; }
+  .delegation-ledger__row > .status-badge, .delegation-ledger__time { justify-self: start; }
+}

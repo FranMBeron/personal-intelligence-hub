@@ -57,4 +57,20 @@ describe("confirmExternalLink", () => {
     deps.openExternal.mockRejectedValue(new Error("fixture"));
     expect(await confirmExternalLink("https://external.example.test/", deps)).toBe(false);
   });
+  it("hands an OAuth authorization URL to the system browser unchanged only after Open", async () => {
+    const oauth = "https://accounts.example.test/o/oauth2/auth?client_id=fixture&state=opaque&redirect_uri=https%3A%2F%2Fhub.example.test%2Fcallback";
+    const denied = dependencies(0);
+    expect(await confirmExternalLink(oauth, denied)).toBe(false);
+    expect(denied.openExternal).not.toHaveBeenCalled();
+    const approved = dependencies(1);
+    expect(await confirmExternalLink(oauth, approved)).toBe(true);
+    expect(approved.showMessageBox).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ detail: oauth }));
+    expect(approved.openExternal).toHaveBeenCalledExactlyOnceWith(oauth);
+  });
+  it("rejects a non-HTTPS OAuth authorization URL before any dialog", async () => {
+    const deps = dependencies(1);
+    expect(await confirmExternalLink("http://accounts.example.test/o/oauth2/auth?state=opaque", deps)).toBe(false);
+    expect(deps.showMessageBox).not.toHaveBeenCalled();
+    expect(deps.openExternal).not.toHaveBeenCalled();
+  });
 });

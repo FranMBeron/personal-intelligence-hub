@@ -16,7 +16,9 @@ export const ApiProblemCodeSchema = z.enum([
   "idempotency_key_reused",
   "invalid_cursor",
   "cursor_expired",
+  "event_cursor_expired",
   "conflict",
+  "rate_limit_exceeded",
   "internal_error",
   "dependency_unavailable",
 ]);

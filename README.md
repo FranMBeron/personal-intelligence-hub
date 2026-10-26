@@ -78,8 +78,9 @@ secret manager or restrictive local file; never commit working credentials.
 
 The generic `AUTH_MODE=oidc` mode expects a delegated
 `Authorization: Bearer ...` token and remains the default. The optional
-`AUTH_MODE=tailscale` adapter accepts `Tailscale-User-Login` only on the
-localhost-bound web service behind Tailscale Serve, checks an external
+`AUTH_MODE=tailscale` adapter accepts `Tailscale-User-Login` only on a private
+Unix socket (`PIH_WEB_TRUSTED_PROXY_SOCKET`) that only Tailscale Serve can
+reach; requests on the TCP port never carry identity. It checks an external
 allow-list, replaces browser credentials with a short-lived signed token, and
 lets the private API reconstruct the same actor. `PUBLIC_ORIGIN` declares the
 one browser origin allowed to perform mutations; client-supplied forwarding

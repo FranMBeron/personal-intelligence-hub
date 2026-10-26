@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const exec = promisify(execFile);
@@ -100,6 +101,87 @@ async function privateIdentityViolations(cwd: string): Promise<string[]> {
   }
 
   return violations;
+}
+
+function productionSource(path: string): boolean {
+  return /\.[cm]?[jt]sx?$/u.test(path) &&
+    !/\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path) &&
+    !/(?:^|\/)(?:__tests__|tests?|testing|e2e)(?:\/|$)/u.test(path);
+}
+
+function importedSpecifiers(path: string, content: string): string[] {
+  const sourceFile = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true);
+  const specifiers: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier !== undefined && ts.isStringLiteralLike(node.moduleSpecifier)) {
+      specifiers.push(node.moduleSpecifier.text);
+    }
+    if (ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      node.moduleReference.expression !== undefined &&
+      ts.isStringLiteralLike(node.moduleReference.expression)) {
+      specifiers.push(node.moduleReference.expression.text);
+    }
+    if (ts.isCallExpression(node) && node.arguments.length >= 1 &&
+      ts.isStringLiteralLike(node.arguments[0]!)) {
+      const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const requireCall = ts.isIdentifier(node.expression) && node.expression.text === "require";
+      const moduleRequireCall = ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "module" &&
+        node.expression.name.text === "require";
+      if (dynamicImport || requireCall || moduleRequireCall) specifiers.push(node.arguments[0]!.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return specifiers;
+}
+
+function stripSourceExtension(path: string): string {
+  return path.replace(/\.[cm]?[jt]sx?$/u, "");
+}
+
+function importsTestingTarget(
+  sourcePath: string,
+  specifier: string,
+  target: string,
+  cwd: string,
+): boolean {
+  const normalizedSpecifier = stripSourceExtension(specifier);
+  if (normalizedSpecifier === target || normalizedSpecifier.startsWith(`${target}/`)) return true;
+
+  const testingMarker = "/testing/";
+  const markerIndex = target.indexOf(testingMarker);
+  if (markerIndex >= 0) {
+    const packageName = target.slice(0, markerIndex);
+    const testingPath = target.slice(markerIndex + 1);
+    const workspaceAlias = `${packageName}/src/${testingPath}`;
+    if (normalizedSpecifier === workspaceAlias || normalizedSpecifier.startsWith(`${workspaceAlias}/`)) {
+      return true;
+    }
+    if (specifier.startsWith(".")) {
+      const resolvedImport = stripSourceExtension(resolve(cwd, dirname(sourcePath), specifier));
+      const resolvedTarget = resolve(cwd, "packages/contracts/src", testingPath);
+      return resolvedImport === resolvedTarget || resolvedImport.startsWith(`${resolvedTarget}/`);
+    }
+  }
+  return false;
+}
+
+async function findProductionImports(target: string, cwd = repositoryRoot): Promise<string[]> {
+  const { publicPaths } = await repositoryPaths(cwd);
+  const violations: string[] = [];
+  for (const path of publicPaths) {
+    if (!productionSource(path)) continue;
+    const content = await readFile(join(cwd, path), "utf8");
+    if (importedSpecifiers(path, content).some((specifier) =>
+      importsTestingTarget(path, specifier, target, cwd))) {
+      violations.push(path);
+    }
+  }
+  return violations.sort();
 }
 
 describe("desktop file boundary policy", () => {
@@ -305,5 +387,75 @@ describe("public repository boundary", () => {
 
   it("contains no private host or previous-install identity", async () => {
     expect(await privateIdentityViolations(repositoryRoot)).toEqual([]);
+  });
+
+  it("keeps the testing subpath out of production imports", async () => {
+    const violations = await findProductionImports(
+      "@personal-intelligence-hub/contracts/testing/connectors",
+    );
+    expect(violations).toEqual([]);
+  });
+
+  it("detects every forbidden testing import form and workspace source alias", async () => {
+    const root = await mkdtemp(join(tmpdir(), "production-imports-"));
+    try {
+      await exec("git", ["init", "--quiet", root]);
+      const fixtures = {
+        "apps/api/src/static.ts":
+          'import { sourceStatusFixture } from "@personal-intelligence-hub/contracts/testing/connectors";\n',
+        "apps/api/src/dynamic.ts":
+          'export const fixture = import("@personal-intelligence-hub/contracts/testing/connectors");\n',
+        "apps/api/src/dynamic-options.ts":
+          'export const fixture = import("@personal-intelligence-hub/contracts/testing/connectors", {});\n',
+        "apps/api/src/require.cjs":
+          'const fixture = require("@personal-intelligence-hub/contracts/testing/connectors");\n',
+        "apps/api/src/require-extra.cjs":
+          'const fixture = require("@personal-intelligence-hub/contracts/testing/connectors", undefined);\n',
+        "apps/api/src/import-equals.ts":
+          'import fixtures = require("@personal-intelligence-hub/contracts/testing/connectors");\n',
+        "apps/api/src/module-require.cjs":
+          'const fixture = module.require("@personal-intelligence-hub/contracts/testing/connectors");\n',
+        "apps/web/src/package-alias.ts":
+          'import "@personal-intelligence-hub/contracts/src/testing/connectors.js";\n',
+        "apps/web/src/alias.ts":
+          'export { sourceStatusFixture } from "../../../packages/contracts/src/testing/connectors.js";\n',
+      };
+      for (const [path, content] of Object.entries(fixtures)) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), content);
+      }
+
+      expect(await findProductionImports(
+        "@personal-intelligence-hub/contracts/testing/connectors",
+        root,
+      )).toEqual(Object.keys(fixtures).sort());
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("connectors environment example boundary", () => {
+  it("tracks only safe defaults and no installation-specific identity", async () => {
+    const path = "infrastructure/operations/config/connectors.env.example";
+    const inventory = await repositoryPaths(repositoryRoot);
+    expect(inventory.publicPaths).toContain(path);
+    expect(await fileBoundaryViolations(repositoryRoot)).not.toContain(path);
+    expect(await privateIdentityViolations(repositoryRoot)).not.toContain(path);
+
+    const example = await readFile(join(repositoryRoot, path), "utf8");
+    expect(example).toContain("CONNECTORS_SOCKET_PATH=/run/pih-connectors/web/connectors.sock");
+    expect(example).toContain("DEFAULT_TIME_ZONE=Etc/UTC");
+    expect(example).not.toMatch(/\/(?:home|Users)\/[^/\s]+/u);
+    expect(example).not.toMatch(/\.ts\.net\b/u);
+  });
+});
+
+describe("connectors export image boundary", () => {
+  it("keeps build tools and operating-system layers out of the shipped image", async () => {
+    const dockerfile = await readFile(join(repositoryRoot, "infrastructure/docker/connectors-build.Dockerfile"), "utf8");
+    expect(dockerfile).toContain("FROM ${NODE_IMAGE} AS build");
+    const finalStage = dockerfile.split("FROM scratch AS export")[1];
+    expect(finalStage?.trim().split("\n")).toEqual(["COPY --from=build /opt/connectors /opt/connectors"]);
   });
 });

@@ -1,0 +1,47 @@
+[Unit]
+Description=Personal Intelligence Hub private connectors
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pih-connectors
+Group=pih-connectors
+SupplementaryGroups=pih-connectors-clients hermes-agents
+EnvironmentFile=/etc/pih-connectors/connectors.env
+ExecStart=/usr/bin/node /opt/pih-connectors/current/dist/src/main.js
+RuntimeDirectory=pih-connectors
+RuntimeDirectoryMode=0751
+RuntimeDirectoryPreserve=yes
+StateDirectory=pih-connectors
+StateDirectoryMode=0700
+UMask=0007
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pih-connectors /run/pih-connectors
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Unprivileged: no capabilities, devices, kernel or cgroup writes, namespaces,
+# SUID/SGID files or realtime scheduling. Group changes on the socket
+# directories need no capability because the service is a member of those
+# groups. MemoryDenyWriteExecute is deliberately absent: V8's JIT needs it.
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

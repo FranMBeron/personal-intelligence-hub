@@ -95,10 +95,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        application:
-          - api
-          - web
-          - postgres
+        include:
+          - application: api
+            dockerfile: api.Dockerfile
+            image: pih-api
+            build_args: ""
+            target: ""
+          - application: web
+            dockerfile: web.Dockerfile
+            image: pih-web
+            build_args: ""
+            target: ""
+          - application: postgres
+            dockerfile: postgres.Dockerfile
+            image: pih-postgres
+            build_args: ""
+            target: ""
+          - application: connectors
+            dockerfile: connectors-build.Dockerfile
+            image: pih-connectors-export
+            build_args: "--build-arg NODE_IMAGE=node:22.23.3-alpine3.24@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402"
+            target: ""
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -108,14 +125,16 @@ jobs:
       - name: Build immutable application image
         run: >-
           docker build
-          --file infrastructure/docker/${{ matrix.application }}.Dockerfile
-          --tag pih-${{ matrix.application }}:${{ github.sha }}
+          --file infrastructure/docker/${{ matrix.dockerfile }}
+          ${{ matrix.build_args }}
+          ${{ matrix.target }}
+          --tag ${{ matrix.image }}:${{ github.sha }}
           .
 
       - name: Generate CycloneDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
-          image: pih-${{ matrix.application }}:${{ github.sha }}
+          image: ${{ matrix.image }}:${{ github.sha }}
           artifact-name: pih-${{ matrix.application }}-${{ github.sha }}.cyclonedx.json
           format: cyclonedx-json
           upload-release-assets: false
@@ -123,7 +142,7 @@ jobs:
       - name: Fail on high-severity image vulnerabilities
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
         with:
-          image: pih-${{ matrix.application }}:${{ github.sha }}
+          image: ${{ matrix.image }}:${{ github.sha }}
           fail-build: true
           output-format: table
           severity-cutoff: high

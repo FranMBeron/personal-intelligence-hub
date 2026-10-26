@@ -48,10 +48,33 @@ The deploy builds SHA-tagged API, web and PostgreSQL images, generates a Cyclone
 SBOM for each, and fails on high
 vulnerabilities, runs migrations through production Compose, waits for health,
 and only then switches `current` atomically. A failed application rollout
-tries to restore the previous image set. It never restores the database.
+tries to restore the previous image set. It never restores the PostgreSQL
+database; connectors SQLite recovery is described below. The
+connectors build stage exports its production runtime into a scratch-only image;
+that final artifact is SBOM-generated and scanned before the bundle is extracted
+onto the host. The image contains no builder, workspace, or operating-system base.
 The PostgreSQL derivative preserves the vendor entrypoint and data layout while
 installing exact reviewed Alpine library patches. Its generated release setting
 uses the inspected image ID; do not set `PIH_POSTGRES_IMAGE` in the base environment.
+
+Connector SQLite migrations are append-only and must remain forward-compatible with the
+previous release for the rollback window. Provider migrations are allowed only when
+(A) the active connector runtime is history-compatible with a matching migration
+prefix, or (B) there is no active connector runtime; they are never allowed while
+an unmarked connector runtime is active. The Task 9 release at `3d4a4d3` predates
+the history marker and cannot remain active when provider migrations are introduced.
+If first activation fails, rollback restores the prior inactive service state and
+leaves the migrated database dormant; deploy a history-compatible runtime before
+restarting it. Deploy records migration-history format 1 and the sorted packaged
+migration names in its release manifest. Rollback rejects an older unmarked runtime
+when that target would run after provider migrations are present. Add tables, nullable/defaulted columns, and
+other additive structures first; use expand-and-contract across releases before removing
+or changing structures. Default rollback restores the application and connector runtime only and
+never rewinds database data or schema; only the explicit
+`--restore-connectors-snapshot` mode below replaces connector data. The migration history compatibility ledger lets
+an older runtime verify its packaged prefix and an intact recorded future suffix; it
+does not make destructive schema changes safe to roll back.
+Deploy’s manifest preflight is only an early compatibility filter; it does not prove the live database state. Runtime startup and backup/restore validation remain authoritative, so incompatible live state may be discovered during candidate restart and trigger rollback.
 
 Rollback requires an existing release and generated environment:
 
@@ -62,6 +85,51 @@ PIH_ROOT=/srv/personal-intelligence-hub \
 
 Restore a pre-migration database snapshot only when the migration is known to
 be incompatible. That is a separate, explicitly approved operation.
+
+### Connectors database recovery
+
+When a connectors runtime and its SQLite database already exist, deploy runs
+the active runtime's backup adapter into a fresh root-only directory below
+`backups/connectors-staging/`, archives that verified pair through `backup.sh`
+(an encrypted Restic backup tagged with the active release,
+`pih-connectors-pre-activation` and `pre-activation-<candidate-sha>`), and
+records only the Restic snapshot ID and manifest checksum in the candidate's
+release manifest. Only then does it stop the old service and start the
+candidate. Writes the old service makes between the snapshot and the stop are
+not in the snapshot and are lost if recovery restores it, so avoid using PIH
+during a deployment. Retention (grouped by host because each backup is archived
+from a new staging path; connector snapshots are retained by their own pass)
+and `restic check` run through `backup.sh --retention-only` only after a
+successful activation and web health check. If they fail, the new release
+stays active and deploy exits non-zero saying so; rerun `backup.sh`. If the candidate
+never becomes ready, deploy quarantines the candidate database as
+`connectors.sqlite.failed-<sha>`, restores the transient snapshot with the old
+runtime's restore adapter, restores the previous runtime and service state and
+requires readiness. If that restore or readiness fails, connectors stay
+stopped and the quarantine and Restic snapshot are kept for the operator. A
+first installation (no runtime and no database) takes no snapshot; a host with
+only one of them is refused. If a first installation fails after the candidate
+started, deploy disables and stops connectors, removes the runtime link and
+moves the database the candidate created aside as
+`connectors.sqlite.failed-first-install-<sha>` (never deleted), so the host is
+clean again and the next deployment of a new commit is a first installation.
+If that move fails, deploy prints `reason=first_install_cleanup_failed`; move
+`connectors.sqlite` (and any `-wal`/`-shm` files) out of
+`/var/lib/pih-connectors/` yourself before redeploying. Plaintext staging is removed on every exit path.
+
+Default rollback never changes the connectors database. The explicit form
+
+```bash
+PIH_ROOT=/srv/personal-intelligence-hub \
+  ./current/infrastructure/operations/rollback-release.sh \
+  --restore-connectors-snapshot <previous-git-sha>
+```
+
+replaces the database with the pre-activation snapshot recorded by the active
+release (data written since that activation is quarantined, not merged). It
+verifies the recorded metadata, retrieves and fully verifies the pair before
+stopping anything, and puts the current database back if the target runtime
+does not become ready. See `docs/deployment/private-connectors.md`.
 
 ## Backup and restore
 
