@@ -92,7 +92,9 @@ When a connectors runtime and its SQLite database already exist, deploy runs
 the active runtime's backup adapter into a fresh root-only directory below
 `backups/connectors-staging/`, archives that verified pair through `backup.sh`
 (encrypted Restic backup, retention and `restic check`, tagged with the active
-release and `pre-activation-<candidate-sha>`), and records only the Restic
+release, `pih-connectors-pre-activation` and `pre-activation-<candidate-sha>`;
+connector snapshots get their own host-grouped retention pass because each
+backup is archived from a new staging path), and records only the Restic
 snapshot ID and manifest checksum in the candidate's release manifest. Only
 then does it stop the old service and start the candidate. If the candidate
 never becomes ready, deploy quarantines the candidate database as

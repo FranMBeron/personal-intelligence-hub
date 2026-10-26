@@ -123,7 +123,12 @@ describe("connectors upgrade with database recovery", () => {
     expect(await readFile(`${release.databasePath}.failed-${candidateSha}`, "utf8")).toContain("candidate-migrated");
     expect((await readFile(release.systemdState, "utf8")).trim()).toBe("disabled inactive");
     const raw = await release.events();
-    expect(raw.some((line) => line.startsWith("restic forget") && line.includes("pre-activation"))).toBe(false);
+    // Recovery never forgets the specific snapshot, and no retention runs after the restore attempt.
+    expect(raw.some((line) => line.startsWith("restic forget") && line.includes(`pre-activation-${candidateSha}`))).toBe(false);
+    const restoreAttempt = raw.findIndex((line) => line.startsWith("restore-adapter"));
+    expect(raw.slice(restoreAttempt).some((line) => line.startsWith("restic forget"))).toBe(false);
+    const manifest = JSON.parse(await readFile(join(release.candidateRelease, "release-manifest.json"), "utf8"));
+    expect(await exists(join(release.resticRepository, manifest.connectors.preActivationSnapshot.resticSnapshotId))).toBe(true);
     expect(raw.filter((line) => line.startsWith("readiness-ok"))).toEqual([]);
     expect(await release.stagingLeftovers()).toEqual([]);
   });
@@ -335,6 +340,31 @@ describe("backup.sh connectors snapshot input", () => {
     const result = await run(["--connectors-snapshot", snapshot, "--context-tag", tag]);
     expect(result.stdout).toMatch(/^connectors-snapshot-id=[0-9a-f]{64}$/mu);
     expect(await release.stagingLeftovers()).toEqual(["connectors-staging/deploy.fixture"]);
+  });
+
+  it("groups connector snapshots by a stable tag so retention prunes them without regrouping other snapshots", async () => {
+    const { release, snapshot, run } = await prepare();
+    await run(["--connectors-snapshot", snapshot, "--context-tag", tag]);
+    const raw = await release.events();
+    const backup = raw.find((line) => line.startsWith("restic backup "));
+    expect(backup).toContain("--tag pih-connectors-pre-activation");
+    const forgets = raw.filter((line) => line.startsWith("restic forget "));
+    expect(forgets).toEqual([
+      "restic forget --tag personal-intelligence-hub --keep-daily 7 --keep-weekly 5 --keep-monthly 12 --prune",
+      "restic forget --tag pih-connectors-pre-activation --group-by host --keep-last 5 --keep-daily 7 --keep-weekly 5 --keep-monthly 12 --prune",
+    ]);
+    expect(raw.findIndex((line) => line.startsWith("restic check")))
+      .toBeGreaterThan(raw.lastIndexOf(forgets[1]!));
+  });
+
+  it("leaves ordinary backups ungrouped and untagged as connector snapshots", async () => {
+    const { release } = await prepare();
+    await release.run("backup.sh", [], { RESTIC_REPOSITORY: release.resticRepository });
+    const raw = await release.events();
+    expect(raw.find((line) => line.startsWith("restic backup "))).not.toContain("pih-connectors-pre-activation");
+    // The connector retention pass only ever selects snapshots carrying the connector tag.
+    expect(raw.filter((line) => line.startsWith("restic forget ") && !line.includes("--tag pih-connectors-pre-activation")))
+      .toEqual(["restic forget --tag personal-intelligence-hub --keep-daily 7 --keep-weekly 5 --keep-monthly 12 --prune"]);
   });
 
   it.each([

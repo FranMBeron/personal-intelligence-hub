@@ -180,6 +180,7 @@ if [ -n "$context_tag" ]; then
   restic backup "$staging_directory" \
     --tag personal-intelligence-hub \
     --tag "$release_sha" \
+    --tag pih-connectors-pre-activation \
     --tag "$context_tag"
 else
   restic backup "$staging_directory" \
@@ -191,6 +192,19 @@ fi
 # must leave this service failed so its OnFailure alert fires.
 restic forget \
   --tag personal-intelligence-hub \
+  --keep-daily "${PIH_BACKUP_KEEP_DAILY:-7}" \
+  --keep-weekly "${PIH_BACKUP_KEEP_WEEKLY:-5}" \
+  --keep-monthly "${PIH_BACKUP_KEEP_MONTHLY:-12}" \
+  --prune
+# Every backup is archived from a new random staging path, so the default
+# host+paths grouping above makes each snapshot its own group. Connector
+# pre-activation snapshots carry a stable tag and are retained as one group
+# per host; this pass selects only snapshots with that tag and leaves the
+# grouping of every other snapshot unchanged.
+restic forget \
+  --tag pih-connectors-pre-activation \
+  --group-by host \
+  --keep-last "${PIH_CONNECTORS_KEEP_LAST:-5}" \
   --keep-daily "${PIH_BACKUP_KEEP_DAILY:-7}" \
   --keep-weekly "${PIH_BACKUP_KEEP_WEEKLY:-5}" \
   --keep-monthly "${PIH_BACKUP_KEEP_MONTHLY:-12}" \
