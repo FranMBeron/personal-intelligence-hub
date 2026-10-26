@@ -3,9 +3,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { agentFixture, calendarStatusFixture, sourceStatusFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
+import { agentFixture, calendarSelectionFixture, calendarStatusFixture, sourceStatusFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
 import type { SystemSnapshot } from "../_lib/system-view";
 import { SystemStatusClient } from "../_lib/system-client";
+import { CalendarSettings } from "./calendar-settings";
+import { fakeCalendarClient } from "./calendar-test-client";
 import { SystemStatusSection } from "./system-status-section";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -49,6 +51,22 @@ describe("SystemStatusSection", () => {
     await act(async () => release({ ...healthy, calendar: { state: "loaded", value: calendarStatusFixture({ state: "requires_reauthorization" }) } }));
     await screen.findByText("Requiere volver a autorizar");
     expect((screen.getByRole("button", { name: "Actualizar estado" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("stops showing Calendar as connected once it is disconnected in Sistema", async () => {
+    const disconnect = vi.fn(async () => sourceStatusFixture({ id: "calendar", state: "not_configured", lastSuccessAt: undefined }));
+    render(
+      <>
+        <SystemStatusSection initial={healthy} now="2026-10-12T12:00:00.000Z" timeZone="Etc/UTC" client={{ load: vi.fn() }} />
+        <CalendarSettings initialStatus={healthy.calendar.state === "loaded" ? healthy.calendar.value : calendarStatusFixture()} initialSelection={calendarSelectionFixture()} timeZone="Etc/UTC" client={fakeCalendarClient({ disconnect })} />
+      </>,
+    );
+    const card = screen.getByRole("article", { name: "Google Calendar" });
+    expect(card.textContent).toContain("Disponible");
+    fireEvent.click(screen.getByRole("button", { name: "Desconectar Google Calendar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar desconexión" }));
+    await waitFor(() => expect(screen.getByRole("article", { name: "Google Calendar" }).textContent).not.toContain("Disponible"));
+    expect(screen.getByRole("heading", { level: 2 }).textContent).not.toBe("Servicios verificados");
   });
 
   it("keeps a configured-absent source as not configured when a refresh cannot reach it", async () => {

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { formatInstant } from "../../_lib/time-format";
+import { subscribeCalendarStatus } from "../_lib/calendar-status-events";
 import { SystemStatusClient, type SystemStatusLoader } from "../_lib/system-client";
 import { buildSystemViewFromSnapshot, type Loadable, type SystemSnapshot } from "../_lib/system-view";
 import { LiveRegion } from "./live-region";
@@ -35,6 +36,11 @@ export function SystemStatusSection({ initial, now, timeZone, client }: Readonly
   useEffect(() => () => inFlight.current?.abort(), []);
   // A newer server render (for example after a page refresh) replaces the local snapshot.
   useEffect(() => { setSnapshot(initial); setRenderedAt(now); }, [initial, now]);
+  // A Calendar status learned by the Calendar settings (connect, disconnect, refresh) replaces the card's value.
+  useEffect(() => subscribeCalendarStatus((status) => {
+    setSnapshot((previous) => ({ ...previous, calendar: { state: "loaded", value: status } }));
+    setRenderedAt(new Date().toISOString());
+  }), []);
 
   const refresh = async () => {
     if (inFlight.current !== null) return;

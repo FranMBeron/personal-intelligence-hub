@@ -12,6 +12,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { StatusBadge } from "../../_components/status-badge";
 import { BffRequestError } from "../../_lib/bff-request";
 import { formatClock, formatInstant } from "../../_lib/time-format";
+import { publishCalendarStatus } from "../_lib/calendar-status-events";
 import { reasonLabel } from "../_lib/system-view";
 import { CalendarClient, type CalendarApi } from "./calendar-client";
 import { LiveRegion } from "./live-region";
@@ -135,6 +136,11 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
   }, []);
 
   useEffect(() => { dirty.current = hasUnsavedEdits(saved, draft, discovered); }, [saved, draft, discovered]);
+
+  // Keep the Sistema status card in step with what this view learned (for example, a disconnect).
+  useEffect(() => {
+    if (status !== initialStatus) publishCalendarStatus(status);
+  }, [initialStatus, status]);
 
   useEffect(() => {
     if (focusTarget === null) return;
