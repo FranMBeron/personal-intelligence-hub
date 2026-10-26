@@ -15,6 +15,7 @@ const deviceEnvironment = (): Record<string, string> => ({
   DEVICE_CONNECTION_LABEL: "Fictional band",
   DEVICE_CONNECTION_BRIDGE_SOCKET_PATH: "/run/fictional-device-bridge/bridge.sock",
   DEVICE_CONNECTION_HUMAN_ACTOR: "owner",
+  DEVICE_CONNECTION_OWNER_ACTOR_ID: "0b9d6c55-3f39-4d8e-9a8e-5f9f8c1d2e3a",
   DEVICE_CONNECTION_AGENT_ACTORS_JSON: JSON.stringify({ orchestrator: "agent-orchestrator" }),
 });
 

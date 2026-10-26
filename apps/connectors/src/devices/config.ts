@@ -11,6 +11,8 @@ export type DeviceConnectionConfig = Readonly<{
   bridgeSocketPath: string;
   /** Bridge actor label used when a verified human triggers a reconnect. */
   humanActor: string;
+  /** The only PIH actor (UUID) whose principals may use this connection, human or delegated agent. */
+  ownerActorId: string;
   /** Closed allowlist: agent profile id (verified delegated subject) to bridge actor label. */
   agentActors: ReadonlyMap<string, string>;
 }>;
@@ -31,10 +33,12 @@ const VARIABLES = [
   "DEVICE_CONNECTION_LABEL",
   "DEVICE_CONNECTION_BRIDGE_SOCKET_PATH",
   "DEVICE_CONNECTION_HUMAN_ACTOR",
+  "DEVICE_CONNECTION_OWNER_ACTOR_ID",
   "DEVICE_CONNECTION_AGENT_ACTORS_JSON",
 ] as const;
 
 const PROFILE_ID = /^[a-z][a-z0-9-]{0,62}$/u;
+const ACTOR_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const ACTOR_LABEL = /^[a-z][a-z0-9_-]{0,62}$/u;
 const MAX_AGENT_ACTORS = 16;
 const MAX_SOCKET_PATH_LENGTH = 100;
@@ -113,12 +117,15 @@ const parseDeviceConnections = (environment: Environment): DeviceConnectionsRunt
   if (!DeviceConnectionIdSchema.safeParse(id).success) invalid("DEVICE_CONNECTION_ID");
   const humanActor = required(environment, "DEVICE_CONNECTION_HUMAN_ACTOR");
   if (!ACTOR_LABEL.test(humanActor)) invalid("DEVICE_CONNECTION_HUMAN_ACTOR");
+  const ownerActorId = required(environment, "DEVICE_CONNECTION_OWNER_ACTOR_ID");
+  if (!ACTOR_UUID.test(ownerActorId)) invalid("DEVICE_CONNECTION_OWNER_ACTOR_ID");
 
   const connection: DeviceConnectionConfig = Object.freeze({
     id,
     label: label(environment),
     bridgeSocketPath: socketPath(environment),
     humanActor,
+    ownerActorId: ownerActorId.toLowerCase(),
     agentActors: agentActors(environment),
   });
   return Object.freeze({ connection });

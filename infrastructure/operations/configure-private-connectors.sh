@@ -305,6 +305,12 @@ if [ "$answer" = yes ]; then
   ask DEVICE_CONNECTION_HUMAN_ACTOR "Bridge actor label for the owner" "owner"
   require_charset DEVICE_CONNECTION_HUMAN_ACTOR "$answer" 'a-z0-9_-' "must be a lowercase actor label"
   emit DEVICE_CONNECTION_HUMAN_ACTOR "$answer"
+  ask DEVICE_CONNECTION_OWNER_ACTOR_ID "PIH owner actor ID (UUID of the only person allowed)" ""
+  case "$answer" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+    *) reject DEVICE_CONNECTION_OWNER_ACTOR_ID "must be a lowercase UUID" ;;
+  esac
+  emit DEVICE_CONNECTION_OWNER_ACTOR_ID "$answer"
   ask DEVICE_CONNECTION_AGENT_ACTORS_JSON "Agent profile to bridge actor map (compact JSON object)" "{}"
   case "$answer" in \{*\}) ;; *) reject DEVICE_CONNECTION_AGENT_ACTORS_JSON "must be a compact JSON object" ;; esac
   agent_profiles=$(json_query "$answer" 'keys | join(" ")') || reject DEVICE_CONNECTION_AGENT_ACTORS_JSON "must be a JSON object"

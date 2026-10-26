@@ -20,7 +20,9 @@ const REQUEST_ID = "5af093d0-84f1-4759-a92e-bbe2949ab957";
 const NOW = "2026-10-26T12:00:00.000Z";
 const SOCKET_PATH = "/run/example-device-bridge/bridge.sock";
 
-type Principal = Readonly<{ service: "web" | "agent" | "gateway"; subject?: string; actorType?: ActorType; scopes?: readonly ConnectorScope[] }>;
+const OTHER_ACTOR = "7c1e9a52-61d4-4b0f-8f3a-2d6b9e0c4f11";
+
+type Principal = Readonly<{ service: "web" | "agent" | "gateway"; subject?: string; actorType?: ActorType; actorId?: string; scopes?: readonly ConnectorScope[] }>;
 
 const credential = (
   serviceId: ServiceCredentialPolicy["serviceId"], fill: number, actorTypes: ServiceCredentialPolicy["actorTypes"],
@@ -55,15 +57,16 @@ const connection: DeviceConnectionConfig = {
   label: "Example band",
   bridgeSocketPath: SOCKET_PATH,
   humanActor: "owner",
+  ownerActorId: OWNER,
   agentActors: new Map([["coordinator", "agent-coordinator"], ["health", "agent-health"]]),
 };
 
-const headers = async ({ service, subject = "test-subject", actorType, scopes = ["devices:read", "devices:write"] }: Principal) => {
+const headers = async ({ service, subject = "test-subject", actorType, actorId = OWNER, scopes = ["devices:read", "devices:write"] }: Principal) => {
   const policy = credentials[service];
   return {
     "x-pih-service-token": policy.serviceToken,
     authorization: "Bearer " + await new SignJWT({
-      actor_id: OWNER, actor_type: actorType ?? policy.actorTypes[0], scope: scopes, request_id: REQUEST_ID,
+      actor_id: actorId, actor_type: actorType ?? policy.actorTypes[0], scope: scopes, request_id: REQUEST_ID,
     })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuer(policy.delegatedIssuer)
@@ -139,6 +142,18 @@ describe("device connection routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ state: "unavailable", reasonCode: "device_unreachable", action: "wake_device" });
+  });
+
+  it("refuses an authenticated human who is not the configured owner without contacting the bridge", async () => {
+    const { app, bridge } = await createApp();
+
+    const read = await get(app, { service: "web", actorId: OTHER_ACTOR });
+    const write = await reconnect(app, { service: "web", actorId: OTHER_ACTOR });
+
+    expect(read.statusCode).toBe(403);
+    expect(write.statusCode).toBe(403);
+    expect(write.json()).toMatchObject({ code: "forbidden" });
+    expect(bridge.calls).toEqual([]);
   });
 
   it("reconnects for the human using the configured human actor", async () => {
