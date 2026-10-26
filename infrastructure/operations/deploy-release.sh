@@ -195,6 +195,25 @@ restore_connectors_database() {
   echo "Connectors database restored from the verified pre-activation snapshot; failed candidate data kept at $quarantine." >&2
 }
 
+# A failed first installation leaves no runtime link; move the database the
+# candidate created aside (never delete it) so the host is clean again and the
+# next deployment is a first installation instead of an inconsistent host.
+quarantine_first_install_database() {
+  if [ "$(systemctl is-active "$connectors_service" 2>/dev/null || true)" = active ]; then return 1; fi
+  quarantine="$connectors_database.failed-first-install-$release_sha"
+  for suffix in "" -wal -shm; do
+    if [ -e "$quarantine$suffix" ] || [ -L "$quarantine$suffix" ]; then return 1; fi
+  done
+  for suffix in "" -wal -shm; do
+    if [ -e "$connectors_database$suffix" ] || [ -L "$connectors_database$suffix" ]; then
+      mv -T "$connectors_database$suffix" "$quarantine$suffix" || return 1
+    fi
+  done
+  if [ -e "$quarantine" ]; then
+    echo "First installation failed; the candidate database was kept aside at $quarantine." >&2
+  fi
+}
+
 restore_application_pointers() {
   if [ -n "$previous_release" ]; then
     current_restore="$pih_root/.current-restore.$release_sha.$$"
@@ -259,7 +278,13 @@ rollback_deployment() {
           systemctl disable "$connectors_service" || echo "Connectors disable failed." >&2
         fi
       else
-        restore_connectors_state || echo "Previous connectors service restore failed." >&2
+        if restore_connectors_state; then
+          if [ "$connectors_upgrade" -eq 0 ] && [ -z "$previous_connectors_runtime" ]; then
+            quarantine_first_install_database || echo "reason=first_install_cleanup_failed: the candidate database could not be moved aside; move it away before the next deployment." >&2
+          fi
+        else
+          echo "Previous connectors service restore failed." >&2
+        fi
       fi
     fi
     if [ "$application_pointer_update_started" -eq 1 ]; then

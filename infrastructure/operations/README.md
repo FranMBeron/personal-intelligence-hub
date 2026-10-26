@@ -108,7 +108,14 @@ runtime's restore adapter, restores the previous runtime and service state and
 requires readiness. If that restore or readiness fails, connectors stay
 stopped and the quarantine and Restic snapshot are kept for the operator. A
 first installation (no runtime and no database) takes no snapshot; a host with
-only one of them is refused. Plaintext staging is removed on every exit path.
+only one of them is refused. If a first installation fails after the candidate
+started, deploy disables and stops connectors, removes the runtime link and
+moves the database the candidate created aside as
+`connectors.sqlite.failed-first-install-<sha>` (never deleted), so the host is
+clean again and the next deployment of a new commit is a first installation.
+If that move fails, deploy prints `reason=first_install_cleanup_failed`; move
+`connectors.sqlite` (and any `-wal`/`-shm` files) out of
+`/var/lib/pih-connectors/` yourself before redeploying. Plaintext staging is removed on every exit path.
 
 Default rollback never changes the connectors database. The explicit form
 

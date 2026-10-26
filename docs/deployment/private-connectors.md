@@ -64,7 +64,10 @@ complete release flow):
 1. **First installation.** When neither a prior runtime symlink nor the
    database exists, no snapshot is taken and the candidate creates the
    database. A host where only one of the two exists is refused before any
-   write.
+   write. A failed first installation stops and disables connectors, removes
+   the runtime link and moves the new database aside as
+   `connectors.sqlite.failed-first-install-<sha>`, so a redeploy of a new
+   commit starts again as a first installation.
 2. **Upgrade snapshot.** With both present, the *active* runtime's backup
    adapter writes a verified snapshot into a new root-only `mktemp` directory
    below `/srv/personal-intelligence-hub/backups/connectors-staging/`. The

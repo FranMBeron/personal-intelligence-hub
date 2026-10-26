@@ -223,6 +223,20 @@ describe("connectors upgrade with database recovery", () => {
   });
 
   it.each([
+    ["candidate readiness fails", { READINESS_FAIL_AT: "1" }],
+    ["web rollout fails", { FAIL_COMPOSE_UP: "1" }],
+  ])("returns a failed first installation to a clean state so a new release can deploy (%s)", async (_name, failure) => {
+    const release = await fixture({ previousRuntime: false, database: false });
+    await expect(release.run("deploy-release.sh", [candidateSha], failure)).rejects.toMatchObject({ code: 1 });
+    // Neither a runtime link nor a live database remains, so the next deploy is a first installation again
+    // instead of being refused as inconsistent; the candidate's database is kept aside, never deleted.
+    expect(await exists(join(release.connectorsRoot, "current"))).toBe(false);
+    expect(await exists(release.databasePath)).toBe(false);
+    expect(await readFile(`${release.databasePath}.failed-first-install-${candidateSha}`, "utf8")).toBe("candidate-migrated\n");
+    expect((await readFile(release.systemdState, "utf8")).trim()).toBe("disabled inactive");
+  });
+
+  it.each([
     { previousRuntime: true, database: false },
     { previousRuntime: false, database: true },
   ])("refuses an inconsistent host before writes ($previousRuntime runtime, $database database)", async (state) => {
