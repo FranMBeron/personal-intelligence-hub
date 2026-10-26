@@ -47,6 +47,7 @@ export function DelegationLedger({
   sourceThreadHref = defaultSourceThreadHref,
   limit = 50,
   headingLevel = 2,
+  timeZone = null,
 }: Readonly<{
   agentId: string;
   agentNames?: Readonly<Record<string, string>>;
@@ -54,6 +55,8 @@ export function DelegationLedger({
   sourceThreadHref?: (delegation: Delegation) => string;
   limit?: number;
   headingLevel?: 2 | 3;
+  /** User's preferred IANA zone; `null` renders explicit UTC. */
+  timeZone?: string | null;
 }>) {
   const Heading = headingLevel === 3 ? "h3" : "h2";
   const fallbackClient = useRef<DelegationReader | null>(null);
@@ -156,7 +159,7 @@ export function DelegationLedger({
                   </span>
                   <span className="delegation-ledger__summary">{summary}</span>
                   <StatusBadge tone={state.tone}>{state.label}</StatusBadge>
-                  <time className="delegation-ledger__time" dateTime={delegation.createdAt}>{formatAgentTime(delegation.createdAt)}</time>
+                  <time className="delegation-ledger__time" dateTime={delegation.createdAt}>{formatAgentTime(delegation.createdAt, timeZone)}</time>
                 </button>
                 {expanded ? (
                   <div className="delegation-ledger__detail" id={detailId} role="group" aria-label={`Detalle de la delegación: ${summary}`}>
@@ -164,10 +167,10 @@ export function DelegationLedger({
                       <div><dt>Origen</dt><dd>{name(delegation.sourceAgentId)}</dd></div>
                       <div><dt>Destino</dt><dd>{name(delegation.targetAgentId)}</dd></div>
                       <div><dt>Estado</dt><dd>{state.label}</dd></div>
-                      <div><dt>Creada</dt><dd><time dateTime={delegation.createdAt}>{formatAgentTime(delegation.createdAt)}</time></dd></div>
-                      <div><dt>Actualizada</dt><dd><time dateTime={delegation.updatedAt}>{formatAgentTime(delegation.updatedAt)}</time></dd></div>
+                      <div><dt>Creada</dt><dd><time dateTime={delegation.createdAt}>{formatAgentTime(delegation.createdAt, timeZone)}</time></dd></div>
+                      <div><dt>Actualizada</dt><dd><time dateTime={delegation.updatedAt}>{formatAgentTime(delegation.updatedAt, timeZone)}</time></dd></div>
                       {delegation.completedAt === undefined ? null : (
-                        <div><dt>Finalizada</dt><dd><time dateTime={delegation.completedAt}>{formatAgentTime(delegation.completedAt)}</time></dd></div>
+                        <div><dt>Finalizada</dt><dd><time dateTime={delegation.completedAt}>{formatAgentTime(delegation.completedAt, timeZone)}</time></dd></div>
                       )}
                       <div className="delegation-ledger__wide"><dt>Encargo</dt><dd>{summary}</dd></div>
                       <div className="delegation-ledger__wide"><dt>Resultado</dt><dd>{resultText(delegation)}</dd></div>

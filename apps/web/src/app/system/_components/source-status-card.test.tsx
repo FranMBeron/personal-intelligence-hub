@@ -15,14 +15,14 @@ const cardFor = (overrides: Parameters<typeof sourceStatusFixture>[0]) =>
 
 describe("SourceStatusCard", () => {
   it("shows the source check time in the user's zone, its age and capabilities", () => {
-    render(<SourceStatusCard card={cardFor({ checkedAt: "2026-10-12T11:55:00.000Z", capabilities: ["conversations"] })} timeZone="Asia/Tokyo" />);
+    render(<SourceStatusCard card={cardFor({ checkedAt: "2026-10-12T11:55:00.000Z", capabilities: ["direct_conversations"] })} timeZone="Asia/Tokyo" />);
     const card = screen.getByRole("article", { name: "Hermes" });
     const checked = within(card).getByText(/Comprobado/).closest("p")!;
     expect(checked.querySelector("time")?.getAttribute("dateTime")).toBe("2026-10-12T11:55:00.000Z");
     expect(checked.textContent).toContain("20:55");
     expect(checked.textContent).toContain("hace 5 min");
     expect(within(card).getByText("Disponible").textContent).toBe("Disponible");
-    expect(within(card).getByRole("list", { name: "Capacidades de Hermes" }).textContent).toContain("conversations");
+    expect(within(card).getByRole("list", { name: "Capacidades de Hermes" }).textContent).toBe("Conversaciones directas");
     expect(card.querySelector("[data-verified='true']")).not.toBeNull();
   });
 
@@ -47,5 +47,7 @@ describe("SourceStatusCard", () => {
     expect(card.querySelector("img")).toBeNull();
     expect(card.querySelector("b")).toBeNull();
     expect(card.textContent).toContain("<img src=x onerror=alert(1)>");
+    expect(card.textContent).not.toContain("<b>x</b>");
+    expect(within(card).getByRole("list", { name: "Capacidades de Hermes" }).textContent).toBe("1 capacidad sin descripción");
   });
 });

@@ -34,14 +34,13 @@ const attention: Readonly<Record<AgentSummary["attention"], Label>> = {
   unknown,
 };
 
-export const formatCheckedAt = formatAgentTime;
-
 export function AgentCard({
   agent,
   capabilities,
   headingLevel = 2,
   selected = false,
   onOpen,
+  timeZone = null,
 }: Readonly<{
   agent: AgentSummary;
   capabilities: HermesCapabilities | null;
@@ -49,6 +48,8 @@ export function AgentCard({
   selected?: boolean;
   /** When provided, the card only selects the profile; the workspace renders outside the card. */
   onOpen?: (agentId: string) => void;
+  /** User's preferred IANA zone; `null` renders explicit UTC. */
+  timeZone?: string | null;
 }>) {
   const Heading = headingLevel === 3 ? "h3" : "h2";
   const presence = availability[agent.availability];
@@ -74,7 +75,7 @@ export function AgentCard({
         <div><dt>Ejecución</dt><dd><StatusBadge tone={execution[agent.execution].tone}>{execution[agent.execution].label}</StatusBadge></dd></div>
         <div><dt>Resultado</dt><dd><StatusBadge tone={result[agent.result].tone}>{result[agent.result].label}</StatusBadge></dd></div>
         <div><dt>Atención</dt><dd><StatusBadge tone={attention[agent.attention].tone}>{attention[agent.attention].label}</StatusBadge></dd></div>
-        <div><dt>Comprobado</dt><dd><time dateTime={agent.checkedAt}>{formatCheckedAt(agent.checkedAt)}</time></dd></div>
+        <div><dt>Comprobado</dt><dd><time dateTime={agent.checkedAt}>{formatAgentTime(agent.checkedAt, timeZone)}</time></dd></div>
       </dl>
       {onOpen === undefined ? (
         <AgentConversation

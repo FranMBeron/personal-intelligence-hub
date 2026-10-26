@@ -35,6 +35,7 @@ export function AgentRosterSection({
   renderWorkspace,
   delegationClient,
   sourceThreadHref,
+  timeZone = null,
 }: Readonly<{
   result: RosterResult;
   capabilities: HermesCapabilities | null;
@@ -42,6 +43,8 @@ export function AgentRosterSection({
   renderWorkspace?: (agentId: string, agent: AgentSummary) => ReactNode;
   delegationClient?: DelegationReader;
   sourceThreadHref?: (delegation: Delegation) => string;
+  /** User's preferred IANA zone from UserPreferences; `null` renders times explicitly in UTC. */
+  timeZone?: string | null;
 }>) {
   const view = useMemo(() => buildAgentsView(result), [result]);
   const [selectedId, setSelectedId] = useQueryParam("agent");
@@ -82,7 +85,7 @@ export function AgentRosterSection({
 
   return (
     <div className="agents-section" ref={rootRef}>
-      <AgentRoster result={result} capabilities={capabilities} onProfileToggle={() => { userInitiated.current = true; }} />
+      <AgentRoster result={result} capabilities={capabilities} onProfileToggle={() => { userInitiated.current = true; }} timeZone={timeZone} />
 
       {selected === undefined ? null : (
         <section className="agent-workspace" aria-labelledby={headingId}>
@@ -111,6 +114,7 @@ export function AgentRosterSection({
               agentId={selected.id}
               agentNames={agentNames}
               headingLevel={3}
+              timeZone={timeZone}
               {...(delegationClient === undefined ? {} : { client: delegationClient })}
               {...(sourceThreadHref === undefined ? {} : { sourceThreadHref })}
             />
@@ -130,7 +134,7 @@ export function AgentRosterSection({
               <li className="agents-activity__item" data-kind={item.kind} key={item.agentId}>
                 <strong>{item.displayName}</strong>
                 <span>{item.label}</span>
-                <time dateTime={item.checkedAt}>{formatAgentTime(item.checkedAt)}</time>
+                <time dateTime={item.checkedAt}>{formatAgentTime(item.checkedAt, timeZone)}</time>
               </li>
             ))}
           </ol>

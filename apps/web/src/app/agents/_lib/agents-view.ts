@@ -1,5 +1,7 @@
 import type { AgentSummary } from "@personal-intelligence-hub/contracts";
 
+import { formatInstant, isValidTimeZone } from "../../_lib/time-format";
+
 /** Outcome of reading the connectors profile registry; failure is never an empty roster. */
 export type RosterResult =
   | Readonly<{ state: "not_configured" }>
@@ -162,7 +164,9 @@ export const filterAgents = (agents: readonly AgentSummary[], filter: AgentFilte
 export const parseAgentFilter = (value: string | null): AgentFilter =>
   value === "active" || value === "attention" ? value : "all";
 
-const timeFormat = new Intl.DateTimeFormat("es", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
-
-/** Explicit UTC rendering until the actor time-zone preference is wired by its owner. */
-export const formatAgentTime = (iso: string): string => `${timeFormat.format(new Date(iso))} UTC`;
+/**
+ * Renders an instant in the user's preferred IANA zone. Without a usable preference the time is shown in UTC and
+ * labelled as such; the host's local zone is never used.
+ */
+export const formatAgentTime = (iso: string, timeZone: string | null): string =>
+  timeZone !== null && isValidTimeZone(timeZone) ? formatInstant(iso, timeZone) : `${formatInstant(iso, "UTC")} UTC`;

@@ -24,6 +24,20 @@ describe("buildSystemView", () => {
     expect(view.cards.map((card) => card.title)).toEqual(["Conectores privados", "Hermes"]);
   });
 
+  it("maps known capability ids to Spanish labels and never shows raw ids", () => {
+    const view = buildSystemView({ sources: [sourceStatusFixture({ id: "hermes", capabilities: ["direct_conversations", "delegations", "text", "streaming", "images"] })] }, now);
+    expect(view.cards[1]?.capabilities).toEqual([
+      "Conversaciones directas", "Delegaciones entre agentes", "Mensajes de texto", "Respuestas en tiempo real", "Imágenes",
+    ]);
+  });
+
+  it("summarizes unknown capability ids with a generic label instead of inventing or echoing them", () => {
+    const view = buildSystemView({ sources: [sourceStatusFixture({ id: "hermes", capabilities: ["text", "teleport_fictional", "<b>x</b>"] })] }, now);
+    expect(view.cards[1]?.capabilities).toEqual(["Mensajes de texto", "2 capacidades sin descripción"]);
+    const single = buildSystemView({ sources: [sourceStatusFixture({ id: "hermes", capabilities: ["teleport_fictional"] })] }, now);
+    expect(single.cards[1]?.capabilities).toEqual(["1 capacidad sin descripción"]);
+  });
+
   it("does not call an empty registry a healthy system", () => {
     const view = buildSystemView({ sources: [] }, now);
     expect(view.tone).not.toBe("positive");

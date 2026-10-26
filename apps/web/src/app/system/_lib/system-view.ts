@@ -75,6 +75,34 @@ const sourceTitles: Readonly<Record<string, string>> = {
   "device-connections": "Conexión de dispositivo",
 };
 
+/** Capability ids reported by sources. Unknown ids are summarized generically; nothing is inferred from them. */
+const capabilityLabels: Readonly<Record<string, string>> = {
+  text: "Mensajes de texto",
+  streaming: "Respuestas en tiempo real",
+  images: "Imágenes",
+  conversations: "Conversaciones",
+  direct_conversations: "Conversaciones directas",
+  delegations: "Delegaciones entre agentes",
+  read: "Lectura de datos",
+  "calendar:read": "Lectura de agenda",
+  propose_changes: "Propuestas de cambio con confirmación",
+  "device-connections:status": "Estado de la conexión de dispositivo",
+  "device-connections:reconnect": "Reconexión de dispositivo",
+};
+
+export const capabilityLabelsFor = (ids: readonly string[]): string[] => {
+  const known = new Set<string>();
+  const unknown = new Set<string>();
+  for (const id of ids) {
+    if (Object.hasOwn(capabilityLabels, id)) known.add(capabilityLabels[id]!);
+    else unknown.add(id);
+  }
+  return [
+    ...known,
+    ...(unknown.size === 0 ? [] : [`${unknown.size} ${unknown.size === 1 ? "capacidad" : "capacidades"} sin descripción`]),
+  ];
+};
+
 const reasonLabels: Readonly<Record<string, string>> = {
   probe_failed: "La comprobación del servicio falló.",
   provider_temporarily_unavailable: "El proveedor no respondió temporalmente.",
@@ -141,7 +169,7 @@ const sourceCard = (source: SourceStatus, now: Date): SourceCardView => card({
   checkedAt: source.checkedAt,
   lastSuccessAt: source.lastSuccessAt,
   reason: reasonLabel(source.safeReasonCode),
-  capabilities: source.capabilities,
+  capabilities: capabilityLabelsFor(source.capabilities),
 }, now);
 
 const unloadedCard = (key: string, title: string, state: "unavailable" | "not_configured", now: Date): SourceCardView => card({

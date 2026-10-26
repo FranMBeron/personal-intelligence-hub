@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import type { AgentSummary, HermesCapabilities } from "@personal-intelligence-hub/contracts";
-import { agentFixture, conversationFixture, delegationFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
+import type { AgentSummary, HermesCapabilities, UserPreferences } from "@personal-intelligence-hub/contracts";
+import { agentFixture, conversationFixture, delegationFixture, preferencesFixture } from "@personal-intelligence-hub/contracts/testing/connectors";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,6 +16,7 @@ const harness = vi.hoisted(() => ({
   runtime: {
     hermes: null as FakeHermes | null,
     hermesDashboardUrl: undefined as string | undefined,
+    preferences: null as { get: () => Promise<UserPreferences> } | null,
     identity: {},
   },
   installation: { centralAgentId: "coordinator-custom" as string | null, deviceConnectionId: null as string | null },
@@ -67,6 +68,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   harness.runtime.hermes = null;
   harness.runtime.hermesDashboardUrl = undefined;
+  harness.runtime.preferences = null;
 });
 
 describe("AgentsPage", () => {
@@ -100,6 +102,21 @@ describe("AgentsPage", () => {
 
     expect(screen.getByRole("link", { name: "Administrar en Hermes" }).getAttribute("href")).toBe("https://dashboard.example.test/hermes");
     expect(screen.getAllByRole("button", { name: /Conversar con/u })).toHaveLength(3);
+  });
+
+  it.each([
+    ["the preferred zone", { get: async () => preferencesFixture({ timeZone: "Asia/Tokyo" }) }, "21:00", false],
+    ["UTC when preferences are not configured", null, "12:00", true],
+    ["UTC when preferences cannot be read", { get: async () => { throw new Error("down"); } }, "12:00", true],
+  ] as const)("renders agent times in %s", async (_name, preferences, clock, utc) => {
+    configure(async () => roster);
+    harness.runtime.preferences = preferences;
+    vi.stubGlobal("fetch", createBffFake().fetcher);
+    await renderPage();
+    const checked = within(screen.getByRole("heading", { name: "Planner" }).closest("article")!).getByText("Comprobado").parentElement!;
+    const text = checked.querySelector("time")?.textContent ?? "";
+    expect(text).toContain(clock);
+    expect(text.endsWith(" UTC")).toBe(utc);
   });
 
   it("filters the real roster through the URL", async () => {
