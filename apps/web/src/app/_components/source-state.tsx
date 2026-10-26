@@ -21,6 +21,7 @@ export function SourceState({
   checkedAt,
   checkedLabel,
   stale = false,
+  headingLevel = 2,
 }: Readonly<{
   state: SourceStateKind;
   title: string;
@@ -32,7 +33,10 @@ export function SourceState({
   /** Human label for `checkedAt`, already formatted in the user's time zone. */
   checkedLabel?: string;
   stale?: boolean;
+  /** Heading level of the title, so the state nests correctly inside a section's outline. */
+  headingLevel?: 2 | 3 | 4;
 }>) {
+  const Heading = `h${headingLevel}` as const;
   return (
     <section
       className={`source-state${compact ? " source-state--compact" : ""}`}
@@ -41,7 +45,7 @@ export function SourceState({
     >
       <span className="source-state__icon"><Icon name={state === "stale" || stale ? "refresh" : "system"} /></span>
       <div className="source-state__copy">
-        <h2>{title}</h2>
+        <Heading>{title}</Heading>
         {detail === undefined ? null : <p>{detail}</p>}
         {checkedAt === undefined ? null : (
           <p className="source-state__checked">Comprobado: <time dateTime={checkedAt}>{checkedLabel ?? checkedAt}</time></p>
