@@ -18,8 +18,12 @@ import "./system.css";
 
 const POLL_INTERVAL_MS = 5_000;
 const MAX_POLLS = 24;
+const RETURN_CHECK_INTERVAL_MS = 3_000;
+const RETURN_CHECKS = 5;
 
-type Notice = Readonly<{ kind: "status" | "alert"; text: string }>;
+type Notice = Readonly<{ kind: "status" | "alert"; text: string; recheck?: boolean }>;
+/** A status read either lands, fails, or was overtaken by a newer read (or the unmount) and must be ignored. */
+type StatusRead = CalendarSourceStatus | "failed" | "superseded";
 type Busy = "auth" | "bootstrap" | "disconnect" | "save" | "discover" | null;
 type Flags = Readonly<{ readEnabled: boolean; writeEnabled: boolean }>;
 
@@ -54,6 +58,18 @@ const awaitingAuthorization = (status: CalendarSourceStatus): boolean =>
 /** Primary first; the remaining calendars keep the provider order. */
 const ordered = (items: readonly CalendarSelectionEntry[]): CalendarSelectionEntry[] =>
   [...items.filter((item) => item.isPrimary), ...items.filter((item) => !item.isPrimary)];
+
+const offFlags: Flags = { readEnabled: false, writeEnabled: false };
+
+/** Write only applies to a read calendar whose provider role can write; anything else is never sent nor shown as on. */
+const effectiveWrite = (row: CalendarSelectionEntry, flags: Flags): boolean =>
+  flags.readEnabled && flags.writeEnabled && canWriteRole(row);
+
+const hasUnsavedEdits = (saved: CalendarSelection, draft: ReadonlyMap<string, Flags>, discovered: readonly CalendarSelectionEntry[]): boolean =>
+  discovered.length > 0 || saved.items.some((item) => {
+    const flags = draft.get(item.calendarRef);
+    return flags === undefined || flags.readEnabled !== item.readEnabled || flags.writeEnabled !== item.writeEnabled;
+  });
 
 const flagsFrom = (items: readonly CalendarSelectionEntry[]): Map<string, Flags> =>
   new Map(items.map((item) => [item.calendarRef, { readEnabled: item.readEnabled, writeEnabled: item.writeEnabled }]));
@@ -100,7 +116,24 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
   const headingId = useId();
   const explanationId = useId();
 
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const lifetime = useRef<AbortController | null>(null);
+  const statusSeq = useRef(0);
+  const selectionSeq = useRef(0);
+  const dirty = useRef(false);
+  const returnRun = useRef(0);
+  const returnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => {
+      mounted.current = false;
+      controller.abort();
+    };
+  }, []);
+
+  useEffect(() => { dirty.current = hasUnsavedEdits(saved, draft, discovered); }, [saved, draft, discovered]);
 
   useEffect(() => {
     if (focusTarget === null) return;
@@ -109,6 +142,9 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
   }, [focusTarget]);
 
   const applySelection = useCallback((selection: CalendarSelection) => {
+    // Anything this view writes supersedes a background read still in flight.
+    selectionSeq.current += 1;
+    dirty.current = false;
     setSaved(selection);
     setDraft(flagsFrom(selection.items));
     setDiscovered([]);
@@ -125,19 +161,37 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
     }
   }, []);
 
-  const loadSelection = useCallback(async () => {
+  /**
+   * Background selection read. It never replaces unsaved edits or races a save in flight unless `force`d
+   * (an explicit reload after a conflict), and a reply overtaken by a newer read or write is dropped.
+   */
+  const loadSelection = useCallback(async ({ force = false }: Readonly<{ force?: boolean }> = {}) => {
+    const blocked = () => !force && (dirty.current || busyRef.current === "save");
+    if (blocked()) return;
+    const seq = ++selectionSeq.current;
     try {
-      const selection = await calendar.selection();
-      if (mounted.current) applySelection(selection);
+      const selection = await calendar.selection(lifetime.current?.signal);
+      if (!mounted.current || seq !== selectionSeq.current || blocked()) return;
+      applySelection(selection);
     } catch {
-      if (mounted.current) setNotice({ kind: "alert", text: "No se pudo cargar la selección de calendarios. Actualiza el estado para intentarlo de nuevo." });
+      if (mounted.current && seq === selectionSeq.current) {
+        setNotice({ kind: "alert", text: "No se pudo cargar la selección de calendarios. Actualiza el estado para intentarlo de nuevo." });
+      }
     }
   }, [applySelection, calendar]);
 
-  const refreshStatus = useCallback(async (): Promise<CalendarSourceStatus | null> => {
+  /** Status written by an action supersedes any background read still in flight. */
+  const acceptStatus = useCallback((next: CalendarSourceStatus) => {
+    statusSeq.current += 1;
+    setStatus(next);
+  }, []);
+
+  const refreshStatus = useCallback(async (): Promise<StatusRead> => {
+    const seq = ++statusSeq.current;
+    const signal = lifetime.current?.signal;
     try {
-      const next = await calendar.status();
-      if (!mounted.current) return null;
+      const next = await calendar.status(signal);
+      if (!mounted.current || seq !== statusSeq.current) return "superseded";
       setStatus(next);
       if (!awaitingAuthorization(next)) {
         setAuthLink(null);
@@ -145,20 +199,59 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
       }
       return next;
     } catch {
-      return null;
+      return signal?.aborted === true || seq !== statusSeq.current ? "superseded" : "failed";
     }
   }, [calendar, loadSelection]);
 
-  // The OAuth callback redirects back with a fixed marker; re-read the status once (no token is read here).
-  const returnHandled = useRef(false);
+  /** After the OAuth return: read the status a bounded number of times and always end with an outcome. */
+  const checkReturn = useCallback(() => {
+    if (returnTimer.current !== null) clearTimeout(returnTimer.current);
+    const run = ++returnRun.current;
+    const attempt = async (count: number): Promise<void> => {
+      const read = await refreshStatus();
+      if (!mounted.current || run !== returnRun.current) return;
+      if (read === "failed") {
+        setNotice({ kind: "alert", text: "No se pudo comprobar el estado de Google Calendar tras la autorización. Comprueba de nuevo en unos segundos.", recheck: true });
+        return;
+      }
+      if (read !== "superseded" && read.state === "available") {
+        setNotice({ kind: "status", text: "Google Calendar quedó conectado." });
+        return;
+      }
+      if (read !== "superseded" && read.state === "requires_attention") {
+        setNotice({ kind: "alert", text: "La autorización terminó, pero la configuración sigue pendiente. Revisa el motivo indicado y usa «Reintentar configuración»." });
+        return;
+      }
+      if (count < RETURN_CHECKS) {
+        returnTimer.current = setTimeout(() => { void attempt(count + 1); }, RETURN_CHECK_INTERVAL_MS);
+        return;
+      }
+      setNotice({ kind: "alert", text: "Google Calendar todavía no aparece como conectado. Comprueba de nuevo o vuelve a conectar.", recheck: true });
+    };
+    void attempt(1);
+  }, [refreshStatus]);
+
+  const recheck = () => {
+    setNotice({ kind: "status", text: "Comprobando el estado de Google Calendar…" });
+    checkReturn();
+  };
+
+  // The OAuth callback redirects back with a fixed marker; re-read the status (no token is read here).
   useEffect(() => {
-    if (returnState === null || returnHandled.current) return;
-    returnHandled.current = true;
-    setNotice(returnState === "attention"
-      ? { kind: "alert", text: "La autorización no se completó: se canceló, se rechazó o necesita atención. Puedes intentarlo de nuevo." }
-      : { kind: "status", text: "Google Calendar volvió del navegador. Comprobando el estado…" });
-    void refreshStatus();
-  }, [refreshStatus, returnState]);
+    if (returnState === null) return;
+    if (returnState === "attention") {
+      setNotice({ kind: "alert", text: "La autorización no se completó: se canceló, se rechazó o necesita atención. Puedes intentarlo de nuevo." });
+      void refreshStatus();
+    } else {
+      setNotice({ kind: "status", text: "Google Calendar volvió del navegador. Comprobando el estado…" });
+      checkReturn();
+    }
+    return () => {
+      returnRun.current += 1;
+      if (returnTimer.current !== null) clearTimeout(returnTimer.current);
+      returnTimer.current = null;
+    };
+  }, [checkReturn, refreshStatus, returnState]);
 
   // While the user completes OAuth in the system browser: refresh on return (focus/visibility) and poll a bounded number of times.
   useEffect(() => {
@@ -200,7 +293,7 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
     try {
       const next = await calendar.bootstrap();
       if (!mounted.current) return;
-      setStatus(next);
+      acceptStatus(next);
       if (next.state === "available") await loadSelection();
       setNotice(next.state === "available"
         ? { kind: "status", text: "Configuración completada." }
@@ -216,7 +309,7 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
     try {
       const source = await calendar.disconnect();
       if (!mounted.current) return;
-      setStatus(disconnectedStatus(source));
+      acceptStatus(disconnectedStatus(source));
       applySelection({ version: saved.version, items: [] });
       setAuthLink(null);
       setConfirmingDisconnect(false);
@@ -247,7 +340,10 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
     try {
       const next = await calendar.updateSelection({
         expectedVersion: saved.version,
-        calendars: rows.map((row) => ({ calendarRef: row.calendarRef, ...(draft.get(row.calendarRef) ?? { readEnabled: false, writeEnabled: false }) })),
+        calendars: rows.map((row) => {
+          const flags = draft.get(row.calendarRef) ?? offFlags;
+          return { calendarRef: row.calendarRef, readEnabled: flags.readEnabled, writeEnabled: effectiveWrite(row, flags) };
+        }),
       });
       if (!mounted.current) return;
       applySelection(next);
@@ -255,7 +351,7 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof BffRequestError && error.status === 409) {
-        await loadSelection();
+        await loadSelection({ force: true });
         if (mounted.current) setNotice({ kind: "alert", text: "La selección cambió en otro lugar. Se cargó la versión actual; revísala y guarda de nuevo." });
         return;
       }
@@ -265,9 +361,9 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
 
   const setFlag = (ref: string, change: Partial<Flags>) => setDraft((previous) => {
     const next = new Map(previous);
-    const current = next.get(ref) ?? { readEnabled: false, writeEnabled: false };
+    const current = next.get(ref) ?? offFlags;
     const merged = { ...current, ...change };
-    next.set(ref, merged.readEnabled ? merged : { readEnabled: false, writeEnabled: false });
+    next.set(ref, merged.readEnabled ? merged : offFlags);
     return next;
   });
 
@@ -317,6 +413,9 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
       ) : null}
 
       {notice === null ? null : <p className={`calendar-settings__notice calendar-settings__notice--${notice.kind}`} role={notice.kind}>{notice.text}</p>}
+      {notice?.recheck === true ? (
+        <button className="button button--quiet" type="button" onClick={recheck} disabled={busy !== null}>Comprobar de nuevo</button>
+      ) : null}
 
       {!connected ? null : (
         <div className="calendar-settings__selection">
@@ -325,7 +424,7 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
             La escritura se aprueba en dos pasos: primero guarda la lectura de un calendario y después, en un segundo guardado, habilita «Proponer cambios». Solo es posible si Google te da rol de editor o propietario en ese calendario. Aun así, cada cambio concreto necesita tu confirmación explícita.
           </p>
           {rows.length === 0 ? <p className="calendar-settings__fact">Todavía no hay calendarios seleccionados.</p> : rows.map((row, index) => {
-            const flags = draft.get(row.calendarRef) ?? { readEnabled: false, writeEnabled: false };
+            const flags = draft.get(row.calendarRef) ?? offFlags;
             const roleAllowsWrite = canWriteRole(row);
             const readSaved = savedRead.has(row.calendarRef);
             const hintId = `${headingId}-row-${index}-hint`;
@@ -343,7 +442,7 @@ export function CalendarSettings({ initialStatus, initialSelection, timeZone, re
                   <span aria-hidden="true">Leer</span>
                 </label>
                 <label className="calendar-settings__toggle">
-                  <input type="checkbox" aria-label={`Proponer cambios en ${row.displayName}`} aria-describedby={`${hintId} ${explanationId}`} checked={flags.writeEnabled} disabled={busy !== null || !roleAllowsWrite || !readSaved || !flags.readEnabled} onChange={(event) => setFlag(row.calendarRef, { writeEnabled: event.target.checked })} />
+                  <input type="checkbox" aria-label={`Proponer cambios en ${row.displayName}`} aria-describedby={`${hintId} ${explanationId}`} checked={effectiveWrite(row, flags)} disabled={busy !== null || !roleAllowsWrite || !readSaved || !flags.readEnabled} onChange={(event) => setFlag(row.calendarRef, { writeEnabled: event.target.checked })} />
                   <span aria-hidden="true">Proponer cambios</span>
                 </label>
                 <p id={hintId} className="calendar-settings__hint">{hint}</p>

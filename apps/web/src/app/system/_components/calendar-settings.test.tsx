@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { CalendarSelectionEntry } from "@personal-intelligence-hub/contracts";
+import type { CalendarSelection, CalendarSelectionEntry } from "@personal-intelligence-hub/contracts";
 import {
   calendarSelectionFixture,
   calendarStatusFixture,
@@ -72,6 +72,100 @@ describe("CalendarSettings connection", () => {
     expect((await screen.findByRole("alert")).textContent).toMatch(/no se completó/);
     await waitFor(() => expect(client.status).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("button", { name: "Conectar Google Calendar" })).toBeTruthy();
+  });
+
+  it("replaces the OAuth return check with the outcome once the status is read", async () => {
+    const client = fakeCalendarClient({ status: vi.fn(async () => connected), selection: vi.fn(async () => calendarSelectionFixture({ items: [entry({})], version: 1 })) });
+    render(<CalendarSettings initialStatus={calendarStatusFixture()} initialSelection={calendarSelectionFixture()} timeZone="Etc/UTC" returnState="connected" client={client} />);
+    await screen.findByText(/Google Calendar quedó conectado/);
+    expect(screen.queryByText(/Comprobando el estado/)).toBeNull();
+  });
+
+  it("offers a new check when the status cannot be read after the OAuth return", async () => {
+    const status = vi.fn()
+      .mockRejectedValueOnce(new BffRequestError(503, null))
+      .mockResolvedValueOnce(connected);
+    const client = fakeCalendarClient({ status, selection: vi.fn(async () => calendarSelectionFixture({ items: [entry({})], version: 1 })) });
+    render(<CalendarSettings initialStatus={calendarStatusFixture()} initialSelection={calendarSelectionFixture()} timeZone="Etc/UTC" returnState="connected" client={client} />);
+    await screen.findByText(/No se pudo comprobar el estado/);
+    expect(screen.queryByText(/Comprobando el estado/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Comprobar de nuevo" }));
+    await screen.findByText(/Google Calendar quedó conectado/);
+    expect(status).toHaveBeenCalledTimes(2);
+  });
+
+  it("explains a setup that is still pending after the OAuth return", async () => {
+    const client = fakeCalendarClient({ status: vi.fn(async () => calendarStatusFixture({ state: "requires_attention", safeReasonCode: "calendar_selection_required" })) });
+    render(<CalendarSettings initialStatus={calendarStatusFixture()} initialSelection={calendarSelectionFixture()} timeZone="Etc/UTC" returnState="connected" client={client} />);
+    await screen.findByText(/configuración sigue pendiente/);
+    expect(screen.queryByText(/Comprobando el estado/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Reintentar configuración" })).toBeTruthy();
+  });
+
+  it("stops checking a return that never shows up as connected, after a bounded number of reads", async () => {
+    vi.useFakeTimers();
+    const status = vi.fn(async () => calendarStatusFixture());
+    render(<CalendarSettings initialStatus={calendarStatusFixture()} initialSelection={calendarSelectionFixture()} timeZone="Etc/UTC" returnState="connected" client={fakeCalendarClient({ status })} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+    expect(screen.getByText(/todavía no aparece como conectado/)).toBeTruthy();
+    expect(screen.queryByText(/Comprobando el estado/)).toBeNull();
+    expect(status.mock.calls.length).toBeLessThanOrEqual(6);
+  });
+
+  it("ignores a stale status reply that arrives after a newer one", async () => {
+    const replies: Array<(value: ReturnType<typeof calendarStatusFixture>) => void> = [];
+    const status = vi.fn(() => new Promise<ReturnType<typeof calendarStatusFixture>>((resolve) => { replies.push(resolve); }));
+    const client = fakeCalendarClient({ startAuthorization: vi.fn(async () => authStart), status, selection: vi.fn(async () => calendarSelectionFixture({ items: [entry({})], version: 1 })) });
+    render(<CalendarSettings initialStatus={calendarStatusFixture()} initialSelection={calendarSelectionFixture()} timeZone="Etc/UTC" client={client} />);
+    fireEvent.click(screen.getByRole("button", { name: "Conectar Google Calendar" }));
+    await screen.findByRole("link", { name: /Continuar en navegador/ });
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    expect(replies).toHaveLength(2);
+    await act(async () => replies[1]!(calendarStatusFixture({ state: "requires_reauthorization" })));
+    await act(async () => replies[0]!(connected));
+    expect(screen.getByText("Requiere volver a autorizar")).toBeTruthy();
+    expect(screen.queryByText("Conectado")).toBeNull();
+  });
+
+  it("aborts an in-flight status read on unmount", async () => {
+    const status = vi.fn((_signal?: AbortSignal) => new Promise<ReturnType<typeof calendarStatusFixture>>(() => undefined));
+    const { unmount } = render(<CalendarSettings initialStatus={calendarStatusFixture()} initialSelection={calendarSelectionFixture()} timeZone="Etc/UTC" returnState="connected" client={fakeCalendarClient({ status })} />);
+    await waitFor(() => expect(status).toHaveBeenCalledTimes(1));
+    const signal = status.mock.calls[0]![0];
+    expect(signal?.aborted).toBe(false);
+    unmount();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it("does not overwrite unsaved selection edits when the status refresh succeeds", async () => {
+    const selection = vi.fn(async () => calendarSelectionFixture({ items: [entry({})], version: 2 }));
+    const client = fakeCalendarClient({ startAuthorization: vi.fn(async () => authStart), status: vi.fn(async () => connected), selection });
+    render(<CalendarSettings initialStatus={calendarStatusFixture({ state: "requires_reauthorization" })} initialSelection={calendarSelectionFixture({ items: [entry({})], version: 1 })} timeZone="Etc/UTC" client={client} />);
+    fireEvent.click(screen.getByRole("button", { name: "Volver a autorizar" }));
+    await screen.findByRole("link", { name: /Continuar en navegador/ });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Leer Principal" }));
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await screen.findByText("Conectado");
+    expect(selection).not.toHaveBeenCalled();
+    expect((screen.getByRole("checkbox", { name: "Leer Principal" }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("does not reload the selection while a save is in flight", async () => {
+    let release: () => void = () => undefined;
+    const saved = calendarSelectionFixture({ items: [entry({ readEnabled: true, writeEnabled: false })], version: 2 });
+    const updateSelection = vi.fn(() => new Promise<typeof saved>((resolve) => { release = () => resolve(saved); }));
+    const selection = vi.fn(async () => calendarSelectionFixture({ items: [entry({})], version: 1 }));
+    const client = fakeCalendarClient({ startAuthorization: vi.fn(async () => authStart), status: vi.fn(async () => connected), selection, updateSelection });
+    render(<CalendarSettings initialStatus={calendarStatusFixture({ state: "requires_reauthorization" })} initialSelection={calendarSelectionFixture({ items: [entry({})], version: 1 })} timeZone="Etc/UTC" client={client} />);
+    fireEvent.click(screen.getByRole("button", { name: "Volver a autorizar" }));
+    await screen.findByRole("link", { name: /Continuar en navegador/ });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar selección" }));
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await screen.findByText("Conectado");
+    expect(selection).not.toHaveBeenCalled();
+    await act(async () => release());
+    await screen.findByText("Selección guardada.");
   });
 
   it("asks for reauthorization distinctly from a first connection", () => {
@@ -159,6 +253,25 @@ describe("CalendarSettings selection", () => {
         { calendarRef: "cal-primary", readEnabled: true, writeEnabled: true },
         { calendarRef: "cal-team", readEnabled: true, writeEnabled: true },
         { calendarRef: "cal-holidays", readEnabled: false, writeEnabled: false },
+      ],
+    });
+  });
+
+  it("never sends or shows write for a calendar whose role can no longer write", async () => {
+    // The contract rejects this combination on the wire; the view must still never act on it if handed one.
+    const downgraded: CalendarSelection = { version: 5, items: [entry({}), entry({ calendarRef: "cal-team", displayName: "Equipo", isPrimary: false, accessRole: "reader", readEnabled: true, writeEnabled: true })] };
+    const updateSelection = vi.fn(async () => downgraded);
+    render(<CalendarSettings initialStatus={connected} initialSelection={downgraded} timeZone="Etc/UTC" client={fakeCalendarClient({ updateSelection })} />);
+    const write = screen.getByRole("checkbox", { name: "Proponer cambios en Equipo" }) as HTMLInputElement;
+    expect(write.disabled).toBe(true);
+    expect(write.checked).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Guardar selección" }));
+    await waitFor(() => expect(updateSelection).toHaveBeenCalledTimes(1));
+    expect(updateSelection).toHaveBeenCalledWith({
+      expectedVersion: 5,
+      calendars: [
+        { calendarRef: "cal-primary", readEnabled: true, writeEnabled: true },
+        { calendarRef: "cal-team", readEnabled: true, writeEnabled: false },
       ],
     });
   });
