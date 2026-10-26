@@ -20,15 +20,15 @@
     "@fastify/swagger-ui": "6.1.1",
     "@personal-intelligence-hub/contracts": "workspace:*",
     "@personal-intelligence-hub/database": "workspace:*",
-    "fastify": "5.12.5",
+    "fastify": "5.12.6",
     "fastify-type-provider-zod": "7.0.0",
     "jose": "6.2.12",
     "pg": "8.23.0",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/pg": "8.23.1",
     "testcontainers": "12.1.0",
-    "vitest": "5.0.1"
+    "vitest": "5.0.3"
   }
 }
