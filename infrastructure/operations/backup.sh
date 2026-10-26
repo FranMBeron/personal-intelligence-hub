@@ -3,14 +3,20 @@ set -eu
 umask 077
 
 usage() {
-  echo "Usage: $0 [--connectors-snapshot <staging-directory> --context-tag pre-activation-<40-character-git-sha>]" >&2
+  echo "Usage: $0 [--connectors-snapshot <staging-directory> --context-tag pre-activation-<40-character-git-sha> | --retention-only]" >&2
   exit 64
 }
 
 connectors_snapshot=
 context_tag=
+retention_only=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --retention-only)
+      [ "$retention_only" -eq 0 ] || usage
+      retention_only=1
+      shift
+      ;;
     --connectors-snapshot)
       [ "$#" -ge 2 ] && [ -z "$connectors_snapshot" ] && [ -n "$2" ] || usage
       connectors_snapshot=$2
@@ -26,6 +32,7 @@ while [ "$#" -gt 0 ]; do
 done
 if [ -n "$connectors_snapshot" ] && [ -z "$context_tag" ]; then usage; fi
 if [ -z "$connectors_snapshot" ] && [ -n "$context_tag" ]; then usage; fi
+if [ "$retention_only" -eq 1 ] && [ -n "$connectors_snapshot" ]; then usage; fi
 if [ -n "$context_tag" ]; then
   context_sha=${context_tag#pre-activation-}
   case "$context_tag" in pre-activation-*) ;; *) usage ;; esac
@@ -56,6 +63,50 @@ exec 9>"$backup_root/.backup.lock"
 if ! flock -n 9; then
   echo "Another Personal Intelligence Hub backup is already running." >&2
   exit 75
+fi
+
+restic() {
+  command "$restic_bin" "$@"
+}
+
+# Retention is part of backup success: a snapshot followed by failed retention
+# must leave this service failed so its OnFailure alert fires.
+# Every backup is archived from a new random staging path, so restic's default
+# host+paths grouping would make each snapshot its own group and nothing would
+# ever be pruned. Group by host instead. Connector pre-activation snapshots are
+# kept by the first pass and retained by their own second pass.
+apply_retention() {
+  restic forget \
+    --tag personal-intelligence-hub \
+    --group-by host \
+    --keep-tag pih-connectors-pre-activation \
+    --keep-daily "${PIH_BACKUP_KEEP_DAILY:-7}" \
+    --keep-weekly "${PIH_BACKUP_KEEP_WEEKLY:-5}" \
+    --keep-monthly "${PIH_BACKUP_KEEP_MONTHLY:-12}" \
+    --prune
+  # Connector pre-activation snapshots carry a stable tag and are retained as one
+  # group per host by this pass only.
+  restic forget \
+    --tag pih-connectors-pre-activation \
+    --group-by host \
+    --keep-last "${PIH_CONNECTORS_KEEP_LAST:-5}" \
+    --keep-daily "${PIH_BACKUP_KEEP_DAILY:-7}" \
+    --keep-weekly "${PIH_BACKUP_KEEP_WEEKLY:-5}" \
+    --keep-monthly "${PIH_BACKUP_KEEP_MONTHLY:-12}" \
+    --prune
+  restic check
+  restic snapshots --latest 1 --tag personal-intelligence-hub --json \
+    > "$backup_root/last-successful-snapshot.json"
+}
+
+# Run by deploy-release.sh only after a successful activation: the
+# pre-activation backup itself skips retention and the repository check so the
+# old service is stopped as soon as its snapshot is archived.
+if [ "$retention_only" -eq 1 ]; then
+  RESTIC_BIN="$restic_bin" "$script_directory/restic-lock-guard.sh" --repair
+  apply_retention
+  echo "Personal Intelligence Hub backup retention and repository check completed."
+  exit 0
 fi
 
 # A connectors snapshot is accepted only from the root-owned staging area that
@@ -127,10 +178,6 @@ compose() {
     "$@"
 }
 
-restic() {
-  command "$restic_bin" "$@"
-}
-
 release_sha=$(jq -er '.gitSha | select(test("^[0-9a-f]{40}$"))' "$release_manifest")
 cp "$release_manifest" "$staging_directory/release-manifest.json"
 compose config --images > "$staging_directory/image-references.unsorted"
@@ -188,33 +235,12 @@ else
     --tag "$release_sha"
 fi
 
-# Retention is part of backup success: a snapshot followed by failed retention
-# must leave this service failed so its OnFailure alert fires.
-# Every backup is archived from a new random staging path, so restic's default
-# host+paths grouping would make each snapshot its own group and nothing would
-# ever be pruned. Group by host instead. Connector pre-activation snapshots are
-# kept here and retained by their own pass below.
-restic forget \
-  --tag personal-intelligence-hub \
-  --group-by host \
-  --keep-tag pih-connectors-pre-activation \
-  --keep-daily "${PIH_BACKUP_KEEP_DAILY:-7}" \
-  --keep-weekly "${PIH_BACKUP_KEEP_WEEKLY:-5}" \
-  --keep-monthly "${PIH_BACKUP_KEEP_MONTHLY:-12}" \
-  --prune
-# Connector pre-activation snapshots carry a stable tag and are retained as one
-# group per host by this pass only.
-restic forget \
-  --tag pih-connectors-pre-activation \
-  --group-by host \
-  --keep-last "${PIH_CONNECTORS_KEEP_LAST:-5}" \
-  --keep-daily "${PIH_BACKUP_KEEP_DAILY:-7}" \
-  --keep-weekly "${PIH_BACKUP_KEEP_WEEKLY:-5}" \
-  --keep-monthly "${PIH_BACKUP_KEEP_MONTHLY:-12}" \
-  --prune
-restic check
-restic snapshots --latest 1 --tag personal-intelligence-hub --json \
-  > "$backup_root/last-successful-snapshot.json"
+# A pre-activation backup defers retention and the repository check until
+# after activation (backup.sh --retention-only); every other backup applies
+# them now.
+if [ -z "$context_tag" ]; then
+  apply_retention
+fi
 
 if [ -n "$context_tag" ]; then
   restic snapshots --tag "$context_tag" --json > "$staging_directory/context-snapshots.json"
@@ -226,4 +252,8 @@ if [ -n "$context_tag" ]; then
   }
   echo "connectors-snapshot-id=$context_snapshot_id"
 fi
-echo "Personal Intelligence Hub backup and retention completed for $release_sha."
+if [ -n "$context_tag" ]; then
+  echo "Personal Intelligence Hub pre-activation backup completed for $release_sha; retention runs after activation."
+else
+  echo "Personal Intelligence Hub backup and retention completed for $release_sha."
+fi

@@ -39,7 +39,7 @@ describe("Calendar change proposal policy", () => {
       summary: {
         operation: "create", calendarDisplayName: "Primary", timeZone: "America/Argentina/Buenos_Aires",
         recurrenceScope: "single", organizerRelationship: "self", guestNotification: "all",
-        after: { title: draft.title, time: draft.time, attendeeCount: 1 },
+        after: { title: draft.title, time: draft.time, attendeeCount: 1, attendeeEmails: ["guest@example.test"] },
       },
     });
     const audit = await auditRows(world.db);
@@ -192,6 +192,32 @@ describe("Calendar change proposal policy", () => {
     await expect(world.proposals.create(centralPrincipal(), "fictional-key-0016", {
       operation: "cancel", eventRef: world.eventRefs["Owned planning"]!, recurrenceScope: "series", guestNotification: "all",
     })).rejects.toThrow("calendar_recurrence_scope_invalid");
+  });
+
+  it("shows the human every recipient and the exact description that will be sent to Google", async () => {
+    const world = await createProposalWorld();
+    const exfiltrating = { ...draft, description: "Fictional notes\nsecond line", attendees: [{ email: "guest@example.test" }, { email: "outside@example.invalid" }] };
+    const created = await world.proposals.create(centralPrincipal(), "fictional-key-0040", {
+      operation: "create", calendarRef: world.refs[PRIMARY]!, draft: exfiltrating, guestNotification: "all",
+    });
+    expect(created.summary.after).toMatchObject({
+      description: "Fictional notes\nsecond line", attendeeCount: 2, attendeeEmails: ["guest@example.test", "outside@example.invalid"],
+    });
+
+    const updated = await world.proposals.create(centralPrincipal(), "fictional-key-0041", {
+      operation: "update", eventRef: world.eventRefs["Owned planning"]!, recurrenceScope: "single", guestNotification: "all",
+      changes: { description: "Leaked fictional text", attendees: [{ email: "Guest@Example.test" }, { email: "outside@example.invalid" }] },
+    });
+    expect(updated.summary.before).toMatchObject({ attendeeEmails: [SELF_EMAIL, "guest@example.test"] });
+    expect(updated.summary.before?.description).toBeUndefined();
+    // The after-state lists exactly the attendees written to the provider (existing guests keep their stored email).
+    expect(updated.summary.after).toMatchObject({
+      description: "Leaked fictional text", attendeeCount: 2, attendeeEmails: ["guest@example.test", "outside@example.invalid"],
+    });
+    await world.proposals.confirm(humanPrincipal(), updated.id, { expectedVersion: 1 });
+    const sent = world.google.mutations.find((mutation) => mutation.kind === "update")?.request as { event: { description?: string; attendees?: { email: string }[] } };
+    expect(sent.event.description).toBe(updated.summary.after?.description);
+    expect(sent.event.attendees?.map((attendee) => attendee.email)).toEqual(updated.summary.after?.attendeeEmails);
   });
 
   it("cancels an event the actor organizes with explicit guest notification", async () => {

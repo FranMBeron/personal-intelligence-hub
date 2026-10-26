@@ -25,6 +25,24 @@ The BFF owns the browser callback and the final redirect back to **Sistema**.
 The connector owns `state`, the PKCE S256 verifier, the code exchange, and
 token storage. The BFF never receives a refresh token.
 
+### Callback identity and human authentication mode
+
+Google returns to the callback with a plain top-level browser redirect. The
+BFF still requires an authenticated PIH human on that request and binds the
+returned `state` to that actor, so the callback works only when the browser
+request itself carries the person's identity:
+
+- `CONNECTORS_HUMAN_AUTH_MODE=tailscale-localapi` (the supported private
+  deployment): the identity comes from the tailnet connection, so the redirect
+  is authenticated and the connection completes.
+- `CONNECTORS_HUMAN_AUTH_MODE=oidc`: the identity is an `Authorization: Bearer`
+  token that a browser redirect from Google never sends. The callback is
+  treated as unauthenticated, nothing is exchanged or stored, and **Sistema**
+  shows that the connection needs attention. Connecting Calendar is not
+  supported in this mode until the deployment provides a browser-carried
+  identity (for example an authenticating reverse proxy in front of the
+  callback route); the rest of Calendar works once connected.
+
 ### Scopes
 
 The connector requests exactly:
@@ -34,8 +52,10 @@ The connector requests exactly:
 
 It does not request the broad `calendar` scope, Calendar ACL, calendar
 creation, Drive, or OpenID identity scopes. A grant missing either required
-scope is rejected and the source reports `requires_reauthorization`. Broader
-scopes are not needed: event writes go only to calendars the owner selected
+scope is rejected and the source reports `requires_reauthorization`. A grant
+that carries any scope beyond these two is also rejected, and the connector
+revokes the token it just obtained (best effort, bounded to a few seconds)
+instead of storing it. Broader scopes are not needed: event writes go only to calendars the owner selected
 in PIH, and the calendar list is read-only.
 
 ### Testing mode and verification
@@ -114,6 +134,14 @@ the event changed in the meantime, the proposal ends in conflict and a new
 proposal is needed. Cancelling applies only to events the owner organizes. An
 invitation from someone else needs a separate response operation.
 
+The confirmation screen shows everything the change sends to Google: every
+guest email (for an update, also which guests are added or removed compared
+with the current event) and the full description as plain text (for an update,
+whether it changes and the new text). Invisible and bidirectional control
+characters are shown as visible code points. Review the recipients before
+confirming: a proposal comes from an agent and may add guests you did not ask
+for.
+
 If the connector stops after starting a change but before saving the result,
 the next start inspects provider state for those proposals before serving
 any route, within a bounded budget: at most the first 100 executing proposals
@@ -123,6 +151,13 @@ executing for the next start or a human retry from **Sistema**. If Google is
 unreachable, the proposal stays executing and the source reports `degraded`
 when Calendar had succeeded earlier, or `unavailable` when it never had; a
 human can retry from **Sistema** later.
+
+While any proposal is executing, disconnecting or reconnecting Calendar is
+refused with `409 conflict` before anything is revoked or deleted, so a change
+that may already have reached Google keeps its proposal and audit record. Wait
+until it settles (or retry it from **Sistema**), then disconnect or reconnect.
+If a proposal starts executing while a reconnect is exchanging its code, the
+reconnect fails and the newly issued Google token is revoked.
 
 Readiness (`/health/ready`) reflects the connector process only: the database,
 migrations, and every module probe answering. Provider and account state, such
@@ -143,7 +178,11 @@ re-enables it before reads resume. If that discovery fails, the source reports
 `requires_attention` with `calendar_selection_required`. **Sistema** then
 finishes the setup through the idempotent bootstrap retry
 (`POST /v1/calendar/bootstrap`), without a second code exchange. When Google
-returns no new refresh token during reauthorization, the existing one is kept.
+returns no new refresh token during reauthorization, the reconnect fails with
+`calendar_oauth_refresh_token_missing` (`409`) and nothing changes: the old
+refresh token is never paired with the new consent, which may belong to a
+different Google account. Start the connection again; PIH always requests
+`prompt=consent`, so Google issues a new refresh token.
 
 ## 6. Retention
 

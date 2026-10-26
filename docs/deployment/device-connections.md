@@ -69,9 +69,12 @@ How PIH treats the response:
 
 | Principal | Allowed |
 | --- | --- |
-| Verified human through the PIH web BFF | Yes, as the configured human actor |
-| Agent principal from the agent credential, whose delegated subject (profile id) is allowlisted | Yes, as the mapped bridge actor |
-| Agent profile that is not allowlisted, or any service principal | No: `403`, and the bridge is not contacted |
+| Verified human through the PIH web BFF whose `actorId` is `DEVICE_CONNECTION_OWNER_ACTOR_ID` | Yes, as the configured human actor |
+| Agent principal from the agent credential, acting for that owner, whose delegated subject (profile id) is allowlisted | Yes, as the mapped bridge actor |
+| Any other authenticated person, an agent acting for anyone else, an agent profile that is not allowlisted, or any service principal | No: `403`, and the bridge is not contacted |
+
+The device belongs to one person. Signing in to PIH is not enough: the verified `actorId` must equal
+the configured owner UUID.
 
 The agent credential remains bound to its owner (`boundActorId`). A principal with a different
 `actorId` is rejected before any route runs.
@@ -87,6 +90,7 @@ DEVICE_CONNECTION_ID=example-band
 DEVICE_CONNECTION_LABEL=Example band
 DEVICE_CONNECTION_BRIDGE_SOCKET_PATH=/run/example-device-bridge/bridge.sock
 DEVICE_CONNECTION_HUMAN_ACTOR=owner
+DEVICE_CONNECTION_OWNER_ACTOR_ID=00000000-0000-4000-8000-000000000001
 DEVICE_CONNECTION_AGENT_ACTORS_JSON={"coordinator":"agent-coordinator","health":"agent-health"}
 ```
 
@@ -94,8 +98,9 @@ DEVICE_CONNECTION_AGENT_ACTORS_JSON={"coordinator":"agent-coordinator","health":
   not configured. Routes answer `404`, and system status reports `not_configured`.
 - Partial configuration fails startup, and so does configuration while the feature is not enabled.
 - The socket path must be absolute and normalized, end in `.sock`, and be at most 100 characters.
-  It must not live in the BFF-facing connectors socket directory or reuse another connectors
-  socket.
+  It must not live in the BFF-facing connectors socket directory or the agent-only delegation
+  directory, or reuse another connectors socket.
+- `DEVICE_CONNECTION_OWNER_ACTOR_ID` is required and must be the owner's PIH actor UUID.
 - The connection id and the profile ids use lowercase letters, digits and hyphens. Actor labels may
   also use underscores.
 - An agent profile missing from `DEVICE_CONNECTION_AGENT_ACTORS_JSON` is refused. In the example

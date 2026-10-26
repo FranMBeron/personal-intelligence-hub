@@ -14,6 +14,12 @@ type Options = Readonly<{
   fetcher?: typeof fetch;
 }>;
 
+/**
+ * A stream that stayed open at least this long and then ended normally was closed by the
+ * connector's maximum stream lifetime, not by a fault or a poisoned replay: reconnect at once.
+ */
+export const LONG_LIVED_STREAM_MS = 60_000;
+
 export const reconnectDelay = (attempt: number): number =>
   Math.min(1_000 * 2 ** Math.min(attempt, 5), 30_000);
 
@@ -98,6 +104,7 @@ export const subscribeToConversationEvents = async ({
   while (!signal.aborted) {
     let opened = false;
     let progressed = false;
+    let openedAt = 0;
     try {
       const headers = new Headers({ accept: "text/event-stream" });
       if (lastEventId !== undefined) headers.set("last-event-id", lastEventId);
@@ -119,6 +126,7 @@ export const subscribeToConversationEvents = async ({
       }
       if (!response.ok) throw new Error("Conversation event stream unavailable.");
       opened = true;
+      openedAt = Date.now();
       await readEvents(response, onEvent, (cursor) => {
         if (cursor === lastEventId) return;
         lastEventId = cursor;
@@ -127,6 +135,12 @@ export const subscribeToConversationEvents = async ({
         failures = 0;
       }, signal);
       if (signal.aborted) return;
+      if (Date.now() - openedAt >= LONG_LIVED_STREAM_MS) {
+        // Planned lifetime close: resume from the same cursor without counting a failure or a stall.
+        failures = 0;
+        closesWithoutProgress = 0;
+        continue;
+      }
       failures += 1;
     } catch {
       if (signal.aborted) return;

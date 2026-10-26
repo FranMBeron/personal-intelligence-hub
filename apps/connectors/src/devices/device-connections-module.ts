@@ -84,9 +84,11 @@ const fail = (failure: RouteFailure): never => {
 /**
  * Maps a verified principal to its bridge actor. Only the verified human from the web BFF and
  * allowlisted agent profiles from the agent credential qualify; every other principal is refused.
- * The agent profile is the signed delegated subject, never a request field.
+ * The agent profile is the signed delegated subject, never a request field. Every principal must
+ * also act for the configured owner: another authenticated person, or an agent bound to one, is refused.
  */
 export const bridgeActorFor = (principal: DelegatedPrincipal, connection: DeviceConnectionConfig): string | undefined => {
+  if (principal.actorId.toLowerCase() !== connection.ownerActorId) return undefined;
   if (principal.serviceId === "pih-web" && principal.actorType === "human") return connection.humanActor;
   if (principal.serviceId === "hermes-central" && principal.actorType === "agent") {
     return connection.agentActors.get(principal.subject);

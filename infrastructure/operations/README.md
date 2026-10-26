@@ -91,19 +91,31 @@ be incompatible. That is a separate, explicitly approved operation.
 When a connectors runtime and its SQLite database already exist, deploy runs
 the active runtime's backup adapter into a fresh root-only directory below
 `backups/connectors-staging/`, archives that verified pair through `backup.sh`
-(encrypted Restic backup, retention and `restic check`, tagged with the active
-release, `pih-connectors-pre-activation` and `pre-activation-<candidate-sha>`;
-retention groups by host because each backup is archived from a new staging
-path, and connector snapshots are retained by their own pass), and records only the Restic
-snapshot ID and manifest checksum in the candidate's release manifest. Only
-then does it stop the old service and start the candidate. If the candidate
+(an encrypted Restic backup tagged with the active release,
+`pih-connectors-pre-activation` and `pre-activation-<candidate-sha>`), and
+records only the Restic snapshot ID and manifest checksum in the candidate's
+release manifest. Only then does it stop the old service and start the
+candidate. Writes the old service makes between the snapshot and the stop are
+not in the snapshot and are lost if recovery restores it, so avoid using PIH
+during a deployment. Retention (grouped by host because each backup is archived
+from a new staging path; connector snapshots are retained by their own pass)
+and `restic check` run through `backup.sh --retention-only` only after a
+successful activation and web health check. If they fail, the new release
+stays active and deploy exits non-zero saying so; rerun `backup.sh`. If the candidate
 never becomes ready, deploy quarantines the candidate database as
 `connectors.sqlite.failed-<sha>`, restores the transient snapshot with the old
 runtime's restore adapter, restores the previous runtime and service state and
 requires readiness. If that restore or readiness fails, connectors stay
 stopped and the quarantine and Restic snapshot are kept for the operator. A
 first installation (no runtime and no database) takes no snapshot; a host with
-only one of them is refused. Plaintext staging is removed on every exit path.
+only one of them is refused. If a first installation fails after the candidate
+started, deploy disables and stops connectors, removes the runtime link and
+moves the database the candidate created aside as
+`connectors.sqlite.failed-first-install-<sha>` (never deleted), so the host is
+clean again and the next deployment of a new commit is a first installation.
+If that move fails, deploy prints `reason=first_install_cleanup_failed`; move
+`connectors.sqlite` (and any `-wal`/`-shm` files) out of
+`/var/lib/pih-connectors/` yourself before redeploying. Plaintext staging is removed on every exit path.
 
 Default rollback never changes the connectors database. The explicit form
 

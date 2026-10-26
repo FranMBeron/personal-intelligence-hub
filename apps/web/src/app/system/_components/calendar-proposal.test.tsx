@@ -13,7 +13,7 @@ import { fakeCalendarClient } from "./calendar-test-client";
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 const now = "2026-10-12T12:00:00.000Z";
-const before = { title: "Revisión semanal", time: { kind: "timed", start: "2026-10-13T14:00:00.000Z", end: "2026-10-13T15:00:00.000Z", timeZone: "Europe/Madrid" }, attendeeCount: 3 } as const;
+const before = { title: "Revisión semanal", time: { kind: "timed", start: "2026-10-13T14:00:00.000Z", end: "2026-10-13T15:00:00.000Z", timeZone: "Europe/Madrid" }, attendeeCount: 3, attendeeEmails: ["ana@example.test", "bruno@example.test", "carla@example.test"] as string[] } as const;
 const after = { ...before, time: { ...before.time, start: "2026-10-13T16:00:00.000Z", end: "2026-10-13T17:00:00.000Z" } } as const;
 const updateProposal = proposalFixture({
   summary: { operation: "update", calendarDisplayName: "Trabajo", timeZone: "Europe/Madrid", recurrenceScope: "series", organizerRelationship: "self", guestNotification: "all", before, after },
@@ -59,6 +59,45 @@ describe("CalendarProposal", () => {
     expect(review.textContent).toContain("Se notificará a todos los invitados");
     const expiry = screen.getByText(/Vence/);
     expect(expiry.querySelector("time")?.getAttribute("dateTime")).toBe(updateProposal.expiresAt);
+  });
+
+  it("lists every guest email and the description of a new event as plain text", async () => {
+    const created = proposalFixture({ summary: { ...proposalFixture().summary, after: {
+      ...before, description: "Agenda ficticia\n<b>sin formato</b>", attendeeCount: 2, attendeeEmails: ["ana@example.test", "outside@example.invalid"],
+    } } });
+    render(<CalendarProposal proposalId="p" client={fakeCalendarClient({ proposal: vi.fn(async () => created) })} now={now} />);
+    const guests = await screen.findByRole("list", { name: "Invitados (2)" });
+    expect(Array.from(guests.querySelectorAll("li"), (item) => item.textContent)).toEqual(["ana@example.test", "outside@example.invalid"]);
+    expect(screen.getByText(/Agenda ficticia/).textContent).toBe("Agenda ficticia\n<b>sin formato</b>");
+    expect(document.querySelector("b")).toBeNull();
+  });
+
+  it("shows added and removed guests and the new description of an update", async () => {
+    const changed = proposalFixture({ summary: { ...updateProposal.summary, after: {
+      ...after, description: "Texto nuevo ficticio", attendeeCount: 3,
+      attendeeEmails: ["ana@example.test", "Bruno@Example.test", "outside@example.invalid"],
+    } } });
+    render(<CalendarProposal proposalId="p" client={fakeCalendarClient({ proposal: vi.fn(async () => changed) })} now={now} />);
+    const added = await screen.findByRole("list", { name: "Invitados que se añaden (1)" });
+    expect(added.textContent).toBe("outside@example.invalid");
+    const removed = screen.getByRole("list", { name: "Invitados que se quitan (1)" });
+    expect(removed.textContent).toBe("carla@example.test");
+    const description = screen.getByRole("region", { name: "La descripción cambia" });
+    expect(description.textContent).toContain("Texto nuevo ficticio");
+  });
+
+  it("says the guest list and description stay the same when an update does not touch them", async () => {
+    render(<CalendarProposal proposalId="p" client={fakeCalendarClient({ proposal: vi.fn(async () => updateProposal) })} now={now} />);
+    await screen.findByRole("region", { name: "Revisar propuesta: Modificar evento" });
+    expect(screen.getByText("Los invitados no cambian.")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "La descripción cambia" })).toBeNull();
+  });
+
+  it("reveals invisible and bidirectional control characters in a description", async () => {
+    const hidden = proposalFixture({ summary: { ...proposalFixture().summary, after: { ...before, description: "visible\u202Eoculto\u200B" } } });
+    render(<CalendarProposal proposalId="p" client={fakeCalendarClient({ proposal: vi.fn(async () => hidden) })} now={now} />);
+    const text = await screen.findByText(/visible/);
+    expect(text.textContent).toBe("visible[U+202E]oculto[U+200B]");
   });
 
   it("renders an untrusted title as inert text", async () => {

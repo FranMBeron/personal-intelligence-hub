@@ -370,7 +370,7 @@ export class CalendarChangeProposalServiceImpl implements CalendarChangeProposal
         operation: "create", calendarDisplayName,
         timeZone: body.draft.time.kind === "timed" ? body.draft.time.timeZone : calendarTimeZone,
         recurrenceScope: "single", organizerRelationship: "self", guestNotification: body.guestNotification,
-        after: toEventPreview({ ...body.draft, attendees: body.draft.attendees.map(() => ({ responseStatus: "needs_action" as const })) }),
+        after: toEventPreview(body.draft),
       };
       return {
         calendar: calendar.record,
@@ -404,18 +404,23 @@ export class CalendarChangeProposalServiceImpl implements CalendarChangeProposal
     if (body.operation === "update") {
       const changes = body.changes;
       const location = changes.location ?? before.location;
+      const description = changes.description ?? before.description;
+      const attendees = changes.attendees === undefined ? undefined : mergeAttendees(changes.attendees, event.attendees);
+      // The after-state shows exactly what is written: the new description and every resulting guest.
       const after = {
         title: changes.title ?? before.title,
         time: changes.time ?? before.time,
         ...(location === undefined ? {} : { location }),
-        attendeeCount: changes.attendees?.length ?? before.attendeeCount,
+        ...(description === undefined ? {} : { description }),
+        attendeeCount: attendees?.length ?? before.attendeeCount,
+        attendeeEmails: attendees?.map((attendee) => attendee.email) ?? before.attendeeEmails,
       };
       const writable: GoogleWritableEvent = {
         summary: changes.title ?? event.summary ?? detail.title,
         ...(changes.time === undefined ? { start: event.start, end: event.end } : googleTimes(changes.time)),
         ...(changes.description === undefined ? {} : { description: changes.description }),
         ...(changes.location === undefined ? {} : { location: changes.location }),
-        ...(changes.attendees === undefined ? {} : { attendees: mergeAttendees(changes.attendees, event.attendees) }),
+        ...(attendees === undefined ? {} : { attendees }),
       };
       return {
         calendar: calendar.record, eventRef: target.eventRef!, etag: event.etag,

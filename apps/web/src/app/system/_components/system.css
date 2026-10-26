@@ -80,6 +80,12 @@
 .calendar-proposal__title, .calendar-actions__event { color: var(--ink); font-weight: 800; white-space: pre-wrap; }
 .calendar-proposal__facts { display: grid; gap: 2px; margin: 0; padding-left: 18px; font-size: 12px; }
 .calendar-proposal__answer { font-weight: 800; }
+.calendar-proposal__guests ul { display: grid; gap: 2px; margin: 0; padding-left: 18px; font-size: 12px; overflow-wrap: anywhere; }
+.calendar-proposal__label { color: var(--system-muted); font-weight: 700; }
+.calendar-proposal__description { white-space: pre-wrap; }
+.calendar-proposal__description--empty { color: var(--system-muted); }
+.calendar-proposal__changes { display: grid; gap: 6px; padding: 10px; border-radius: 10px; background: var(--surface-quiet); }
+.calendar-proposal__description-change { display: grid; gap: 3px; }
 .calendar-proposal__result { display: grid; gap: 4px; padding: 10px; border-radius: 10px; background: var(--surface-quiet); }
 .calendar-proposal__result h5 { color: var(--ink); font-size: 13px; letter-spacing: 0; text-transform: none; }
 .calendar-proposal__progress { color: var(--system-warning); font-weight: 700; }

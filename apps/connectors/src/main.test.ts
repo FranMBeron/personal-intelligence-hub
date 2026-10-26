@@ -49,6 +49,8 @@ describe("connector Unix socket preparation", () => {
     const lstat = vi.fn();
     const fs = { lstat } as unknown as SocketFileSystem;
     await expect(prepareSocketPath("/run/pih-connectors/hermes-delegation.sock", 1001, 1002, { fs })).rejects.toThrow(/BFF socket directory/u);
+    // Not even outside production may the BFF socket share the agent-only directory.
+    await expect(prepareSocketPath("/run/pih-connectors/agents/connectors.sock", 1001, 1002, { fs, production: false })).rejects.toThrow(/BFF socket directory/u);
     expect(lstat).not.toHaveBeenCalled();
   });
 
@@ -256,6 +258,57 @@ describe("connector process lifecycle", () => {
 
     expect(order).toEqual(["app.close", "database.close", "unlink"]);
     expect(socketInfo).toBeUndefined();
+  });
+
+  it("writes operator messages as single newline-terminated lines", async () => {
+    const unixConfig: ConnectorsConfig = { ...baseConfig, transport: { kind: "unix", path: SOCKET, socketGid: 1002 } };
+    const directory = fakeStat("directory");
+    let socketInfo: ReturnType<typeof fakeStat> | undefined;
+    const fs: SocketFileSystem = {
+      async lstat(path) {
+        if (path === "/run/pih-connectors") return fakeStat("directory");
+        if (path === "/run/pih-connectors/web") return directory;
+        if (path === SOCKET) {
+          if (socketInfo === undefined) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+          return socketInfo;
+        }
+        throw new Error("unexpected path");
+      },
+      async mkdir() {},
+      async chown(path, uid, gid) {
+        if (path.endsWith("/web")) { directory.uid = uid; directory.gid = gid; }
+        else if (socketInfo !== undefined) { socketInfo.uid = uid; socketInfo.gid = gid; }
+      },
+      async chmod(path, value) {
+        if (path.endsWith("/web")) directory.mode = value;
+        else if (socketInfo !== undefined) socketInfo.mode = value;
+      },
+      async unlink() {},
+    };
+    const writes: string[] = [];
+    const handlers: Record<string, () => void> = {};
+    await startConnectors({
+      process: {
+        env: {}, getuid: () => 1001, stderr: { write: (value: string) => writes.push(value) },
+        on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => { handlers[signal] = listener; },
+        off: () => undefined,
+      },
+      environment: { NODE_ENV: "production" }, loadConfig: () => unixConfig,
+      openDatabase: () => ({ close: async () => undefined }) as unknown as ConnectorDatabase,
+      providerModules: [], fs, net: refusedNetwork,
+      createApp: async () => ({
+        async listen() { socketInfo = fakeStat("socket", { uid: 1001, mode: 0o140600, ino: 41 }); },
+        async close() { throw new Error("close failed"); },
+      } as never),
+    });
+    // Another inode now sits at the socket path, and closing the listener fails.
+    socketInfo = fakeStat("socket", { uid: 1001, mode: 0o140600, ino: 99 });
+    handlers.SIGTERM?.();
+    await vi.waitFor(() => expect(writes).toHaveLength(2));
+    expect(writes).toEqual([
+      "Connector socket path changed before shutdown; verify the BFF socket directory ownership\n",
+      "Connector service shutdown failed safely\n",
+    ]);
   });
 
   it("restarts a real Unix listener in an isolated temporary directory", async () => {

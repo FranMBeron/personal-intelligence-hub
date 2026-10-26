@@ -181,4 +181,14 @@ describe("authenticated connectors readiness helper", () => {
   });
 
 
+
+  it("reports a failure from the command line as one newline-terminated line", async () => {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { fileURLToPath } = await import("node:url");
+    const script = fileURLToPath(new URL("./check-connectors-readiness.mjs", import.meta.url));
+    const failure = await promisify(execFile)(process.execPath, [script], { env: { PATH: process.env.PATH ?? "" } })
+      .catch((error: { code: number; stderr: string }) => error);
+    expect(failure).toMatchObject({ code: 1, stderr: "Connector readiness check failed.\n" });
+  });
 });

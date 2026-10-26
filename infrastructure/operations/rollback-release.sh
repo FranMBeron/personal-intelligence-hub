@@ -120,11 +120,19 @@ if [ ! -f "$deployer_environment" ] || [ "$(stat -c '%u:%a' "$deployer_environme
   echo "Root-only connectors deployer credentials are missing or have unsafe permissions." >&2
   exit 1
 fi
-. "$deployer_environment"
-export CONNECTORS_DEPLOYER_SERVICE_TOKEN CONNECTORS_DEPLOYER_ISSUER
-export CONNECTORS_DEPLOYER_SIGNING_KEY CONNECTORS_DEPLOYER_ACTOR_ID
-CONNECTORS_SOCKET_PATH=/run/pih-connectors/web/connectors.sock
-export CONNECTORS_SOCKET_PATH
+
+# Deployer credentials reach only the readiness check: they are read in a
+# subshell for that single invocation and never enter this shell, so docker,
+# syft, grype, curl, restic and every other child run without them.
+check_connectors_readiness() {
+  (
+    . "$deployer_environment"
+    CONNECTORS_SOCKET_PATH=/run/pih-connectors/web/connectors.sock
+    export CONNECTORS_DEPLOYER_SERVICE_TOKEN CONNECTORS_DEPLOYER_ISSUER \
+      CONNECTORS_DEPLOYER_SIGNING_KEY CONNECTORS_DEPLOYER_ACTOR_ID CONNECTORS_SOCKET_PATH
+    exec node "$release_directory/infrastructure/operations/check-connectors-readiness.mjs"
+  )
+}
 previous_connectors_enabled=$(systemctl is-enabled "$connectors_service" 2>/dev/null || true)
 previous_connectors_active=$(systemctl is-active "$connectors_service" 2>/dev/null || true)
 [ -n "$previous_connectors_enabled" ] || previous_connectors_enabled=not-found
@@ -235,7 +243,7 @@ restore_connectors_state() {
   esac
   if [ "$previous_connectors_active" = active ]; then
     systemctl restart "$connectors_service" || return 1
-    node "$release_directory/infrastructure/operations/check-connectors-readiness.mjs" || return 1
+    check_connectors_readiness || return 1
   else
     systemctl stop "$connectors_service" || return 1
   fi
@@ -351,7 +359,7 @@ case "$target_connectors_active" in
   active)
     [ -n "$connectors_runtime" ] || { echo "Active rollback connectors runtime is unavailable." >&2; exit 1; }
     systemctl restart "$connectors_service"
-    node "$release_directory/infrastructure/operations/check-connectors-readiness.mjs" || {
+    check_connectors_readiness || {
       echo "Connectors readiness failed; application Compose was not changed." >&2
       exit 1
     }

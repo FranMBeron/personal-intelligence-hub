@@ -80,14 +80,75 @@ const formatEventTime = (time: CalendarEventTime, timeZone: string): string => {
   return `${formatInstant(time.start, timeZone)} – ${formatClock(time.end, timeZone)}`;
 };
 
-function Preview({ label, preview, timeZone }: Readonly<{ label: string; preview: CalendarEventPreview; timeZone: string }>) {
+/**
+ * Invisible, zero-width and bidirectional control characters are shown as visible code points, so
+ * agent-written text cannot hide or reorder what the human is about to confirm.
+ */
+const HIDDEN_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/gu;
+export const revealHiddenCharacters = (value: string): string =>
+  value.replace(HIDDEN_CONTROLS, (character) => `[U+${character.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}]`);
+
+const guestKey = (email: string): string => email.toLowerCase();
+
+function GuestList({ label, emails }: Readonly<{ label: string; emails: readonly string[] }>) {
+  const name = `${label} (${emails.length})`;
+  return (
+    <div className="calendar-proposal__guests">
+      <p className="calendar-proposal__label">{name}</p>
+      {emails.length === 0 ? null : (
+        <ul aria-label={name}>
+          {emails.map((email, index) => <li key={`${index}-${email}`}>{email}</li>)}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Description({ text }: Readonly<{ text: string | undefined }>) {
+  return text === undefined || text === ""
+    ? <p className="calendar-proposal__description calendar-proposal__description--empty">Sin descripción.</p>
+    : <p className="calendar-proposal__description">{revealHiddenCharacters(text)}</p>;
+}
+
+function Preview({ label, preview, timeZone, details }: Readonly<{ label: string; preview: CalendarEventPreview; timeZone: string; details: boolean }>) {
+  const withoutEmail = preview.attendeeCount - preview.attendeeEmails.length;
   return (
     <div className="calendar-proposal__preview">
       <h5>{label}</h5>
-      <p className="calendar-proposal__title">{preview.title}</p>
+      <p className="calendar-proposal__title">{revealHiddenCharacters(preview.title)}</p>
       <p>{formatEventTime(preview.time, timeZone)}</p>
-      {preview.location === undefined || preview.location === "" ? null : <p>Lugar: {preview.location}</p>}
-      <p>{preview.attendeeCount === 1 ? "1 invitado" : `${preview.attendeeCount} invitados`}</p>
+      {preview.location === undefined || preview.location === "" ? null : <p>Lugar: {revealHiddenCharacters(preview.location)}</p>}
+      {details ? (
+        <>
+          <GuestList label="Invitados" emails={preview.attendeeEmails} />
+          {withoutEmail > 0 ? <p>{withoutEmail === 1 ? "1 invitado sin correo visible" : `${withoutEmail} invitados sin correo visible`}</p> : null}
+          <p className="calendar-proposal__label">Descripción</p>
+          <Description text={preview.description} />
+        </>
+      ) : <p>{preview.attendeeCount === 1 ? "1 invitado" : `${preview.attendeeCount} invitados`}</p>}
+    </div>
+  );
+}
+
+/** Update review: who is added or removed relative to the current event, and the new description. */
+function UpdateDetails({ before, after }: Readonly<{ before: CalendarEventPreview; after: CalendarEventPreview }>) {
+  const current = new Set(before.attendeeEmails.map(guestKey));
+  const next = new Set(after.attendeeEmails.map(guestKey));
+  const added = after.attendeeEmails.filter((email) => !current.has(guestKey(email)));
+  const removed = before.attendeeEmails.filter((email) => !next.has(guestKey(email)));
+  const descriptionChanges = (before.description ?? "") !== (after.description ?? "");
+  return (
+    <div className="calendar-proposal__changes">
+      <GuestList label="Invitados después del cambio" emails={after.attendeeEmails} />
+      {added.length === 0 && removed.length === 0 ? <p>Los invitados no cambian.</p> : null}
+      {added.length === 0 ? null : <GuestList label="Invitados que se añaden" emails={added} />}
+      {removed.length === 0 ? null : <GuestList label="Invitados que se quitan" emails={removed} />}
+      {descriptionChanges ? (
+        <section aria-label="La descripción cambia" className="calendar-proposal__description-change">
+          <p className="calendar-proposal__label">La descripción cambia. Nueva descripción:</p>
+          <Description text={after.description} />
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -242,9 +303,10 @@ export function CalendarProposal({ proposalId, client, now, timeZone }: Readonly
         ? <p className="calendar-proposal__answer">Respuesta: {invitationResponseLabels[summary.invitationResponse]}</p>
         : null}
       <div className="calendar-proposal__comparison">
-        {summary.before === undefined ? null : <Preview label={summary.operation === "cancel" ? "Evento" : "Antes"} preview={summary.before} timeZone={summary.timeZone} />}
-        {summary.after === undefined ? null : <Preview label={summary.before === undefined ? "Nuevo evento" : "Después"} preview={summary.after} timeZone={summary.timeZone} />}
+        {summary.before === undefined ? null : <Preview label={summary.operation === "cancel" ? "Evento" : "Antes"} preview={summary.before} timeZone={summary.timeZone} details={summary.after === undefined} />}
+        {summary.after === undefined ? null : <Preview label={summary.before === undefined ? "Nuevo evento" : "Después"} preview={summary.after} timeZone={summary.timeZone} details={summary.before === undefined} />}
       </div>
+      {summary.before !== undefined && summary.after !== undefined ? <UpdateDetails before={summary.before} after={summary.after} /> : null}
       <ul className="calendar-proposal__facts">
         <li>Calendario: {summary.calendarDisplayName}</li>
         <li>Zona horaria: {summary.timeZone}</li>

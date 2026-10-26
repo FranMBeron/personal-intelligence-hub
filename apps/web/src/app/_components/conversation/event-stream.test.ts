@@ -130,6 +130,39 @@ describe("subscribeToConversationEvents", () => {
     expect(abortRemoves).toBeGreaterThanOrEqual(abortAdds);
   });
 
+  it("reconnects at once, without reporting a stall or an outage, when a long-lived idle stream ends", async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      // The connector ends every stream after its maximum lifetime (30 minutes), even when idle.
+      const idleThenClose = () => new Response(new ReadableStream<Uint8Array>({
+        start(stream) { setTimeout(() => stream.close(), 30 * 60 * 1000); },
+      }), { headers: { "content-type": "text/event-stream" } });
+      const fetcher = vi.fn(async () => idleThenClose());
+      const onStalled = vi.fn();
+      const onUnavailable = vi.fn();
+      const task = subscribeToConversationEvents({
+        conversationId: "conversation-1",
+        initialCursor: "e0",
+        signal: controller.signal,
+        fetcher,
+        onEvent: vi.fn(),
+        onStalled,
+        onUnavailable,
+      });
+      await vi.advanceTimersByTimeAsync(3 * 30 * 60 * 1000 + 1_000);
+      expect(fetcher).toHaveBeenCalledTimes(4);
+      expect(onStalled).not.toHaveBeenCalled();
+      expect(onUnavailable).not.toHaveBeenCalled();
+      const calls = fetcher.mock.calls as unknown as [RequestInfo | URL, RequestInit][];
+      expect(calls.map(([, init]) => (init.headers as Headers).get("last-event-id"))).toEqual(["e0", "e0", "e0", "e0"]);
+      controller.abort();
+      await task;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   describe("no-progress closes", () => {
     const malformedKnown = `id: e2\ndata: ${JSON.stringify({ id: "e2", type: "heartbeat" })}\n\n`;
     const sse = (text: string) => new Response(text, { headers: { "content-type": "text/event-stream" } });

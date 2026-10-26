@@ -15,6 +15,7 @@ const deviceEnvironment = (): Record<string, string> => ({
   DEVICE_CONNECTION_LABEL: "Fictional band",
   DEVICE_CONNECTION_BRIDGE_SOCKET_PATH: "/run/fictional-device-bridge/bridge.sock",
   DEVICE_CONNECTION_HUMAN_ACTOR: "owner",
+  DEVICE_CONNECTION_OWNER_ACTOR_ID: "0b9d6c55-3f39-4d8e-9a8e-5f9f8c1d2e3a",
   DEVICE_CONNECTION_AGENT_ACTORS_JSON: JSON.stringify({ orchestrator: "agent-orchestrator" }),
 });
 
@@ -91,6 +92,19 @@ describe("validate-config-command", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(`configuration_invalid ${expected}\n`);
     expectNoValues(result.stderr, environment);
+  });
+
+  it("accepts the delegation socket only inside the dedicated agent directory", async () => {
+    const delegation = {
+      HERMES_DELEGATION_ORCHESTRATOR_ID: "orchestrator",
+      HERMES_DELEGATION_SOCKET_GROUP_ID: "991",
+      HERMES_DELEGATION_PEERS_JSON: "[]",
+    };
+    const accepted = await run(["--production"], productionEnvironment({ ...delegation, HERMES_DELEGATION_SOCKET_PATH: "/run/pih-connectors/agents/hermes-delegation.sock" }));
+    expect(accepted.stderr).not.toContain("section=production");
+    // The service root is not traversable by the agent group, so a socket there is unreachable.
+    const rootSocket = await run(["--production"], productionEnvironment({ ...delegation, HERMES_DELEGATION_SOCKET_PATH: "/run/pih-connectors/hermes-delegation.sock" }));
+    expect(rootSocket.stderr).toBe("configuration_invalid section=production field=HERMES_DELEGATION_SOCKET_PATH\n");
   });
 
   it.each([

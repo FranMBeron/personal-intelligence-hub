@@ -36,7 +36,9 @@ const exists = async (path: string): Promise<boolean> => {
 /** Translate raw fake-command events into the release-flow vocabulary. */
 const releaseEvents = (raw: readonly string[]): string[] => raw.flatMap((line) => {
   if (line.startsWith("backup-adapter ")) return ["snapshot-created"];
-  if (line.startsWith("restic check")) return ["backup-complete"];
+  if (line.startsWith("restic backup ")) return ["snapshot-archived"];
+  if (line.startsWith("restic forget ")) return ["retention-pruned"];
+  if (line.startsWith("restic check")) return ["repository-checked"];
   if (line === `systemctl stop ${oldSha}`) return ["old-service-stopped"];
   if (line === `systemctl restart ${candidateSha}`) return ["candidate-started"];
   if (line === `readiness-failed ${candidateSha}`) return ["candidate-readiness-failed"];
@@ -47,6 +49,30 @@ const releaseEvents = (raw: readonly string[]): string[] => raw.flatMap((line) =
   return [];
 });
 
+/** Children that received a deployer credential, as "<command> <first argument>". */
+const deployerCredentialRecipients = (raw: readonly string[]): string[] =>
+  raw.filter((line) => line.startsWith("deployer-env ")).map((line) => line.slice("deployer-env ".length));
+
+describe("deployer credential scope", () => {
+  it("passes deployer credentials to the readiness check only, never to docker, syft, grype, curl or restic", async () => {
+    const release = await fixture();
+    await release.run("deploy-release.sh", [candidateSha]);
+    const recipients = deployerCredentialRecipients(await release.events());
+    expect(recipients.length).toBeGreaterThan(0);
+    expect(recipients.filter((recipient) => !/^node \S*check-connectors-readiness\.mjs$/u.test(recipient))).toEqual([]);
+  });
+
+  it("does the same during rollback", async () => {
+    const release = await fixture();
+    await release.run("deploy-release.sh", [candidateSha]);
+    await rm(join(release.root, "events.log"));
+    await release.run("rollback-release.sh", [oldSha]);
+    const recipients = deployerCredentialRecipients(await release.events());
+    expect(recipients.length).toBeGreaterThan(0);
+    expect(recipients.filter((recipient) => !/^node \S*check-connectors-readiness\.mjs$/u.test(recipient))).toEqual([]);
+  });
+});
+
 describe("connectors upgrade with database recovery", () => {
   it("backs up into encrypted Restic before stopping the old service and never restores on success", async () => {
     const release = await fixture();
@@ -54,13 +80,18 @@ describe("connectors upgrade with database recovery", () => {
 
     const raw = await release.events();
     const events = releaseEvents(raw);
+    // Only the snapshot itself precedes the stop; retention and the repository check run after
+    // activation, so they never lengthen the window between snapshot and stop.
     expect(events).toEqual([
       "snapshot-created",
-      "backup-complete",
+      "snapshot-archived",
       "old-service-stopped",
       "candidate-started",
       "candidate-ready",
       "web-rollout",
+      "retention-pruned",
+      "retention-pruned",
+      "repository-checked",
     ]);
     const backupCall = raw.find((line) => line.startsWith("restic backup "));
     expect(backupCall).toContain(`--tag pre-activation-${candidateSha}`);
@@ -92,15 +123,17 @@ describe("connectors upgrade with database recovery", () => {
 
     const events = releaseEvents(await release.events());
     expect(events).toEqual(expect.arrayContaining([
-      "backup-complete",
+      "snapshot-archived",
       "old-service-stopped",
       "candidate-started",
       "candidate-readiness-failed",
       "snapshot-restored",
       "previous-service-ready",
     ]));
-    expect(events.indexOf("backup-complete")).toBeLessThan(events.indexOf("old-service-stopped"));
+    expect(events.indexOf("snapshot-archived")).toBeLessThan(events.indexOf("old-service-stopped"));
     expect(events.indexOf("candidate-readiness-failed")).toBeLessThan(events.indexOf("snapshot-restored"));
+    // A failed activation never runs retention, so nothing can prune around the recovery snapshot.
+    expect(events.filter((event) => event === "retention-pruned" || event === "repository-checked")).toEqual([]);
     expect(events.indexOf("snapshot-restored")).toBeLessThan(events.indexOf("previous-service-ready"));
     expect(events).not.toContain("web-rollout");
     expect(await readFile(release.databasePath, "utf8")).toBe("old-data\n");
@@ -147,7 +180,7 @@ describe("connectors upgrade with database recovery", () => {
 
   it("does not stop the old service when the encrypted backup fails", async () => {
     const release = await fixture();
-    await expect(release.run("deploy-release.sh", [candidateSha], { FAIL_RESTIC_CHECK: "1" }))
+    await expect(release.run("deploy-release.sh", [candidateSha], { FAIL_RESTIC_BACKUP: "1" }))
       .rejects.toMatchObject({ code: 1 });
     const raw = await release.events();
     expect(raw.filter((line) => line.startsWith("systemctl stop") || line.startsWith("systemctl restart"))).toEqual([]);
@@ -155,6 +188,17 @@ describe("connectors upgrade with database recovery", () => {
     expect(await readlink(join(release.connectorsRoot, "current"))).toBe(release.oldRuntime);
     expect((await readFile(release.systemdState, "utf8")).trim()).toBe("enabled active");
     expect(await release.stagingLeftovers()).toEqual([]);
+  });
+
+  it("reports a post-activation retention or check failure without rolling the active release back", async () => {
+    const release = await fixture();
+    const failure = await release.run("deploy-release.sh", [candidateSha], { FAIL_RESTIC_CHECK: "1" })
+      .catch((error: { code: number; stderr: string }) => error);
+    expect(failure).toMatchObject({ code: 1 });
+    expect((failure as { stderr: string }).stderr).toContain(`Release ${candidateSha} is active`);
+    expect(await readlink(join(release.connectorsRoot, "current"))).toBe(release.candidateRuntime);
+    expect(await readlink(join(release.root, "current"))).toBe(release.candidateRelease);
+    expect((await release.events()).some((line) => line.startsWith("restore-adapter"))).toBe(false);
   });
 
   it("keeps the migrated database when web rollout fails after candidate readiness", async () => {
@@ -176,6 +220,20 @@ describe("connectors upgrade with database recovery", () => {
     const manifest = JSON.parse(await readFile(join(release.candidateRelease, "release-manifest.json"), "utf8"));
     expect(manifest.connectors.preActivationSnapshot).toBeNull();
     expect(await readFile(release.databasePath, "utf8")).toBe("candidate-migrated\n");
+  });
+
+  it.each([
+    ["candidate readiness fails", { READINESS_FAIL_AT: "1" }],
+    ["web rollout fails", { FAIL_COMPOSE_UP: "1" }],
+  ])("returns a failed first installation to a clean state so a new release can deploy (%s)", async (_name, failure) => {
+    const release = await fixture({ previousRuntime: false, database: false });
+    await expect(release.run("deploy-release.sh", [candidateSha], failure)).rejects.toMatchObject({ code: 1 });
+    // Neither a runtime link nor a live database remains, so the next deploy is a first installation again
+    // instead of being refused as inconsistent; the candidate's database is kept aside, never deleted.
+    expect(await exists(join(release.connectorsRoot, "current"))).toBe(false);
+    expect(await exists(release.databasePath)).toBe(false);
+    expect(await readFile(`${release.databasePath}.failed-first-install-${candidateSha}`, "utf8")).toBe("candidate-migrated\n");
+    expect((await readFile(release.systemdState, "utf8")).trim()).toBe("disabled inactive");
   });
 
   it.each([
@@ -339,12 +397,15 @@ describe("backup.sh connectors snapshot input", () => {
     const { release, snapshot, run } = await prepare();
     const result = await run(["--connectors-snapshot", snapshot, "--context-tag", tag]);
     expect(result.stdout).toMatch(/^connectors-snapshot-id=[0-9a-f]{64}$/mu);
+    // Retention and the repository check are deferred until after activation.
+    expect((await release.events()).filter((line) => /^restic (forget|check)/u.test(line))).toEqual([]);
     expect(await release.stagingLeftovers()).toEqual(["connectors-staging/deploy.fixture"]);
   });
 
   it("groups snapshots by host so retention prunes both ordinary and connector snapshots", async () => {
     const { release, snapshot, run } = await prepare();
     await run(["--connectors-snapshot", snapshot, "--context-tag", tag]);
+    await run(["--retention-only"]);
     const raw = await release.events();
     const backup = raw.find((line) => line.startsWith("restic backup "));
     expect(backup).toContain("--tag pih-connectors-pre-activation");
@@ -371,6 +432,7 @@ describe("backup.sh connectors snapshot input", () => {
     ["an unpaired snapshot argument", (s: string) => ["--connectors-snapshot", s], 64],
     ["a malformed context tag", (s: string) => ["--connectors-snapshot", s, "--context-tag", "pre-activation-main"], 64],
     ["an unknown argument", () => ["--everything"], 64],
+    ["retention combined with a snapshot", (s: string) => ["--retention-only", "--connectors-snapshot", s, "--context-tag", tag], 64],
   ])("rejects %s", async (_name, args, code) => {
     const { release, snapshot, run } = await prepare();
     await expect(run(args(snapshot))).rejects.toMatchObject({ code });

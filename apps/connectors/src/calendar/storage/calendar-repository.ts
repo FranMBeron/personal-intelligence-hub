@@ -190,9 +190,15 @@ export interface CalendarRepository {
     expected: CalendarConnectionRecord,
     replacement: CalendarConnectionRecord,
   ): boolean;
-  /** Replaces the authorization and returns the newly assigned opaque authorization id. */
+  /**
+   * Replaces the authorization and returns the newly assigned opaque authorization id. Refuses with
+   * `calendar_proposal_executing` while any of the actor's proposals is executing, so a change that
+   * may already have reached Google is never deleted before it settles.
+   */
   replaceConnectionAuthorization(database: SqliteHandle, connection: CalendarConnectionInput): string;
+  /** Same executing-proposal guard as replaceConnectionAuthorization. */
   deleteConnection(database: SqliteHandle, actorId: string): void;
+  hasExecutingProposal(database: SqliteHandle, actorId: string): boolean;
   listCalendars(database: SqliteHandle, actorId: string): readonly CalendarRecord[];
   replaceCalendarSelection(
     database: SqliteHandle,
@@ -292,7 +298,12 @@ export const createCalendarRepository = (): CalendarRepository => ({
     });
     return result.changes === 1;
   },
+  hasExecutingProposal(database, actorId) {
+    return database.prepare("SELECT 1 AS present FROM calendar_change_proposals WHERE actor_id = :actorId AND status = 'executing' LIMIT 1")
+      .get<{ present: number }>({ actorId }) !== undefined;
+  },
   replaceConnectionAuthorization(database, connection) {
+    if (this.hasExecutingProposal(database, connection.actorId)) fail("calendar_proposal_executing");
     database.prepare("DELETE FROM calendar_idempotency WHERE actor_id = :actorId").run({ actorId: connection.actorId });
     database.prepare("DELETE FROM calendar_change_proposals WHERE actor_id = :actorId").run({ actorId: connection.actorId });
     database.prepare("DELETE FROM calendar_event_refs WHERE actor_id = :actorId").run({ actorId: connection.actorId });
@@ -303,6 +314,7 @@ export const createCalendarRepository = (): CalendarRepository => ({
     return authorizationId;
   },
   deleteConnection(database, actorId) {
+    if (this.hasExecutingProposal(database, actorId)) fail("calendar_proposal_executing");
     const result = database.prepare("DELETE FROM calendar_connections WHERE actor_id = :actorId").run({ actorId });
     requireChanges(result.changes, "calendar_connection_not_found");
   },

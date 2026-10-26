@@ -157,7 +157,7 @@ const inspectMountedSocket = async (root: string, project: string): Promise<void
     "const assert=require('node:assert/strict');",
     "const root='/run/pih-connectors';",
     "assert.deepEqual(fs.readdirSync(root),['connectors.sock']);",
-    "assert.equal(fs.existsSync(root+'/hermes-delegation.sock'),false);",
+    "assert.equal(fs.existsSync(root+'/agents'),false);",
     "let denied=false;try{fs.writeFileSync(root+'/forbidden','x')}catch(e){denied=['EROFS','EACCES'].includes(e.code)}",
     "assert.equal(denied,true);",
     "http.get({socketPath:root+'/connectors.sock',path:'/health/live'},r=>{",

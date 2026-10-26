@@ -130,11 +130,19 @@ if [ ! -f "$deployer_environment" ] || [ "$(stat -c '%u:%a' "$deployer_environme
   echo "Root-only connectors deployer credentials are missing or have unsafe permissions." >&2
   exit 1
 fi
-. "$deployer_environment"
-export CONNECTORS_DEPLOYER_SERVICE_TOKEN CONNECTORS_DEPLOYER_ISSUER
-export CONNECTORS_DEPLOYER_SIGNING_KEY CONNECTORS_DEPLOYER_ACTOR_ID
-CONNECTORS_SOCKET_PATH=/run/pih-connectors/web/connectors.sock
-export CONNECTORS_SOCKET_PATH
+
+# Deployer credentials reach only the readiness check: they are read in a
+# subshell for that single invocation and never enter this shell, so docker,
+# syft, grype, curl, restic and every other child run without them.
+check_connectors_readiness() {
+  (
+    . "$deployer_environment"
+    CONNECTORS_SOCKET_PATH=/run/pih-connectors/web/connectors.sock
+    export CONNECTORS_DEPLOYER_SERVICE_TOKEN CONNECTORS_DEPLOYER_ISSUER \
+      CONNECTORS_DEPLOYER_SIGNING_KEY CONNECTORS_DEPLOYER_ACTOR_ID CONNECTORS_SOCKET_PATH
+    exec node "$release_directory/infrastructure/operations/check-connectors-readiness.mjs"
+  )
+}
 
 environment_temporary="$release_environment.tmp.$$"
 cp "$base_environment" "$environment_temporary"
@@ -187,6 +195,25 @@ restore_connectors_database() {
   echo "Connectors database restored from the verified pre-activation snapshot; failed candidate data kept at $quarantine." >&2
 }
 
+# A failed first installation leaves no runtime link; move the database the
+# candidate created aside (never delete it) so the host is clean again and the
+# next deployment is a first installation instead of an inconsistent host.
+quarantine_first_install_database() {
+  if [ "$(systemctl is-active "$connectors_service" 2>/dev/null || true)" = active ]; then return 1; fi
+  quarantine="$connectors_database.failed-first-install-$release_sha"
+  for suffix in "" -wal -shm; do
+    if [ -e "$quarantine$suffix" ] || [ -L "$quarantine$suffix" ]; then return 1; fi
+  done
+  for suffix in "" -wal -shm; do
+    if [ -e "$connectors_database$suffix" ] || [ -L "$connectors_database$suffix" ]; then
+      mv -T "$connectors_database$suffix" "$quarantine$suffix" || return 1
+    fi
+  done
+  if [ -e "$quarantine" ]; then
+    echo "First installation failed; the candidate database was kept aside at $quarantine." >&2
+  fi
+}
+
 restore_application_pointers() {
   if [ -n "$previous_release" ]; then
     current_restore="$pih_root/.current-restore.$release_sha.$$"
@@ -220,7 +247,7 @@ restore_connectors_state() {
   esac
   if [ "$previous_connectors_active" = "active" ]; then
     systemctl restart "$connectors_service" || return 1
-    node "$release_directory/infrastructure/operations/check-connectors-readiness.mjs" || return 1
+    check_connectors_readiness || return 1
   else
     systemctl stop "$connectors_service" || return 1
   fi
@@ -251,7 +278,13 @@ rollback_deployment() {
           systemctl disable "$connectors_service" || echo "Connectors disable failed." >&2
         fi
       else
-        restore_connectors_state || echo "Previous connectors service restore failed." >&2
+        if restore_connectors_state; then
+          if [ "$connectors_upgrade" -eq 0 ] && [ -z "$previous_connectors_runtime" ]; then
+            quarantine_first_install_database || echo "reason=first_install_cleanup_failed: the candidate database could not be moved aside; move it away before the next deployment." >&2
+          fi
+        else
+          echo "Previous connectors service restore failed." >&2
+        fi
       fi
     fi
     if [ "$application_pointer_update_started" -eq 1 ]; then
@@ -428,7 +461,7 @@ mv -Tf "$connectors_current_temporary" "$connectors_current"
 systemctl enable "$connectors_service"
 candidate_started=1
 systemctl restart "$connectors_service"
-node "$release_directory/infrastructure/operations/check-connectors-readiness.mjs" || {
+check_connectors_readiness || {
   echo "Connectors readiness failed." >&2
   exit 1
 }
@@ -463,5 +496,20 @@ mv -Tf "$environment_link_temporary" "$pih_root/config/current-compose.env"
 deployment_succeeded=1
 trap - EXIT HUP INT TERM
 cleanup_connectors_staging
+
+# Retention and the repository check for the pre-activation backup run only
+# now, after a successful activation, so they never widen the window between
+# the snapshot and stopping the old service. A failure here does not roll the
+# active release back; it is reported so the operator can rerun backup.sh.
+if [ "$connectors_upgrade" -eq 1 ]; then
+  run_transient \
+    -p "EnvironmentFile=$pih_root/config/backup.env" \
+    -p "EnvironmentFile=$pih_root/secrets/restic.env" \
+    -E "PIH_ROOT=$pih_root" -- \
+    /bin/sh "$release_directory/infrastructure/operations/backup.sh" --retention-only > /dev/null || {
+    echo "Release $release_sha is active, but backup retention or the Restic repository check failed. Nothing was rolled back; run infrastructure/operations/backup.sh and investigate before the next deployment." >&2
+    exit 1
+  }
+fi
 
 echo "Deployed Personal Intelligence Hub release $release_sha."

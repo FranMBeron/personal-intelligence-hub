@@ -253,7 +253,7 @@ describe("configure-private-connectors.sh", () => {
     expect(written).toContain(`CONNECTORS_SERVICE_CREDENTIALS_JSON='${secrets.credentials}'\n`);
     expect(written).toContain(`GOOGLE_CALENDAR_ENCRYPTION_KEYS_JSON='${secrets.keyring}'\n`);
     expect(written).toContain("CONNECTORS_SOCKET_PATH='/run/pih-connectors/web/connectors.sock'\n");
-    expect(written).toContain("HERMES_DELEGATION_SOCKET_PATH='/run/pih-connectors/hermes-delegation.sock'\n");
+    expect(written).toContain("HERMES_DELEGATION_SOCKET_PATH='/run/pih-connectors/agents/hermes-delegation.sock'\n");
     expect(written).toContain("GOOGLE_CALENDAR_OAUTH_REDIRECT_URI='https://pih.example.test/api/ui/v1/calendar/oauth/callback'\n");
     expect(written).not.toMatch(/TELEGRAM/u);
     expect(await fixture.configDirectoryEntries()).toEqual(["connectors.env"]);
@@ -268,6 +268,12 @@ describe("configure-private-connectors.sh", () => {
     ["a non-loopback Hermes origin", { "Hermes loopback API origin": "http://192.0.2.10:8642" }, "HERMES_API_ORIGIN"],
     ["another BFF socket path", { "Host BFF socket path": "/run/pih-connectors/connectors.sock" }, "CONNECTORS_SOCKET_PATH"],
     ["another delegation socket path", { "Agent-only delegation socket path": "/run/pih-connectors/web/delegation.sock" }, "HERMES_DELEGATION_SOCKET_PATH"],
+    ["a device owner that is not a UUID", {
+      "Configure a device connection": "yes", "Device connection ID": "fictional-band", "Device connection label": "Fictional band",
+      "Private bridge socket path": "/run/fictional-device-bridge/bridge.sock", "Bridge actor label for the owner": "",
+      "PIH owner actor ID": "owner",
+    }, "DEVICE_CONNECTION_OWNER_ACTOR_ID"],
+    ["the unreachable service-root delegation socket", { "Agent-only delegation socket path": "/run/pih-connectors/hermes-delegation.sock" }, "HERMES_DELEGATION_SOCKET_PATH"],
     ["an unknown default profile", { "Default gateway profile ID": "unknown-profile" }, "is not a configured profile"],
     ["an unknown peer profile", { "Delegation peers": peers.replace("specialist", "unknown-profile") }, "references an unknown profile"],
     ["a redirect outside the PIH origin", { "Google OAuth redirect URI": "https://other.example.test/api/ui/v1/calendar/oauth/callback" }, "GOOGLE_CALENDAR_OAUTH_REDIRECT_URI"],

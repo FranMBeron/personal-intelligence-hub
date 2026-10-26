@@ -11,7 +11,15 @@ type Options = Readonly<{
   pollIntervalMs?: number;
   heartbeatMs?: number;
   batchSize?: number;
+  /** Maximum lifetime of one stream; injected only by tests. */
+  maxLifetimeMs?: number;
 }>;
+
+/**
+ * Every stream ends after this long, even while idle, so the bounded pool of concurrent streams
+ * cannot be held forever; the client reconnects with Last-Event-ID and misses nothing.
+ */
+export const EVENT_STREAM_MAX_LIFETIME_MS = 30 * 60 * 1000;
 
 export const hermesEventStreamErrorCodes = [
   "forbidden",
@@ -56,6 +64,7 @@ export class EventStream {
   readonly #pollIntervalMs: number;
   readonly #heartbeatMs: number;
   readonly #batchSize: number;
+  readonly #maxLifetimeMs: number;
 
   constructor(options: Options) {
     this.#database = options.database;
@@ -64,6 +73,7 @@ export class EventStream {
     this.#pollIntervalMs = options.pollIntervalMs ?? 500;
     this.#heartbeatMs = options.heartbeatMs ?? 15_000;
     this.#batchSize = options.batchSize ?? 100;
+    this.#maxLifetimeMs = options.maxLifetimeMs ?? EVENT_STREAM_MAX_LIFETIME_MS;
   }
 
   /** Validates scope, ownership, and cursor before returning, so the route can answer 404/410 before SSE headers. */
@@ -99,7 +109,8 @@ export class EventStream {
   async *#frames(actorId: string, conversationId: string, start: bigint, signal: AbortSignal): AsyncGenerator<string> {
     let cursor = start;
     let lastWrite = Date.now();
-    while (!signal.aborted) {
+    const deadline = Date.now() + this.#maxLifetimeMs;
+    while (!signal.aborted && Date.now() < deadline) {
       let batch;
       try {
         batch = await this.#database.read((db) => this.#events.after(db, actorId, conversationId, cursor, this.#batchSize));
@@ -120,7 +131,7 @@ export class EventStream {
         yield HEARTBEAT;
         continue;
       }
-      await wait(Math.min(this.#pollIntervalMs, this.#heartbeatMs), signal);
+      await wait(Math.max(0, Math.min(this.#pollIntervalMs, this.#heartbeatMs, deadline - Date.now())), signal);
     }
   }
 }

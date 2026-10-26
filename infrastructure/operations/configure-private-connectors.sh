@@ -28,7 +28,7 @@ config_directory="$configure_root/etc/pih-connectors"
 target_file="$config_directory/connectors.env"
 validator="$connectors_root/current/dist/src/operations/validate-config-command.js"
 bff_socket=/run/pih-connectors/web/connectors.sock
-delegation_socket=/run/pih-connectors/hermes-delegation.sock
+delegation_socket=/run/pih-connectors/agents/hermes-delegation.sock
 database_path=/var/lib/pih-connectors/connectors.sqlite
 calendar_callback_path=/api/ui/v1/calendar/oauth/callback
 
@@ -299,12 +299,18 @@ if [ "$answer" = yes ]; then
   emit DEVICE_CONNECTION_LABEL "$answer"
   ask DEVICE_CONNECTION_BRIDGE_SOCKET_PATH "Private bridge socket path" ""
   case "$answer" in /*.sock) ;; *) reject DEVICE_CONNECTION_BRIDGE_SOCKET_PATH "must be an absolute .sock path" ;; esac
-  case "$answer" in /run/pih-connectors/web/*|"$delegation_socket") reject DEVICE_CONNECTION_BRIDGE_SOCKET_PATH "must stay outside the BFF and delegation sockets" ;; esac
+  case "$answer" in /run/pih-connectors/web/*|/run/pih-connectors/agents/*) reject DEVICE_CONNECTION_BRIDGE_SOCKET_PATH "must stay outside the BFF and delegation sockets" ;; esac
   require_charset DEVICE_CONNECTION_BRIDGE_SOCKET_PATH "$answer" 'A-Za-z0-9._/-' "must be a plain absolute path"
   emit DEVICE_CONNECTION_BRIDGE_SOCKET_PATH "$answer"
   ask DEVICE_CONNECTION_HUMAN_ACTOR "Bridge actor label for the owner" "owner"
   require_charset DEVICE_CONNECTION_HUMAN_ACTOR "$answer" 'a-z0-9_-' "must be a lowercase actor label"
   emit DEVICE_CONNECTION_HUMAN_ACTOR "$answer"
+  ask DEVICE_CONNECTION_OWNER_ACTOR_ID "PIH owner actor ID (UUID of the only person allowed)" ""
+  case "$answer" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+    *) reject DEVICE_CONNECTION_OWNER_ACTOR_ID "must be a lowercase UUID" ;;
+  esac
+  emit DEVICE_CONNECTION_OWNER_ACTOR_ID "$answer"
   ask DEVICE_CONNECTION_AGENT_ACTORS_JSON "Agent profile to bridge actor map (compact JSON object)" "{}"
   case "$answer" in \{*\}) ;; *) reject DEVICE_CONNECTION_AGENT_ACTORS_JSON "must be a compact JSON object" ;; esac
   agent_profiles=$(json_query "$answer" 'keys | join(" ")') || reject DEVICE_CONNECTION_AGENT_ACTORS_JSON "must be a JSON object"

@@ -11,7 +11,8 @@ export const PRODUCTION_FIXED_VALUES: Readonly<Record<string, string>> = Object.
   CONNECTORS_SOCKET_PATH: "/run/pih-connectors/web/connectors.sock",
   CONNECTORS_DATABASE_PATH: "/var/lib/pih-connectors/connectors.sqlite",
 });
-const PRODUCTION_DELEGATION_SOCKET = "/run/pih-connectors/hermes-delegation.sock";
+/** Inside the dedicated agent directory (0750, agent group); the service root is not agent-readable. */
+export const PRODUCTION_DELEGATION_SOCKET = "/run/pih-connectors/agents/hermes-delegation.sock";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 

@@ -56,7 +56,7 @@ const proposal = {
     recurrenceScope: "single",
     organizerRelationship: "self",
     guestNotification: "none",
-    after: { title: "Reunión de ejemplo", time: timed, attendeeCount: 0 },
+    after: { title: "Reunión de ejemplo", time: timed, attendeeCount: 0, attendeeEmails: [] },
   },
   createdAt: "2026-10-12T08:00:00-03:00",
   expiresAt: "2026-10-12T08:15:00-03:00",
@@ -107,6 +107,23 @@ describe("Calendar public contracts", () => {
     expect(() => CalendarChangeProposalSchema.parse({ ...proposal, version: -1 })).toThrow();
     expect(CalendarChangeProposalSchema.parse(proposal).version).toBe(0);
     expect(() => ConfirmCalendarChangeProposalBodySchema.parse({ expectedVersion: -1 })).toThrow();
+  });
+
+  it("exposes every guest email and the description to the human reviewing a proposal", () => {
+    const after = {
+      title: "Reunión de ejemplo", time: timed, attendeeCount: 2,
+      attendeeEmails: ["ana@example.test", "outside@example.invalid"], description: "Agenda ficticia",
+    };
+    const parsed = CalendarChangeProposalSchema.parse({ ...proposal, summary: { ...proposal.summary, after } });
+    expect(parsed.summary.after).toEqual(after);
+    // A preview that hides who receives the event cannot be represented.
+    const { attendeeEmails: _omitted, ...withoutEmails } = after;
+    expect(() => CalendarChangeProposalSchema.parse({ ...proposal, summary: { ...proposal.summary, after: withoutEmails } })).toThrow();
+    expect(() => CalendarChangeProposalSchema.parse({ ...proposal, summary: { ...proposal.summary, after: { ...after, attendeeEmails: ["not-an-email"] } } })).toThrow();
+    // Create and update must carry the after-state; update, cancel and respond the current state.
+    const { after: _after, ...withoutAfter } = proposal.summary;
+    expect(() => CalendarChangeProposalSchema.parse({ ...proposal, summary: withoutAfter })).toThrow();
+    expect(() => CalendarChangeProposalSchema.parse({ ...proposal, summary: { ...proposal.summary, operation: "update" } })).toThrow();
   });
 
   it("models invitation responses as a separate operation from cancellation", () => {

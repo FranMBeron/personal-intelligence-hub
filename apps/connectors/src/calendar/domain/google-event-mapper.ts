@@ -178,13 +178,19 @@ export const toAgendaItem = (detail: CalendarEventDetail): CalendarAgendaItem =>
   ...(detail.location === undefined ? {} : { location: detail.location }),
 });
 
+/**
+ * What a human reviews before confirming: every guest email and the description are shown, never
+ * just a count, so a proposal cannot quietly send event content to an unseen recipient.
+ */
 export const toEventPreview = (
-  detail: Pick<CalendarEventDetail, "title" | "time" | "location" | "attendees">,
+  detail: Pick<CalendarEventDetail, "title" | "time" | "location" | "description"> & Readonly<{ attendees: readonly Readonly<{ email?: string | undefined }>[] }>,
 ): CalendarEventPreview => ({
   title: detail.title,
   time: detail.time,
   ...(detail.location === undefined ? {} : { location: detail.location }),
+  ...(detail.description === undefined ? {} : { description: detail.description }),
   attendeeCount: detail.attendees.length,
+  attendeeEmails: detail.attendees.flatMap((attendee) => (attendee.email === undefined ? [] : [attendee.email])),
 });
 
 /** Epoch milliseconds of local midnight for an ISO date in an IANA zone. */

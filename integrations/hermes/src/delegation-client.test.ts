@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ConnectorsDelegationClient, DelegationClientError, delegationIdempotencyKey } from "./delegation-client.js";
 import type { UnixHttpTransport } from "./unix-http-transport.js";
 
-const socketPath = "/run/pih-connectors/hermes-delegation.sock";
+const socketPath = "/run/pih-connectors/agents/hermes-delegation.sock";
 const tokenA = "fictional-specialist-a-peer-token-32-bytes";
 const tokenB = "fictional-specialist-b-peer-token-32-bytes";
 const delegation = {

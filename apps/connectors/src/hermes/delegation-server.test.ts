@@ -1,6 +1,6 @@
 import { request } from "node:http";
 import { createServer } from "node:net";
-import { lstat, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -27,10 +27,11 @@ const delegation: Delegation = {
 const servers: HermesDelegationServer[] = [];
 const directories: string[] = [];
 
-const setup = async (options: { start?: (...args: unknown[]) => Promise<Delegation> } = {}) => {
+const setup = async (options: { start?: (...args: unknown[]) => Promise<Delegation>; subdirectory?: string } = {}) => {
   const harness = await createHermesHarness();
-  const directory = await mkdtemp(join(tmpdir(), "pih-delegation-socket-"));
-  directories.push(directory);
+  const root = await mkdtemp(join(tmpdir(), "pih-delegation-socket-"));
+  directories.push(root);
+  const directory = options.subdirectory === undefined ? root : join(root, options.subdirectory);
   const socketPath = join(directory, "hermes-delegation.sock");
   const peers = loadDelegationPeerConfig(delegationEnvironment({ HERMES_DELEGATION_SOCKET_PATH: socketPath }), harness.profiles).peers;
   const service = { start: vi.fn(options.start ?? (async () => delegation)) };
@@ -40,7 +41,7 @@ const setup = async (options: { start?: (...args: unknown[]) => Promise<Delegati
     socketPath, socketGroupId: 1234, peers, service: service as never, maximumBodyBytes: 32 * 1024, chown, onAuthenticationRejected: audit,
   });
   servers.push(server);
-  return { server, service, socketPath, chown, audit, directory };
+  return { server, service, socketPath, chown, audit, directory, root };
 };
 
 type Sent = { status: number; body: string; headers: Record<string, string | string[] | undefined> };
@@ -176,15 +177,47 @@ describe("HermesDelegationServer", () => {
       });
     });
     await server.start();
-    expect(observed).toEqual([{ finalPathExists: false, mode: 0o660, stagingMode: 0o700 }]);
+    // The first ownership change secures the socket directory itself; the second, the staged socket.
+    expect(observed.slice(1)).toEqual([{ finalPathExists: false, mode: 0o660, stagingMode: 0o700 }]);
     expect((await lstat(socketPath)).mode & 0o777).toBe(0o660);
     expect(await readdir(directory)).toEqual(["hermes-delegation.sock"]);
     expect((await send(socketPath)).status).toBe(201);
   });
 
+  it("restricts the socket directory to the service owner and the agent group (0750) so agents can traverse it", async () => {
+    const { server, chown, directory, socketPath } = await setup();
+    await server.start();
+    expect(chown.mock.calls[0]).toEqual([directory, 1234]);
+    expect((await lstat(directory)).mode & 0o777).toBe(0o750);
+    expect((await send(socketPath)).status).toBe(201);
+  });
+
+  it("creates a missing dedicated agent socket directory without a permissive window", async () => {
+    const { server, chown, directory, socketPath } = await setup({ subdirectory: "agents" });
+    const observed: number[] = [];
+    chown.mockImplementation(async (path: string) => {
+      if (path === directory) observed.push((await lstat(path)).mode & 0o777);
+    });
+    await server.start();
+    expect(observed).toEqual([0o700]);
+    const status = await lstat(directory);
+    expect(status.isDirectory()).toBe(true);
+    expect(status.mode & 0o777).toBe(0o750);
+    expect((await send(socketPath)).status).toBe(201);
+  });
+
+  it("refuses a socket directory that is a symbolic link", async () => {
+    const { server, root, socketPath } = await setup({ subdirectory: "agents" });
+    await mkdir(join(root, "elsewhere"), { mode: 0o700 });
+    await symlink(join(root, "elsewhere"), dirname(socketPath));
+    await expect(server.start()).rejects.toThrow("hermes_delegation_socket_unsafe");
+    expect(await readdir(join(root, "elsewhere"))).toEqual([]);
+  });
+
   it("leaves neither a socket nor a staging directory behind when securing the socket fails", async () => {
     const { server, chown, directory } = await setup();
-    chown.mockRejectedValue(new Error("EPERM fictional"));
+    // The directory is secured; securing the staged socket then fails.
+    chown.mockResolvedValueOnce(undefined).mockRejectedValue(new Error("EPERM fictional"));
     await expect(server.start()).rejects.toThrow("hermes_delegation_socket_unsafe");
     expect(await readdir(directory)).toEqual([]);
   });

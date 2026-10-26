@@ -283,6 +283,59 @@ describe("Calendar OAuth service", () => {
     await expect(database.read((db) => db.prepare("SELECT count(*) AS count FROM calendar_idempotency WHERE actor_id = :actorId").get<{ count: number }>({ actorId }))).resolves.toEqual({ count: 0 });
   });
 
+  it("refuses to disconnect or reconnect while a proposal is executing, without touching Google", async () => {
+    currentTime = now;
+    const database = await createDatabase();
+    await database.write((db) => repository.saveConnection(db, oldConnection()));
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 4, [makeCalendar()], authorizationIdOf(db), systemTransition);
+      repository.insertProposal(db, {
+        actorId, id: "proposal-executing", version: 2, status: "executing", operation: "create",
+        encryptedPayload: sealCalendarValue("payload-fictional", `calendar_change_proposals:${actorId}:proposal-executing:payload`, keyring),
+        createdByActorType: "agent", createdAt: now.toISOString(), expiresAt: "2026-10-12T12:15:00.000Z",
+      }, "idempotency-executing", "request-hash-fictional");
+    });
+    const { service, oauth } = makeService(database);
+
+    await expect(service.disconnect(principal())).rejects.toThrow("calendar_proposal_executing");
+    expect(oauth.revokeToken).not.toHaveBeenCalled();
+
+    const { state } = await stateFor(service);
+    await expect(service.callback(principal(), { code: "fictional-code", state })).rejects.toThrow("calendar_proposal_executing");
+    expect(oauth.exchangeAuthorizationCode).not.toHaveBeenCalled();
+
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-executing"))).resolves.toMatchObject({ status: "executing" });
+    await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toMatchObject({ selectionVersion: 5 });
+  });
+
+  it("revokes the new grant when a proposal starts executing during the reconnect exchange", async () => {
+    currentTime = now;
+    const database = await createDatabase();
+    await database.write((db) => repository.saveConnection(db, oldConnection()));
+    const { service, oauth } = makeService(database, {
+      oauth: {
+        exchangeAuthorizationCode: vi.fn(async () => {
+          // A confirmation wins the race while the code is being exchanged.
+          await database.transaction((db) => {
+            repository.replaceCalendarSelection(db, actorId, 4, [makeCalendar()], authorizationIdOf(db), systemTransition);
+            repository.insertProposal(db, {
+              actorId, id: "proposal-raced", version: 2, status: "executing", operation: "create",
+              encryptedPayload: sealCalendarValue("payload-fictional", `calendar_change_proposals:${actorId}:proposal-raced:payload`, keyring),
+              createdByActorType: "agent", createdAt: now.toISOString(), expiresAt: "2026-10-12T12:15:00.000Z",
+            }, "idempotency-raced", "request-hash-fictional");
+          });
+          return grant({ refreshToken: "fictional-new-refresh-token" });
+        }),
+      },
+    });
+    const { state } = await stateFor(service);
+    await expect(service.callback(principal(), { code: "fictional-code", state })).rejects.toThrow("calendar_proposal_executing");
+    expect(oauth.revokeToken).toHaveBeenCalledWith("fictional-new-refresh-token");
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-raced"))).resolves.toMatchObject({ status: "executing" });
+    const saved = await database.read((db) => repository.getConnection(db, actorId));
+    expect(openCalendarValue(saved!.refreshTokenCiphertext, `calendar_connections:${actorId}:refresh`, keyring)).toBe("fictional-old-refresh-token");
+  });
+
   it("normalizes exchange errors without exposing provider details", async () => {
     currentTime = now;
     const database = await createDatabase();
@@ -297,13 +350,48 @@ describe("Calendar OAuth service", () => {
   it("rejects an authorization code without both required Google scopes", async () => {
     currentTime = now;
     const database = await createDatabase();
-    const { service } = makeService(database, {
+    const { service, oauth } = makeService(database, {
       oauth: { exchangeAuthorizationCode: vi.fn(async () => grant({ grantedScopes: [requiredScopes[0]] })) },
     });
     const { state } = await stateFor(service);
     await expect(service.callback(principal(), { code: "fictional-code", state }))
       .rejects.toThrow("calendar_oauth_required_scope_missing");
     await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toBeNull();
+    expect(oauth.revokeToken).toHaveBeenCalledWith("fictional-refresh-token");
+  });
+
+  it("rejects and revokes a grant carrying any scope beyond the requested set", async () => {
+    currentTime = now;
+    const database = await createDatabase();
+    const { service, oauth } = makeService(database, {
+      oauth: { exchangeAuthorizationCode: vi.fn(async () => grant({ grantedScopes: [...requiredScopes, "https://www.googleapis.com/auth/gmail.readonly"] })) },
+    });
+    const { state } = await stateFor(service);
+    await expect(service.callback(principal(), { code: "fictional-code", state }))
+      .rejects.toThrow("calendar_oauth_scope_unexpected");
+    await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toBeNull();
+    expect(oauth.revokeToken).toHaveBeenCalledWith("fictional-refresh-token");
+  });
+
+  it("still fails closed when revoking an over-scoped grant hangs", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      currentTime = now;
+      const database = await createDatabase();
+      const { service } = makeService(database, {
+        oauth: {
+          exchangeAuthorizationCode: vi.fn(async () => grant({ grantedScopes: [...requiredScopes, "https://www.googleapis.com/auth/drive"] })),
+          revokeToken: vi.fn(() => new Promise<void>(() => undefined)),
+        },
+      });
+      const { state } = await stateFor(service);
+      const outcome = service.callback(principal(), { code: "fictional-code", state });
+      const assertion = expect(outcome).rejects.toThrow("calendar_oauth_scope_unexpected");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not downgrade a concurrent invalid_grant during bootstrap failure persistence", async () => {
@@ -412,18 +500,20 @@ describe("Calendar OAuth service", () => {
       .resolves.toEqual({ outcome: "connected" });
   });
 
-  it("preserves an existing refresh token when Google omits it during reauthorization", async () => {
+  it("fails closed instead of reusing the old refresh token when Google omits it during reauthorization", async () => {
     currentTime = now;
     const database = await createDatabase();
     await database.write((db) => repository.saveConnection(db, oldConnection()));
+    const before = await database.read((db) => repository.getConnection(db, actorId));
     const { service } = makeService(database, {
       oauth: { exchangeAuthorizationCode: vi.fn(async () => grant({ refreshToken: undefined })) },
     });
     const { state } = await stateFor(service);
-    await service.callback(principal(), { code: "fictional-code", state });
-    const saved = await database.read((db) => repository.getConnection(db, actorId));
-    expect(openCalendarValue(saved!.refreshTokenCiphertext, `calendar_connections:${actorId}:refresh`, keyring))
-      .toBe("fictional-old-refresh-token");
+    // The new access token may belong to another Google account; it is never paired with the old refresh token.
+    await expect(service.callback(principal(), { code: "fictional-code", state })).rejects.toThrow("calendar_oauth_refresh_token_missing");
+    await expect(database.read((db) => repository.getConnection(db, actorId))).resolves.toEqual(before);
+    await expect(database.read((db) => db.prepare("SELECT count(*) AS count FROM calendar_change_audit WHERE operation = 'connect'").get<{ count: number }>()))
+      .resolves.toEqual({ count: 0 });
   });
 
   it("requires a refresh token for the first connection", async () => {

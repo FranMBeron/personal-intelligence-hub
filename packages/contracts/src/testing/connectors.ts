@@ -162,6 +162,12 @@ export const proposalFixture = (
     recurrenceScope: "single",
     organizerRelationship: "self",
     guestNotification: "none",
+    after: {
+      title: "Fictional meeting",
+      time: { kind: "timed", start: "2026-10-12T14:00:00.000Z", end: "2026-10-12T15:00:00.000Z", timeZone: "Etc/UTC" },
+      attendeeCount: 0,
+      attendeeEmails: [],
+    },
   },
   createdAt: "2026-10-12T11:00:00.000Z",
   expiresAt: "2026-10-12T13:00:00.000Z",

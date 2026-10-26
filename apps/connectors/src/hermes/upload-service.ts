@@ -27,6 +27,8 @@ type Options = Readonly<{
   idGenerator: IdGenerator;
   /** Opaque on-disk names; must be UUID-shaped. Injected only by tests. */
   fileIds?: () => string;
+  /** Per-actor live upload ceiling; defaults to the constants below. Injected only by tests. */
+  liveQuota?: Readonly<{ maxUploads: number; maxBytes: number }>;
 }>;
 
 export const hermesUploadErrorCodes = [
@@ -34,6 +36,7 @@ export const hermesUploadErrorCodes = [
   "not_found",
   "validation_failed",
   "payload_too_large",
+  "too_many_requests",
   "hermes_images_disabled",
   "hermes_upload_unavailable",
   "hermes_upload_storage_failed",
@@ -56,6 +59,12 @@ const fail = (code: HermesUploadErrorCode): never => { throw new HermesUploadErr
 
 /** Most attachments one message may carry (the public capability ceiling). */
 export const MAX_ATTACHMENTS_PER_MESSAGE = 3;
+/**
+ * Live (unexpired, unconsumed) uploads one actor may hold at once, so a client cannot fill the
+ * upload disk within the TTL: more uploads answer 429, more bytes 413.
+ */
+export const MAX_LIVE_UPLOADS_PER_ACTOR = 24;
+export const MAX_LIVE_UPLOAD_BYTES_PER_ACTOR = 64 * 1024 * 1024;
 const PURGE_BATCH = 500;
 const MAX_SWEEP_ENTRIES = 10_000;
 const OPAQUE_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
@@ -91,6 +100,7 @@ export class UploadService {
   readonly #root: string;
   readonly #maxBytes: number;
   readonly #ttlMs: number;
+  readonly #liveQuota: Readonly<{ maxUploads: number; maxBytes: number }>;
 
   constructor(options: Options) {
     this.#database = options.database;
@@ -103,6 +113,7 @@ export class UploadService {
     this.#root = options.profiles.config.uploadDirectory;
     this.#maxBytes = options.profiles.config.imageMaxBytes;
     this.#ttlMs = options.profiles.config.uploadTtlSeconds * 1_000;
+    this.#liveQuota = options.liveQuota ?? { maxUploads: MAX_LIVE_UPLOADS_PER_ACTOR, maxBytes: MAX_LIVE_UPLOAD_BYTES_PER_ACTOR };
   }
 
   async store(
@@ -134,6 +145,10 @@ export class UploadService {
 
     const now = this.#now();
     const expiresAt = new Date(now.getTime() + this.#ttlMs).toISOString();
+    // Checked before any byte reaches disk, and again atomically with the insert.
+    const usage = await this.#database.read((db) => this.#uploads.liveUsage(db, principal.actorId, now.toISOString()))
+      .catch(() => fail("hermes_upload_unavailable"));
+    this.#enforceQuota(usage, input.bytes.byteLength);
     const storagePath = this.#fileIds();
     if (!OPAQUE_NAME.test(storagePath)) return fail("hermes_upload_storage_failed");
     await this.#ensureRoot();
@@ -141,12 +156,16 @@ export class UploadService {
 
     const reference = this.#ids.generate();
     try {
-      await this.#database.transaction((db) => this.#uploads.insert(db, {
-        reference, actorId: principal.actorId, conversationId: conversation.id, originalName: name,
-        mimeType, sizeBytes: input.bytes.byteLength, storagePath, expiresAt,
-      }));
-    } catch {
+      await this.#database.transaction((db) => {
+        this.#enforceQuota(this.#uploads.liveUsage(db, principal.actorId, now.toISOString()), input.bytes.byteLength);
+        this.#uploads.insert(db, {
+          reference, actorId: principal.actorId, conversationId: conversation.id, originalName: name,
+          mimeType, sizeBytes: input.bytes.byteLength, storagePath, expiresAt,
+        });
+      });
+    } catch (error) {
       await this.#unlinkOpaque(storagePath);
+      if (error instanceof HermesUploadError) throw error;
       return fail("hermes_upload_unavailable");
     }
     return UploadedMediaSchema.parse({ reference, kind: "attachment", name, mimeType, size: input.bytes.byteLength, expiresAt });
@@ -297,6 +316,11 @@ export class UploadService {
     } catch {
       return false;
     }
+  }
+
+  #enforceQuota(usage: Readonly<{ count: number; bytes: number }>, size: number): void {
+    if (usage.count + 1 > this.#liveQuota.maxUploads) fail("too_many_requests");
+    if (usage.bytes + size > this.#liveQuota.maxBytes) fail("payload_too_large");
   }
 
   #now(): Date {

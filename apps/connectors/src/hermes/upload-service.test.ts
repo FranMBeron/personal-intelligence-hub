@@ -13,7 +13,7 @@ import {
   type HermesHarness,
 } from "../../test/hermes/harness.js";
 import { UploadRepository } from "./storage/upload-repository.js";
-import { readBoundedBytes, UploadService } from "./upload-service.js";
+import { MAX_LIVE_UPLOADS_PER_ACTOR, readBoundedBytes, UploadService } from "./upload-service.js";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const fixedFileIds = (...values: string[]) => {
@@ -21,12 +21,13 @@ const fixedFileIds = (...values: string[]) => {
   return () => queue.shift() ?? "99999999-9999-4999-8999-999999999999";
 };
 
-const setup = async (options: { fileIds?: () => string } = {}) => {
+const setup = async (options: { fileIds?: () => string; liveQuota?: { maxUploads: number; maxBytes: number } } = {}) => {
   const harness = await createHermesHarness();
   const uploads = new UploadRepository();
   const service = new UploadService({
     database: harness.database, profiles: harness.profiles, conversations: harness.conversations, uploads,
     clock: harness.clock, idGenerator: harness.ids, ...(options.fileIds === undefined ? {} : { fileIds: options.fileIds }),
+    ...(options.liveQuota === undefined ? {} : { liveQuota: options.liveQuota }),
   });
   await harness.seedConversation();
   return { harness, uploads, service };
@@ -195,6 +196,40 @@ describe("UploadService.readClaimedAsDataUrls", () => {
     await expect(service.readClaimedAsDataUrls(claimed)).rejects.toMatchObject({ code: "hermes_upload_unavailable" });
     await expect(service.readClaimedAsDataUrls([{ ...claimed[0]!, storagePath: "../outside.png" }]))
       .rejects.toMatchObject({ code: "hermes_upload_unavailable" });
+  });
+});
+
+describe("UploadService live upload quota", () => {
+  it("caps live uploads per actor by count with 429 and leaves no file behind", async () => {
+    const { harness, service } = await setup();
+    expect(MAX_LIVE_UPLOADS_PER_ACTOR).toBe(24);
+    for (let index = 0; index < MAX_LIVE_UPLOADS_PER_ACTOR; index += 1) await service.store(principalFor(), png());
+    await expect(service.store(principalFor(), png())).rejects.toMatchObject({ code: "too_many_requests" });
+    expect(await readdir(harness.uploadDirectory)).toHaveLength(MAX_LIVE_UPLOADS_PER_ACTOR);
+  });
+
+  it("caps the live bytes per actor with 413", async () => {
+    const { harness, service } = await setup({ liveQuota: { maxUploads: 10, maxBytes: 64 } });
+    await service.store(principalFor(), png());
+    await service.store(principalFor(), png());
+    await expect(service.store(principalFor(), png())).rejects.toMatchObject({ code: "payload_too_large" });
+    expect(await readdir(harness.uploadDirectory)).toHaveLength(2);
+  });
+
+  it("stops counting uploads once they expire or are consumed", async () => {
+    const { harness, uploads, service } = await setup({ liveQuota: { maxUploads: 2, maxBytes: 1_000 } });
+    const first = await service.store(principalFor(), png());
+    await service.store(principalFor(), png());
+    await expect(service.store(principalFor(), png())).rejects.toMatchObject({ code: "too_many_requests" });
+    await claim(harness, uploads, [first.reference]);
+    await harness.database.transaction((db) => uploads.consumeClaimed(db, {
+      actorId, conversationId: "conversation-01", references: [first.reference], admissionId: "pih-admission-01",
+      now: harness.clock.now().toISOString(), consumedAt: harness.clock.now().toISOString(),
+    }));
+    await service.store(principalFor(), png());
+    harness.clock.advance(601_000);
+    await service.store(principalFor(), png());
+    await service.store(principalFor(), png());
   });
 });
 

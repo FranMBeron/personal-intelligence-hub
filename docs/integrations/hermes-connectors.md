@@ -88,11 +88,11 @@ Names only; values are private.
 | `HERMES_<PROFILE>_API_KEY` | One distinct API key per enabled profile, named by its `keyEnvironment`. |
 | `HERMES_UPLOAD_DIRECTORY` | Absolute directory outside the repository for pending images. |
 | `HERMES_IMAGE_MAX_BYTES` | Per-image ceiling (at most 10 MiB). |
-| `HERMES_UPLOAD_TTL_SECONDS` | Unclaimed upload lifetime (60–3600). |
+| `HERMES_UPLOAD_TTL_SECONDS` | Unclaimed upload lifetime (60–3600). Each actor may hold at most 24 live (unexpired, unconsumed) uploads and 64 MiB in total; beyond that, uploads answer `429 too_many_requests` or `413 payload_too_large` until earlier ones are sent or expire. |
 | `HERMES_EVENT_RETENTION_HOURS` | Normalized event retention (24–720). |
 | `HERMES_IDEMPOTENCY_RETENTION_HOURS` | Terminal idempotency retention (at least the event retention). |
 | `HERMES_DELEGATION_ORCHESTRATOR_ID` | The single profile allowed to delegate. |
-| `HERMES_DELEGATION_SOCKET_PATH` | Agent-only socket path; never inside the BFF socket directory. |
+| `HERMES_DELEGATION_SOCKET_PATH` | Agent-only socket path; production requires `/run/pih-connectors/agents/hermes-delegation.sock` (directory `0750`, agent group). Never inside the BFF socket directory. |
 | `HERMES_DELEGATION_SOCKET_GROUP_ID` | Group allowed to open the delegation socket (mode `0660`). |
 | `HERMES_DELEGATION_PEERS_JSON` | Closed peers: `sourceAgentId`, `ownerActorId`, `targetAgentId`, `tokenEnvironment`. |
 | `HERMES_<PAIR>_PEER_TOKEN` | One token per source/target pair (at least 32 characters, distinct from every profile key). |
@@ -109,7 +109,12 @@ Names only; values are private.
 3. `GET /v1/conversations/:id/events` with `Last-Event-ID: <streamCursor>`
    continues exactly after the snapshot. Headers: `Content-Type:
    text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`.
-   Frames carry `id`, `event`, and the normalized JSON event.
+   Frames carry `id`, `event`, and the normalized JSON event. Every stream
+   ends after at most 30 minutes, even while idle, so the bounded pool of
+   concurrent streams cannot be held indefinitely; clients reconnect with the
+   last `id` as `Last-Event-ID` and miss nothing. The web client treats a
+   normal close after at least a minute open as this planned end and
+   reconnects at once, without reporting an outage.
 4. Only `message.accepted`, `message.delta`, `message.completed`,
    `message.failed`, `agent.changed`, and `heartbeat` reach clients. Tool,
    reasoning, approval, and unknown upstream events are dropped before storage.

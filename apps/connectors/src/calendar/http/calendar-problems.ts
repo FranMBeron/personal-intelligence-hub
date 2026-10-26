@@ -45,6 +45,7 @@ const CALENDAR_PROBLEMS: ReadonlyMap<string, Mapped> = new Map<string, Mapped>([
   ["calendar_recurrence_scope_invalid", VALIDATION],
   ["calendar_oauth_state_invalid", VALIDATION],
   ["calendar_oauth_required_scope_missing", VALIDATION],
+  ["calendar_oauth_scope_unexpected", VALIDATION],
 
   ["calendar_event_not_found", NOT_FOUND],
   ["calendar_proposal_not_found", NOT_FOUND],
@@ -59,6 +60,8 @@ const CALENDAR_PROBLEMS: ReadonlyMap<string, Mapped> = new Map<string, Mapped>([
   ["calendar_reauthorization_required", CONFLICT],
   ["calendar_primary_unavailable", CONFLICT],
   ["calendar_oauth_refresh_token_missing", CONFLICT],
+  // A confirmed change is still running: disconnecting or reconnecting would discard its record.
+  ["calendar_proposal_executing", CONFLICT],
   // Storage compare-and-set losers: a concurrent request or deselection changed the proposal or
   // its event reference between the service read and the write.
   ["calendar_proposal_transition_conflict", CONFLICT],

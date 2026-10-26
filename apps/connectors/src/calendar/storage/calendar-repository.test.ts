@@ -549,6 +549,26 @@ describe("Calendar repository", () => {
     await expect(count(database, "calendar_change_audit")).resolves.toBe(1);
   });
 
+  it("refuses to delete or replace a connection while a proposal is executing, keeping it and its audit", async () => {
+    const { database } = await createDatabase();
+    await seedConnection(database);
+    await database.transaction((db) => {
+      repository.replaceCalendarSelection(db, actorId, 1, [calendar()], authorizationIdOf(db), systemTransition);
+      repository.upsertEventReference(db, eventReference());
+      repository.appendAudit(db, auditRecord({ proposalId: "proposal-01" }));
+    });
+    await database.transaction((db) => repository.insertProposal(db, proposal({ status: "executing" }), "idempotency-old", "request-old"));
+
+    await expect(database.transaction((db) => repository.deleteConnection(db, actorId))).rejects.toThrow("calendar_proposal_executing");
+    await expect(database.transaction((db) => repository.replaceConnectionAuthorization(db, connection({ updatedAt: later }))))
+      .rejects.toThrow("calendar_proposal_executing");
+
+    await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-01"))).resolves.toMatchObject({ status: "executing" });
+    await expect(database.read((db) => repository.hasExecutingProposal(db, actorId))).resolves.toBe(true);
+    await expect(count(database, "calendar_connections")).resolves.toBe(1);
+    await expect(count(database, "calendar_change_audit")).resolves.toBe(1);
+  });
+
   it("replaces authorization atomically and clears old account-bound state but preserves audit", async () => {
     const { database } = await createDatabase();
     await seedConnection(database);

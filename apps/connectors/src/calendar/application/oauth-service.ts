@@ -23,6 +23,8 @@ const verifierAad = (actorId: string): string => `calendar_oauth_transactions:${
 const refreshAad = (actorId: string): string => `calendar_connections:${actorId}:refresh`;
 const primaryAad = (actorId: string): string => `calendar_connections:${actorId}:primary-calendar`;
 const fail = (code: string): never => { throw new Error(code); };
+/** Upper bound for a best-effort revocation of a token that is being discarded. */
+const REVOKE_TIMEOUT_MS = 5_000;
 
 export interface CalendarPrimaryBootstrap {
   bootstrapPrimary(input: {
@@ -55,6 +57,9 @@ type Options = Readonly<{
 
 const isScopeComplete = (scopes: readonly string[]): boolean =>
   GOOGLE_CALENDAR_REQUIRED_SCOPES.every((scope) => scopes.includes(scope));
+/** Only the requested scopes may be granted; anything broader is never stored. */
+const isScopeWithinRequest = (scopes: readonly string[]): boolean =>
+  scopes.every((scope) => (GOOGLE_CALENDAR_REQUIRED_SCOPES as readonly string[]).includes(scope));
 const hashState = (state: string): string =>
   createHash("sha256").update(state, "utf8").digest("base64url");
 const safeRequestError = (error: unknown): string =>
@@ -189,6 +194,8 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
       return this.status(principal);
     }
 
+    // Checked before the state is consumed, so the same authorization can be retried once it settles.
+    await this.#refuseWhileExecuting(principal.actorId);
     const consumed = await this.#database.transaction((db) =>
       this.#repository.consumeOAuthTransaction(db, stateHash, principal.actorId, now.toISOString()),
     );
@@ -215,19 +222,18 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
     } catch {
       return fail("calendar_oauth_exchange_failed");
     }
-    if (grant.tokenType !== "Bearer" || !isScopeComplete(grant.grantedScopes)) {
-      fail("calendar_oauth_required_scope_missing");
+    const rejectedScope = grant.tokenType !== "Bearer" || !isScopeComplete(grant.grantedScopes)
+      ? "calendar_oauth_required_scope_missing"
+      : !isScopeWithinRequest(grant.grantedScopes) ? "calendar_oauth_scope_unexpected" : undefined;
+    if (rejectedScope !== undefined) {
+      await this.#revokeQuietly(grant.refreshToken ?? grant.accessToken);
+      fail(rejectedScope);
     }
 
-    let refreshToken = grant.refreshToken;
-    if (refreshToken === undefined && oldConnection !== null) {
-      try {
-        refreshToken = openCalendarValue(oldConnection.refreshTokenCiphertext, refreshAad(principal.actorId), this.#keyring);
-      } catch {
-        fail("calendar_credentials_unavailable");
-      }
-    }
-    const validRefreshToken = refreshToken ?? fail("calendar_oauth_refresh_token_missing");
+    // Never pair a new access token with a previously stored refresh token: the new consent may be
+    // for another Google account. The authorization request always asks for consent, so a retry
+    // returns a refresh token. Nothing is revoked here, since that could revoke the stored grant.
+    const validRefreshToken = grant.refreshToken ?? fail("calendar_oauth_refresh_token_missing");
 
     const timestamp = this.#clock().toISOString();
     const connection: CalendarConnectionInput = {
@@ -240,15 +246,23 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
       createdAt: oldConnection?.createdAt ?? timestamp,
       updatedAt: timestamp,
     };
-    const authorizationId = await this.#database.transaction((db) => {
-      const replacementId = this.#repository.replaceConnectionAuthorization(db, connection);
-      this.#repository.markOAuthAuthorizationCompleted(db, stateHash, timestamp);
-      this.#repository.appendAudit(db, {
-        id: randomUUID(), actorId: principal.actorId, operation: "connect", outcome: "connected",
-        requestId: principal.requestId, occurredAt: timestamp,
+    let authorizationId: string;
+    try {
+      authorizationId = await this.#database.transaction((db) => {
+        const replacementId = this.#repository.replaceConnectionAuthorization(db, connection);
+        this.#repository.markOAuthAuthorizationCompleted(db, stateHash, timestamp);
+        this.#repository.appendAudit(db, {
+          id: randomUUID(), actorId: principal.actorId, operation: "connect", outcome: "connected",
+          requestId: principal.requestId, occurredAt: timestamp,
+        });
+        return replacementId;
       });
-      return replacementId;
-    });
+    } catch (error) {
+      // The new grant is never stored: revoke it instead of leaving a live, unused credential.
+      if (grant.refreshToken !== undefined) await this.#revokeQuietly(grant.refreshToken);
+      else await this.#revokeQuietly(grant.accessToken);
+      throw error;
+    }
     this.#tokens.invalidate(principal.actorId);
     try {
       await this.#runBootstrap(principal.actorId, { accessToken: grant.accessToken, authorizationId }, principal.requestId);
@@ -260,6 +274,8 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
 
   async #disconnect(principal: DelegatedPrincipal): Promise<CalendarSourceStatus> {
     const actorId = principal.actorId;
+    // Refused before anything is revoked; the transaction below repeats the check atomically.
+    await this.#refuseWhileExecuting(actorId);
     this.#tokens.invalidate(actorId);
     const connection = await this.#database.read((db) => this.#repository.getConnection(db, actorId));
     let outcome: "revoked" | "local_credentials_erased" = "local_credentials_erased";
@@ -281,11 +297,31 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
           requestId: principal.requestId, occurredAt: timestamp,
         });
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message === "calendar_proposal_executing") throw error;
       fail("calendar_disconnect_failed");
     }
     this.#tokens.invalidate(actorId);
     return this.status(principal);
+  }
+
+  async #refuseWhileExecuting(actorId: string): Promise<void> {
+    if (await this.#database.read((db) => this.#repository.hasExecutingProposal(db, actorId))) fail("calendar_proposal_executing");
+  }
+
+  /** Best-effort revocation bounded in time; failures are ignored because nothing was stored. */
+  async #revokeQuietly(token: string): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        this.#oauth.revokeToken(token),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, REVOKE_TIMEOUT_MS); }),
+      ]);
+    } catch {
+      // Ignored: the caller already fails closed.
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   async #bootstrapWithStoredCredentials(principal: DelegatedPrincipal): Promise<void> {

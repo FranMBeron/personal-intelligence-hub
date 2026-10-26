@@ -64,7 +64,10 @@ complete release flow):
 1. **First installation.** When neither a prior runtime symlink nor the
    database exists, no snapshot is taken and the candidate creates the
    database. A host where only one of the two exists is refused before any
-   write.
+   write. A failed first installation stops and disables connectors, removes
+   the runtime link and moves the new database aside as
+   `connectors.sqlite.failed-first-install-<sha>`, so a redeploy of a new
+   commit starts again as a first installation.
 2. **Upgrade snapshot.** With both present, the *active* runtime's backup
    adapter writes a verified snapshot into a new root-only `mktemp` directory
    below `/srv/personal-intelligence-hub/backups/connectors-staging/`. The
@@ -76,15 +79,26 @@ complete release flow):
    directory below that staging root containing exactly `connectors.sqlite`
    and a matching `manifest.json`. It copies the pair into its own trapped
    staging directory, runs the encrypted Restic backup with the active-release
-   tag plus the context tag, retention and `restic check`, and prints exactly
-   one `connectors-snapshot-id=`. Restic credentials stay in the separate
-   root-only Restic environment file.
+   tag plus the context tag, confirms exactly one snapshot carries the context
+   tag and prints it as `connectors-snapshot-id=`. Retention (`forget
+   --prune`) and `restic check` are deliberately not run here: deploy runs
+   `backup.sh --retention-only` only after a successful activation, so they
+   never lengthen the time between snapshot and stop, and a failed activation
+   never prunes anything. Restic credentials stay in the separate root-only
+   Restic environment file.
 4. **Metadata.** The candidate's write-once release manifest records only
    `connectors.preActivationSnapshot.resticSnapshotId` and `manifestSha256`.
 5. **Activation.** Only after the archive succeeds does deploy stop the old
    service, switch the runtime symlink and start the candidate, whose startup
    applies migrations. Web is restarted only after candidate readiness over
-   `/run/pih-connectors/web/connectors.sock`.
+   `/run/pih-connectors/web/connectors.sock`. The old service keeps running
+   between the snapshot and the stop: anything it writes in that window (for
+   example a Calendar proposal or a Hermes message) is not in the snapshot and
+   is lost if automatic recovery restores it. The window is the time the
+   encrypted archive takes; avoid using PIH while a deployment runs. After the
+   web health check passes, deploy runs retention and `restic check`; if they
+   fail, the new release stays active, deploy exits non-zero with
+   `Release <sha> is active, ...`, and the operator reruns `backup.sh`.
 6. **Automatic recovery.** If the candidate never becomes ready, deploy
    quarantines the candidate database (and any `-wal`/`-shm` files) as
    `connectors.sqlite.failed-<sha>`, restores the transient snapshot with the
@@ -145,7 +159,7 @@ sudo /srv/personal-intelligence-hub/current/infrastructure/operations/configure-
 - Values are checked with shell builtins before anything is written: blank
   credentials, single quotes, newlines and control characters are rejected;
   the host BFF socket must be `/run/pih-connectors/web/connectors.sock`; the
-  delegation socket must be `/run/pih-connectors/hermes-delegation.sock`; the
+  delegation socket must be `/run/pih-connectors/agents/hermes-delegation.sock`; the
   Hermes origin must be a literal loopback HTTP origin; default, orchestrator,
   peer and device-agent profile IDs must exist in the profile list; and the
   Google redirect must be the Calendar callback
@@ -177,3 +191,27 @@ directory `/run/pih-connectors/web` is mounted read-only at
 `/run/pih-connectors/web/connectors.sock`. The agent-only delegation socket
 stays outside that mount. Only the connectors service and the Hermes gateway
 service identities join the `hermes-agents` group; web never joins it.
+
+Runtime directory layout (all owned by `pih-connectors`):
+
+| Path | Mode | Group | Purpose |
+| --- | --- | --- | --- |
+| `/run/pih-connectors` | `0751` | `pih-connectors` | Service root. Others may traverse it but never list it. |
+| `/run/pih-connectors/web` | `0750` | `pih-connectors-clients` | Host BFF socket, mounted read-only into web. |
+| `/run/pih-connectors/agents` | `0750` | `hermes-agents` | Agent-only delegation socket (`0660`). |
+
+systemd creates only the root (`RuntimeDirectory=pih-connectors`,
+`RuntimeDirectoryMode=0751`). At start the service creates each subdirectory
+`0700`, refuses a symbolic link or a foreign owner, then sets its group and
+`0750`, so neither socket is ever reachable through a permissive directory. A
+gateway that is only in `hermes-agents` can therefore reach the delegation
+socket, but not the BFF socket or anything else in the root.
+
+The connectors unit runs without capabilities and with systemd confinement:
+`PrivateDevices`, `ProtectKernelTunables`/`Modules`/`Logs`,
+`ProtectControlGroups`, `RestrictNamespaces`, `LockPersonality`,
+`RestrictSUIDSGID`, `RestrictRealtime`, `SystemCallArchitectures=native` and
+`SystemCallFilter=@system-service` (a filtered call fails with `EPERM`). Unix
+sockets and outbound HTTPS stay available through
+`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`. `MemoryDenyWriteExecute`
+is not set because V8's JIT needs writable executable memory.

@@ -9,14 +9,14 @@ import {
   foreignActorId,
   principalFor,
 } from "../../test/hermes/harness.js";
-import { EventStream } from "./event-stream.js";
+import { EVENT_STREAM_MAX_LIFETIME_MS, EventStream } from "./event-stream.js";
 import { EventRepository } from "./storage/event-repository.js";
 
 const agentChanged = (occurredAt = "2026-10-12T12:00:00.000Z"): HermesEvent => ({
   id: "0", type: "agent.changed", agentId: "specialist-a", occurredAt,
 });
 
-const setup = async () => {
+const setup = async (options: { maxLifetimeMs?: number } = {}) => {
   const harness = await createHermesHarness();
   await harness.seedConversation();
   const events = new EventRepository();
@@ -24,6 +24,7 @@ const setup = async () => {
     harness.database.write((db) => events.append(db, actorId, "conversation-01", event, expiresAt));
   const stream = new EventStream({
     database: harness.database, conversations: harness.conversations, events, pollIntervalMs: 5, heartbeatMs: 40,
+    ...(options.maxLifetimeMs === undefined ? {} : { maxLifetimeMs: options.maxLifetimeMs }),
   });
   return { harness, events, append, stream };
 };
@@ -85,6 +86,22 @@ describe("EventStream.open", () => {
     setTimeout(() => { void append(); }, 10);
     expect(await next).toEqual([expect.stringMatching(/^id: 2\n/u)]);
     controller.abort();
+  });
+
+  it("caps every stream at 30 minutes by default", () => {
+    expect(EVENT_STREAM_MAX_LIFETIME_MS).toBe(30 * 60 * 1000);
+  });
+
+  it("ends on its own once its maximum lifetime passes, so a slot is never held forever", async () => {
+    const { stream, append } = await setup({ maxLifetimeMs: 60 });
+    const iterable = await stream.open({ principal: principalFor(), conversationId: "conversation-01", signal: new AbortController().signal });
+    setTimeout(() => { void append(); }, 10);
+    const startedAt = Date.now();
+    const frames: string[] = [];
+    for await (const frame of iterable) frames.push(frame);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    // Events delivered before the deadline keep their ids, so the client resumes with Last-Event-ID.
+    expect(frames.filter((frame) => frame.startsWith("id: "))).toEqual([expect.stringMatching(/^id: 1\n/u)]);
   });
 
   it("emits heartbeat comments while idle and ends when aborted", async () => {

@@ -8,6 +8,7 @@ const complete = {
   DEVICE_CONNECTION_LABEL: "Example band",
   DEVICE_CONNECTION_BRIDGE_SOCKET_PATH: "/run/example-device-bridge/bridge.sock",
   DEVICE_CONNECTION_HUMAN_ACTOR: "owner",
+  DEVICE_CONNECTION_OWNER_ACTOR_ID: "0b9d6c55-3f39-4d8e-9a8e-5f9f8c1d2e3a",
   DEVICE_CONNECTION_AGENT_ACTORS_JSON: JSON.stringify({ coordinator: "agent-coordinator", health: "agent-health" }),
 } as const;
 
@@ -31,6 +32,7 @@ describe("device connections configuration", () => {
       label: "Example band",
       bridgeSocketPath: "/run/example-device-bridge/bridge.sock",
       humanActor: "owner",
+      ownerActorId: "0b9d6c55-3f39-4d8e-9a8e-5f9f8c1d2e3a",
     });
     expect(config?.connection.agentActors.get("coordinator")).toBe("agent-coordinator");
     expect(config?.connection.agentActors.get("health")).toBe("agent-health");
@@ -62,6 +64,7 @@ describe("device connections configuration", () => {
     "/run/example//bridge.sock",
     "/run/example/bridge",
     "/run/pih-connectors/web/bridge.sock",
+    "/run/pih-connectors/agents/bridge.sock",
     "/" + "a".repeat(100) + ".sock",
     "/run/example/bridge\n.sock",
   ])("rejects the unsafe bridge socket path %j", (path) => {
@@ -80,6 +83,10 @@ describe("device connections configuration", () => {
 
   it.each(["", " ", "x".repeat(81), "line\nbreak"])("rejects the display label %j", (label) => {
     expect(() => parse({ ...complete, DEVICE_CONNECTION_LABEL: label })).toThrow();
+  });
+
+  it.each(["", "owner", "0b9d6c55-3f39-4d8e-9a8e", "0B9D6C55-3F39-4D8E-9A8E-5F9F8C1D2E3A "])("rejects the owner actor id %j", (owner) => {
+    expect(() => parse({ ...complete, DEVICE_CONNECTION_OWNER_ACTOR_ID: owner })).toThrow(/DEVICE_CONNECTION_OWNER_ACTOR_ID/u);
   });
 
   it.each(["", "Owner", "owner name", "owner\"", "a".repeat(64)])("rejects the human actor %j", (actor) => {
