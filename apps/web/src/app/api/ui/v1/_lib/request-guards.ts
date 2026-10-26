@@ -135,18 +135,24 @@ export const requireSameOrigin = (
   );
 };
 
+/**
+ * A missing gateway means the deployment does not configure that dependency. By default that is reported as
+ * 503; `notConfiguredStatus: 501` lets a route tell "not configured" (permanent for this deployment) apart from
+ * a configured gateway that is failing (503), while keeping the existing `dependency_unavailable` code.
+ */
 export const requireGateway = <T>(
   request: Request,
   context: RequestContext,
   gateway: T | null,
   name: string,
+  { notConfiguredStatus = 503 }: Readonly<{ notConfiguredStatus?: 501 | 503 }> = {},
 ): T | Response =>
   gateway ??
   problemResponse(
     problem(
       request,
       context,
-      503,
+      notConfiguredStatus,
       "dependency_unavailable",
       `${name} not configured`,
       `${name} is not configured for this deployment.`,

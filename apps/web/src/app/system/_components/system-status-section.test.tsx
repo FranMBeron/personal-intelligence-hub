@@ -86,6 +86,18 @@ describe("SystemStatusClient", () => {
     expect(fetcher.mock.calls.every(([, init]) => init?.method === undefined || init.method === "GET")).toBe(true);
   });
 
+  it("tells a Calendar that is not configured apart from one that is failing", async () => {
+    const calendarStatus = (status: number) => vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/ui/v1/calendar/status") {
+        return Response.json({ type: "about:blank", title: "Calendar", status, detail: "Calendar.", instance: path, code: "dependency_unavailable", requestId: "5af093d0-84f1-4759-a92e-bbe2949ab957" }, { status });
+      }
+      return new Response(null, { status: 503 });
+    });
+    expect((await new SystemStatusClient(calendarStatus(501)).load()).calendar.state).toBe("not_configured");
+    expect((await new SystemStatusClient(calendarStatus(503)).load()).calendar.state).toBe("unavailable");
+  });
+
   it("rejects malformed bodies instead of trusting them", async () => {
     const fetcher = vi.fn(async () => Response.json({ sources: [{ id: "x", state: "great" }] }));
     const snapshot = await new SystemStatusClient(fetcher).load();
