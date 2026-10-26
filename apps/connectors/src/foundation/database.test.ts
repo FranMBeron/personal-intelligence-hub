@@ -304,6 +304,7 @@ describe("connector database", () => {
     await chmod(unrelatedPath, 0o644);
     await symlink(unrelatedPath, symlinkPath);
     await mkdir(directoryPath, { mode: 0o755 });
+    await chmod(directoryPath, 0o755);
 
     expect(() => openConnectorDatabase(symlinkPath)).toThrow(/regular file|symbolic link/u);
     expect(() => openConnectorDatabase(directoryPath)).toThrow(/regular file|directory/u);
