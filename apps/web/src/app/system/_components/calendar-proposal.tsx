@@ -132,21 +132,6 @@ export function CalendarProposal({ proposalId, client, now, timeZone }: Readonly
   }, [now]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    setProposal(null);
-    setLoadFailure(null);
-    calendar.proposal(proposalId, controller.signal).then((value) => {
-      if (!controller.signal.aborted) setProposal(value);
-    }).catch((error: unknown) => {
-      if (controller.signal.aborted) return;
-      setLoadFailure(error instanceof BffRequestError && error.status === 404
-        ? "La propuesta no existe o no pertenece a tu sesión."
-        : "No se pudo cargar la propuesta. Inténtalo de nuevo en unos minutos.");
-    });
-    return () => controller.abort();
-  }, [calendar, proposalId]);
-
-  useEffect(() => {
     if (!focusResult) return;
     resultRef.current?.focus();
     setFocusResult(false);
@@ -167,7 +152,9 @@ export function CalendarProposal({ proposalId, client, now, timeZone }: Readonly
       setNotice("El cambio sigue en curso. Vuelve a abrir la propuesta más tarde para ver el resultado.");
       return;
     }
+    if (pollTimer.current !== null) clearTimeout(pollTimer.current);
     pollTimer.current = setTimeout(() => {
+      pollTimer.current = null;
       void reload().then((latest) => {
         if (!mounted.current) return;
         if (latest === null || !isTerminal(latest.status)) pollUntilTerminal(attempt + 1);
@@ -175,6 +162,29 @@ export function CalendarProposal({ proposalId, client, now, timeZone }: Readonly
       });
     }, POLL_INTERVAL_MS);
   }, [reload]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setProposal(null);
+    setLoadFailure(null);
+    calendar.proposal(proposalId, controller.signal).then((value) => {
+      if (controller.signal.aborted) return;
+      setProposal(value);
+      // A proposal opened (or reopened) mid-execution still needs its outcome.
+      if (value.status === "executing") pollUntilTerminal();
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setLoadFailure(error instanceof BffRequestError && error.status === 404
+        ? "La propuesta no existe o no pertenece a tu sesión."
+        : "No se pudo cargar la propuesta. Inténtalo de nuevo en unos minutos.");
+    });
+    return () => {
+      controller.abort();
+      if (pollTimer.current !== null) clearTimeout(pollTimer.current);
+      pollTimer.current = null;
+    };
+  }, [calendar, proposalId, pollUntilTerminal]);
+
 
   const decide = async (decision: "confirm" | "reject") => {
     if (busyRef.current || proposal === null) return;
@@ -197,10 +207,10 @@ export function CalendarProposal({ proposalId, client, now, timeZone }: Readonly
           : "Tu sesión no tiene permiso para descartar esta propuesta.");
       } else if (error instanceof BffRequestError && (error.status === 409 || error.status === 410)) {
         setNotice("La propuesta cambió o ya no es válida. No se reenvió la confirmación: pide a Central una nueva propuesta.");
-        await reload();
+        if ((await reload())?.status === "executing" && mounted.current) pollUntilTerminal();
       } else {
         setNotice("No se pudo completar la acción. Se recargó el estado de la propuesta; revísalo antes de volver a intentarlo.");
-        await reload();
+        if ((await reload())?.status === "executing" && mounted.current) pollUntilTerminal();
       }
       setFocusResult(true);
     } finally {
@@ -218,7 +228,8 @@ export function CalendarProposal({ proposalId, client, now, timeZone }: Readonly
   const expiredLocally = proposal.status === "pending" && clock >= Date.parse(proposal.expiresAt);
   const effectiveStatus: CalendarProposalStatus = expiredLocally ? "expired" : proposal.status;
   const invalidCancel = summary.operation === "cancel" && summary.organizerRelationship === "other";
-  const canDecide = effectiveStatus === "pending" && !invalidCancel;
+  const invalidResponse = summary.operation === "respond_invitation" && summary.organizerRelationship === "self";
+  const canDecide = effectiveStatus === "pending" && !invalidCancel && !invalidResponse;
   const terminal = statusCopy[effectiveStatus];
   const reason = proposal.safeReasonCode === undefined ? null : proposalReasonLabels[proposal.safeReasonCode] ?? null;
   const expiryZone = timeZone ?? summary.timeZone;
@@ -244,6 +255,9 @@ export function CalendarProposal({ proposalId, client, now, timeZone }: Readonly
 
       {invalidCancel ? (
         <p className="calendar-proposal__error" role="alert">Esta propuesta intenta cancelar un evento que organiza otra persona y no se puede confirmar. Para dejar ese evento, pide una respuesta a la invitación.</p>
+      ) : null}
+      {invalidResponse ? (
+        <p className="calendar-proposal__error" role="alert">Esta propuesta intenta responder a una invitación de un evento que organizas y no se puede confirmar. Para cambiarlo, pide a Central una modificación o una cancelación.</p>
       ) : null}
       {notice === null ? null : <p className="calendar-proposal__error" role="alert">{notice}</p>}
 
@@ -273,11 +287,18 @@ const newIntentKey = (): string => crypto.randomUUID();
  * Prepares (never executes) a change for one event. An event you organize can be cancelled; an invitation
  * organized by someone else can only be answered. The two are separate forms with separate copy.
  */
-export function CalendarEventActions({ event, client, onProposed }: Readonly<{
+type EventActionsProps = Readonly<{
   event: CalendarEventDetail;
   client?: CalendarApi;
   onProposed: (proposalId: string) => void;
-}>) {
+}>;
+
+export function CalendarEventActions(props: EventActionsProps) {
+  // Choices belong to one event: a different event starts from a clean form (and a fresh scope choice).
+  return <EventActionsForm key={props.event.eventRef} {...props} />;
+}
+
+function EventActionsForm({ event, client, onProposed }: EventActionsProps) {
   const calendar = useRef<CalendarApi>(client ?? new CalendarClient()).current;
   const [response, setResponse] = useState<InvitationResponse | null>(null);
   const [scope, setScope] = useState<RecurrenceScope | null>(event.recurrence.recurring ? null : "single");
@@ -304,6 +325,8 @@ export function CalendarEventActions({ event, client, onProposed }: Readonly<{
     setFailure(null);
     try {
       const proposal = await calendar.propose(body, intent.current.key);
+      // A completed intent is spent: the next submission, even an identical one, is a new proposal.
+      intent.current = null;
       onProposed(proposal.id);
     } catch {
       setFailure("No se pudo preparar la propuesta. Puedes reintentar: no se creará una propuesta duplicada.");

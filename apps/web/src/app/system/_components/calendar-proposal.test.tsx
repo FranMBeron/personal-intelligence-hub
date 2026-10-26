@@ -151,6 +151,43 @@ describe("CalendarProposal", () => {
     expect(screen.queryByText(/Cancelar un evento/)).toBeNull();
   });
 
+  it("polls a proposal that is already executing when it is opened", async () => {
+    vi.useFakeTimers();
+    const proposal = vi.fn()
+      .mockResolvedValueOnce(proposalFixture({ version: 2, status: "executing" }))
+      .mockResolvedValueOnce(proposalFixture({ version: 3, status: "completed", completedAt: now }));
+    render(<CalendarProposal proposalId="p" client={fakeCalendarClient({ proposal })} now={now} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByText(/Aplicando el cambio/)).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(screen.getByRole("heading", { name: "Cambio aplicado" })).toBeTruthy();
+    expect(proposal).toHaveBeenCalledTimes(2);
+  });
+
+  it("polls when a failed action reloads the proposal as executing", async () => {
+    vi.useFakeTimers();
+    const confirm = vi.fn(async () => { throw new BffRequestError(503, null); });
+    const proposal = vi.fn()
+      .mockResolvedValueOnce(proposalFixture({ version: 1 }))
+      .mockResolvedValueOnce(proposalFixture({ version: 2, status: "executing" }))
+      .mockResolvedValueOnce(proposalFixture({ version: 3, status: "completed", completedAt: now }));
+    render(<CalendarProposal proposalId="p" client={fakeCalendarClient({ proposal, confirm })} now={now} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar cambio" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByText(/Aplicando el cambio/)).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(screen.getByRole("heading", { name: "Cambio aplicado" })).toBeTruthy();
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to offer confirmation for answering an invitation you organize", async () => {
+    const invalid = proposalFixture({ summary: { ...updateProposal.summary, operation: "respond_invitation", organizerRelationship: "self", invitationResponse: "declined", after: undefined } });
+    render(<CalendarProposal proposalId="x" client={fakeCalendarClient({ proposal: vi.fn(async () => invalid) })} now={now} />);
+    expect((await screen.findByRole("alert")).textContent).toMatch(/organizas/);
+    expect(screen.queryByRole("button", { name: /Confirmar/ })).toBeNull();
+  });
+
   it("refuses to offer confirmation for cancelling an event organized by someone else", async () => {
     const invalid = proposalFixture({ summary: { ...updateProposal.summary, operation: "cancel", organizerRelationship: "other", after: undefined } });
     render(<CalendarProposal proposalId="x" client={fakeCalendarClient({ proposal: vi.fn(async () => invalid) })} now={now} />);
@@ -209,6 +246,37 @@ describe("CalendarEventActions", () => {
     const keys = propose.mock.calls.map((call) => call[1]);
     expect(keys[0]).toBe(keys[1]);
     expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  it("uses a fresh idempotency key for a new intent after a successful proposal", async () => {
+    const propose = vi.fn(async () => proposalFixture({ id: "proposal-respond" }));
+    const onProposed = vi.fn();
+    render(<CalendarEventActions event={eventDetail({ organizerRelationship: "other" })} client={fakeCalendarClient({ propose })} onProposed={onProposed} />);
+    fireEvent.click(screen.getByRole("radio", { name: "Aceptar" }));
+    fireEvent.click(screen.getByRole("radio", { name: "No notificar a los invitados" }));
+    fireEvent.click(screen.getByRole("button", { name: "Preparar respuesta" }));
+    await waitFor(() => expect(onProposed).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Preparar respuesta" }));
+    await waitFor(() => expect(onProposed).toHaveBeenCalledTimes(2));
+    const keys = propose.mock.calls.map((call) => (call as unknown[])[1]);
+    expect(keys[1]).not.toBe(keys[0]);
+  });
+
+  it("asks for a fresh scope and choices when the event changes to a recurring one", async () => {
+    const propose = vi.fn(async (_body: unknown, _key: string) => proposalFixture({ id: "proposal-cancel" }));
+    const { rerender } = render(<CalendarEventActions event={eventDetail({})} client={fakeCalendarClient({ propose })} onProposed={vi.fn()} />);
+    fireEvent.click(screen.getByRole("radio", { name: "Notificar a todos los invitados" }));
+    expect((screen.getByRole("button", { name: "Preparar cancelación" }) as HTMLButtonElement).disabled).toBe(false);
+    rerender(<CalendarEventActions event={eventDetail({ eventRef: "event-b", recurrence: { recurring: true, instance: true } })} client={fakeCalendarClient({ propose })} onProposed={vi.fn()} />);
+    const submit = screen.getByRole("button", { name: "Preparar cancelación" }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    expect((screen.getByRole("radio", { name: "Notificar a todos los invitados" }) as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(screen.getByRole("radio", { name: "Notificar a todos los invitados" }));
+    expect(submit.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: "Toda la serie" }));
+    fireEvent.click(submit);
+    await waitFor(() => expect(propose).toHaveBeenCalledTimes(1));
+    expect(propose.mock.calls[0]![0]).toEqual({ operation: "cancel", eventRef: "event-b", recurrenceScope: "series", guestNotification: "all" });
   });
 
   it("offers cancellation only for an own event, with its own copy and explicit scope", async () => {
