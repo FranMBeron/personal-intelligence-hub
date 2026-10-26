@@ -267,6 +267,13 @@ describe("private connectors host bundle", () => {
     expect(dockerfile).toContain("pnpm install --frozen-lockfile");
     expect(dockerfile).toContain("pnpm --filter @personal-intelligence-hub/connectors deploy --prod /opt/connectors");
     expect(dockerfile).toContain("cp -R apps/connectors/dist /opt/connectors/dist");
+    // pnpm deploy leaves a hoisted self-link pointing back into /workspace; docker cp rejects symlinks that
+    // escape the copied tree, so the bundle must drop it and fail the build if any other link escapes.
+    expect(dockerfile).toContain(
+      "rm -f /opt/connectors/node_modules/.pnpm/node_modules/@personal-intelligence-hub/connectors",
+    );
+    expect(dockerfile).toContain("find /opt/connectors -type l");
+    expect(dockerfile).toContain('case "$target" in /opt/connectors/*) ;; *) echo "Symlink escapes connectors bundle: $link" >&2; exit 1 ;; esac');
     const finalStage = dockerfile.split("FROM scratch AS export")[1];
     expect(finalStage).toBeDefined();
     expect(finalStage?.trim().split("\n")).toEqual(["COPY --from=build /opt/connectors /opt/connectors"]);

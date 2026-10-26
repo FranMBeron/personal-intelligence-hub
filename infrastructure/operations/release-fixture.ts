@@ -143,6 +143,10 @@ case "$1" in
     : > "$3/dist/src/main.js"
     : > "$3/dist/src/operations/backup-command.js"
     : > "$3/dist/src/operations/restore-command.js"
+    if [ -n "\${ESCAPING_BUNDLE_SYMLINK:-}" ]; then
+      mkdir -p "$3/node_modules/.pnpm/node_modules"
+      ln -s ../../../../outside "$3/node_modules/.pnpm/node_modules/escaping"
+    fi
     ;;
   compose)
     case " $* " in

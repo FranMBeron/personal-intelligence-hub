@@ -16,7 +16,12 @@ COPY tsconfig*.json ./
 RUN pnpm --filter @personal-intelligence-hub/contracts build \
  && pnpm --filter @personal-intelligence-hub/connectors build \
  && pnpm --filter @personal-intelligence-hub/connectors deploy --prod /opt/connectors \
- && cp -R apps/connectors/dist /opt/connectors/dist
+ && cp -R apps/connectors/dist /opt/connectors/dist \
+ && rm -f /opt/connectors/node_modules/.pnpm/node_modules/@personal-intelligence-hub/connectors \
+ && find /opt/connectors -type l | while IFS= read -r link; do \
+      target=$(readlink -f "$link") || { echo "Dangling symlink in connectors bundle: $link" >&2; exit 1; }; \
+      case "$target" in /opt/connectors/*) ;; *) echo "Symlink escapes connectors bundle: $link" >&2; exit 1 ;; esac; \
+    done
 
 FROM scratch AS export
 COPY --from=build /opt/connectors /opt/connectors

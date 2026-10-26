@@ -347,6 +347,21 @@ bundle_migrations="$connectors_release_directory/dist/src/migrations"
   echo "Connectors runtime bundle is incomplete." >&2
   exit 1
 }
+connectors_bundle_root=$(realpath -e -- "$connectors_release_directory")
+escaping_link=$(find "$connectors_bundle_root" -type l -exec sh -c '
+  root=$1
+  shift
+  for link do
+    case "$(realpath -m -- "$link")" in
+      "$root"/*) ;;
+      *) printf "%s\n" "$link" ;;
+    esac
+  done
+' sh "$connectors_bundle_root" {} +)
+if [ -n "$escaping_link" ]; then
+  echo "Connectors runtime bundle contains a symlink outside the bundle." >&2
+  exit 1
+fi
 expected_migrations="$connectors_root/.expected-migrations.$release_sha.$$"
 actual_migrations="$connectors_root/.actual-migrations.$release_sha.$$"
 find "$source_migrations" -maxdepth 1 -type f -name '*.sql' -printf '%f\n' | LC_ALL=C sort > "$expected_migrations"

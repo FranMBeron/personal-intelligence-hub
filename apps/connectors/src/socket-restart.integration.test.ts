@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, readlink, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -31,6 +31,25 @@ const run = (args: string[], cwd: string) =>
     timeout: 60_000,
     maxBuffer: 2 * 1024 * 1024,
   });
+
+/** Every symlink in the exported bundle must resolve inside it; docker cp (and the deploy) rejects escaping links. */
+const symlinksEscaping = async (root: string): Promise<string[]> => {
+  const bundleRoot = await realpath(root);
+  const escaping: string[] = [];
+  const walk = async (directory: string): Promise<void> => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isSymbolicLink()) {
+        const target = await realpath(path).catch(async () => resolve(dirname(path), await readlink(path)));
+        if (target !== bundleRoot && !target.startsWith(bundleRoot + sep)) escaping.push(path.slice(bundleRoot.length + 1));
+      } else if (entry.isDirectory()) {
+        await walk(path);
+      }
+    }
+  };
+  await walk(bundleRoot);
+  return escaping;
+};
 
 const verifyDockerExportMigrations = async (image: string): Promise<void> => {
   await exec("docker", [
@@ -62,6 +81,7 @@ const verifyDockerExportMigrations = async (image: string): Promise<void> => {
     await exec("docker", ["cp", `${container}:/opt/connectors/.`, extracted], {
       cwd: repositoryRoot, timeout: 30_000, maxBuffer: 2 * 1024 * 1024,
     });
+    expect(await symlinksEscaping(extracted)).toEqual([]);
     const entrypoint = join(extracted, "dist/src/main.js");
     const sourceDirectory = join(repositoryRoot, "apps/connectors/src/migrations");
     const bundleDirectory = join(extracted, "dist/src/migrations");

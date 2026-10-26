@@ -190,6 +190,17 @@ describe("connectors upgrade with database recovery", () => {
     expect(await release.stagingLeftovers()).toEqual([]);
   });
 
+  it("refuses a connectors bundle containing a symlink that escapes the bundle before touching the service", async () => {
+    const release = await fixture();
+    await expect(release.run("deploy-release.sh", [candidateSha], { ESCAPING_BUNDLE_SYMLINK: "1" }))
+      .rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("symlink outside the bundle") });
+    const raw = await release.events();
+    expect(raw.filter((line) => line.startsWith("systemctl stop") || line.startsWith("systemctl restart"))).toEqual([]);
+    expect(raw.some((line) => line.startsWith("backup-adapter"))).toBe(false);
+    expect(await readlink(join(release.connectorsRoot, "current"))).toBe(release.oldRuntime);
+    expect((await readFile(release.systemdState, "utf8")).trim()).toBe("enabled active");
+  });
+
   it("reports a post-activation retention or check failure without rolling the active release back", async () => {
     const release = await fixture();
     const failure = await release.run("deploy-release.sh", [candidateSha], { FAIL_RESTIC_CHECK: "1" })
