@@ -6,7 +6,7 @@ import {
   unlink as unlinkFile,
 } from "node:fs/promises";
 import { posix } from "node:path";
-import { createConnection } from "node:net";
+import { createConnection, type Socket } from "node:net";
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 
@@ -242,6 +242,43 @@ const removeCreatedSocket = async (
   }
 };
 
+/** Upper bound for in-flight HTTP requests to finish on shutdown before remaining connections are destroyed. */
+export const SHUTDOWN_DRAIN_TIMEOUT_MS = 5_000;
+
+type ConnectionServer = Readonly<{
+  on(event: "connection", listener: (socket: Socket) => void): unknown;
+  closeAllConnections(): void;
+}>;
+
+const isConnectionServer = (server: unknown): server is ConnectionServer =>
+  typeof server === "object" && server !== null &&
+  typeof (server as { on?: unknown }).on === "function" &&
+  typeof (server as { closeAllConnections?: unknown }).closeAllConnections === "function";
+
+/**
+ * Close the app without letting a client hold shutdown open. Node's `server.close()` reaps only
+ * keep-alive connections that completed a request, and stops enforcing header timeouts once
+ * closing, so a connection that never sent a byte (an HTTP client's spare pooled socket) or a
+ * stuck request would otherwise keep it pending indefinitely. Connections that never sent a byte
+ * carry no request and are destroyed at once; the rest get `drainMs` to finish before every
+ * remaining connection is destroyed.
+ */
+const closeAppBounded = async (
+  app: FastifyInstance,
+  connections: ReadonlySet<Socket>,
+  drainMs: number,
+): Promise<void> => {
+  const server: unknown = app.server;
+  const closing = app.close();
+  for (const socket of connections) if (socket.bytesRead === 0) socket.destroy();
+  const timer = isConnectionServer(server) ? setTimeout(() => server.closeAllConnections(), drainMs) : undefined;
+  try {
+    await closing;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 export type ConnectorsProcess = Readonly<{
   env: Readonly<Record<string, string | undefined>>;
   getuid?(): number;
@@ -264,6 +301,8 @@ export type StartConnectorsDependencies = Readonly<{
   openDatabase?: (path: string) => ConnectorDatabase;
   createApp?: typeof createConnectorsApp;
   requestIdFactory?: () => string;
+  /** Override of `SHUTDOWN_DRAIN_TIMEOUT_MS`. */
+  shutdownDrainMs?: number;
 }>;
 
 export type RunningConnectors = Readonly<{
@@ -293,6 +332,7 @@ export const startConnectors = async (
   let app: FastifyInstance | undefined;
   let socketIdentity: SocketPathInfo | undefined;
   let shutdownPromise: Promise<void> | undefined;
+  const connections = new Set<Socket>();
 
   const shutdown = (): Promise<void> => {
     if (shutdownPromise !== undefined) return shutdownPromise;
@@ -320,7 +360,7 @@ export const startConnectors = async (
         try {
           // Node unlinks Unix server paths by pathname during close. The service-owned
           // 0750 directory prevents untrusted users from replacing that entry.
-          await app.close();
+          await closeAppBounded(app, connections, dependencies.shutdownDrainMs ?? SHUTDOWN_DRAIN_TIMEOUT_MS);
         } catch (error) {
           firstError = error;
         }
@@ -363,6 +403,13 @@ export const startConnectors = async (
       modules: Object.freeze(modules),
       ...(dependencies.requestIdFactory === undefined ? {} : { requestIdFactory: dependencies.requestIdFactory }),
     });
+    const server: unknown = app.server;
+    if (isConnectionServer(server)) {
+      server.on("connection", (socket) => {
+        connections.add(socket);
+        socket.once("close", () => connections.delete(socket));
+      });
+    }
 
     if (config.transport.kind === "unix") {
       await prepareSocketPath(config.transport.path, serviceUid, config.transport.socketGid, {

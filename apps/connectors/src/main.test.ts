@@ -1,7 +1,9 @@
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { connect, type AddressInfo } from "node:net";
 import { join } from "node:path";
+import fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConnectorsConfig } from "./config/private.js";
@@ -208,6 +210,61 @@ describe("connector process lifecycle", () => {
     await expect(running.shutdown()).rejects.toThrow("close failed");
     expect(appClose).toHaveBeenCalledTimes(1);
     expect(dbClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds shutdown against connections that never send a request or never finish one", async () => {
+    const db = { close: async () => undefined } as unknown as ConnectorDatabase;
+    let stuck = false;
+    const running = await startConnectors({
+      process: { env: {}, getuid: () => 1001, on: () => undefined, off: () => undefined },
+      environment: {}, loadConfig: () => baseConfig, openDatabase: () => db,
+      providerModules: [], shutdownDrainMs: 300,
+      createApp: async () => {
+        const app = fastify({ logger: false });
+        app.get("/stuck", () => { stuck = true; return new Promise(() => undefined); });
+        return app;
+      },
+    });
+    const { port } = running.app.server.address() as AddressInfo;
+    const open = async () => {
+      const socket = connect(port, "127.0.0.1");
+      await once(socket, "connect");
+      socket.on("error", () => undefined);
+      return socket;
+    };
+    // A spare pooled socket: connected, no request ever written.
+    const idle = await open();
+    const busy = await open();
+    busy.write("GET /stuck HTTP/1.1\r\nhost: localhost\r\n\r\n");
+    await vi.waitFor(() => expect(stuck).toBe(true));
+
+    const started = Date.now();
+    await running.shutdown();
+    const elapsed = Date.now() - started;
+
+    expect(elapsed).toBeGreaterThanOrEqual(250);
+    expect(elapsed).toBeLessThan(5_000);
+    await Promise.all([idle, busy].map(async (socket) => { if (!socket.destroyed) await once(socket, "close"); }));
+  });
+
+  it("closes immediately when the only open connection never sent a request", async () => {
+    const db = { close: async () => undefined } as unknown as ConnectorDatabase;
+    const running = await startConnectors({
+      process: { env: {}, getuid: () => 1001, on: () => undefined, off: () => undefined },
+      environment: {}, loadConfig: () => baseConfig, openDatabase: () => db,
+      providerModules: [], shutdownDrainMs: 60_000,
+      createApp: async () => fastify({ logger: false }),
+    });
+    const { port } = running.app.server.address() as AddressInfo;
+    const idle = connect(port, "127.0.0.1");
+    idle.on("error", () => undefined);
+    await once(idle, "connect");
+
+    const started = Date.now();
+    await running.shutdown();
+
+    expect(Date.now() - started).toBeLessThan(2_000);
+    if (!idle.destroyed) await once(idle, "close");
   });
 
   it("closes the listener and removes only the socket inode it started", async () => {
