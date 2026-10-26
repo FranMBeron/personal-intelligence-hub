@@ -57,6 +57,9 @@ type Options = Readonly<{
 
 const isScopeComplete = (scopes: readonly string[]): boolean =>
   GOOGLE_CALENDAR_REQUIRED_SCOPES.every((scope) => scopes.includes(scope));
+/** Only the requested scopes may be granted; anything broader is never stored. */
+const isScopeWithinRequest = (scopes: readonly string[]): boolean =>
+  scopes.every((scope) => (GOOGLE_CALENDAR_REQUIRED_SCOPES as readonly string[]).includes(scope));
 const hashState = (state: string): string =>
   createHash("sha256").update(state, "utf8").digest("base64url");
 const safeRequestError = (error: unknown): string =>
@@ -219,19 +222,18 @@ export class CalendarOAuthServiceImpl implements CalendarOAuthService {
     } catch {
       return fail("calendar_oauth_exchange_failed");
     }
-    if (grant.tokenType !== "Bearer" || !isScopeComplete(grant.grantedScopes)) {
-      fail("calendar_oauth_required_scope_missing");
+    const rejectedScope = grant.tokenType !== "Bearer" || !isScopeComplete(grant.grantedScopes)
+      ? "calendar_oauth_required_scope_missing"
+      : !isScopeWithinRequest(grant.grantedScopes) ? "calendar_oauth_scope_unexpected" : undefined;
+    if (rejectedScope !== undefined) {
+      await this.#revokeQuietly(grant.refreshToken ?? grant.accessToken);
+      fail(rejectedScope);
     }
 
-    let refreshToken = grant.refreshToken;
-    if (refreshToken === undefined && oldConnection !== null) {
-      try {
-        refreshToken = openCalendarValue(oldConnection.refreshTokenCiphertext, refreshAad(principal.actorId), this.#keyring);
-      } catch {
-        fail("calendar_credentials_unavailable");
-      }
-    }
-    const validRefreshToken = refreshToken ?? fail("calendar_oauth_refresh_token_missing");
+    // Never pair a new access token with a previously stored refresh token: the new consent may be
+    // for another Google account. The authorization request always asks for consent, so a retry
+    // returns a refresh token. Nothing is revoked here, since that could revoke the stored grant.
+    const validRefreshToken = grant.refreshToken ?? fail("calendar_oauth_refresh_token_missing");
 
     const timestamp = this.#clock().toISOString();
     const connection: CalendarConnectionInput = {

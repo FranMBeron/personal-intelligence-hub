@@ -45,6 +45,7 @@ const CALENDAR_PROBLEMS: ReadonlyMap<string, Mapped> = new Map<string, Mapped>([
   ["calendar_recurrence_scope_invalid", VALIDATION],
   ["calendar_oauth_state_invalid", VALIDATION],
   ["calendar_oauth_required_scope_missing", VALIDATION],
+  ["calendar_oauth_scope_unexpected", VALIDATION],
 
   ["calendar_event_not_found", NOT_FOUND],
   ["calendar_proposal_not_found", NOT_FOUND],

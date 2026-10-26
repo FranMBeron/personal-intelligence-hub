@@ -34,8 +34,10 @@ The connector requests exactly:
 
 It does not request the broad `calendar` scope, Calendar ACL, calendar
 creation, Drive, or OpenID identity scopes. A grant missing either required
-scope is rejected and the source reports `requires_reauthorization`. Broader
-scopes are not needed: event writes go only to calendars the owner selected
+scope is rejected and the source reports `requires_reauthorization`. A grant
+that carries any scope beyond these two is also rejected, and the connector
+revokes the token it just obtained (best effort, bounded to a few seconds)
+instead of storing it. Broader scopes are not needed: event writes go only to calendars the owner selected
 in PIH, and the calendar list is read-only.
 
 ### Testing mode and verification
@@ -158,7 +160,11 @@ re-enables it before reads resume. If that discovery fails, the source reports
 `requires_attention` with `calendar_selection_required`. **Sistema** then
 finishes the setup through the idempotent bootstrap retry
 (`POST /v1/calendar/bootstrap`), without a second code exchange. When Google
-returns no new refresh token during reauthorization, the existing one is kept.
+returns no new refresh token during reauthorization, the reconnect fails with
+`calendar_oauth_refresh_token_missing` (`409`) and nothing changes: the old
+refresh token is never paired with the new consent, which may belong to a
+different Google account. Start the connection again; PIH always requests
+`prompt=consent`, so Google issues a new refresh token.
 
 ## 6. Retention
 
