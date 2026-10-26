@@ -206,3 +206,12 @@ systemd creates only the root (`RuntimeDirectory=pih-connectors`,
 `0750`, so neither socket is ever reachable through a permissive directory. A
 gateway that is only in `hermes-agents` can therefore reach the delegation
 socket, but not the BFF socket or anything else in the root.
+
+The connectors unit runs without capabilities and with systemd confinement:
+`PrivateDevices`, `ProtectKernelTunables`/`Modules`/`Logs`,
+`ProtectControlGroups`, `RestrictNamespaces`, `LockPersonality`,
+`RestrictSUIDSGID`, `RestrictRealtime`, `SystemCallArchitectures=native` and
+`SystemCallFilter=@system-service` (a filtered call fails with `EPERM`). Unix
+sockets and outbound HTTPS stay available through
+`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`. `MemoryDenyWriteExecute`
+is not set because V8's JIT needs writable executable memory.

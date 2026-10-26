@@ -207,6 +207,33 @@ describe("private connectors host bundle", () => {
     expect(sysusers).toContain('u pih-connectors - "PIH private connectors" /var/lib/pih-connectors /usr/sbin/nologin');
   });
 
+  it("confines the connectors service to what Node, Unix sockets and outbound HTTPS need", async () => {
+    const unit = await read("infrastructure/systemd/personal-intelligence-hub-connectors.service");
+    const directives = unit.split("\n");
+    for (const directive of [
+      "CapabilityBoundingSet=",
+      "AmbientCapabilities=",
+      "PrivateDevices=yes",
+      "ProtectKernelTunables=yes",
+      "ProtectKernelModules=yes",
+      "ProtectKernelLogs=yes",
+      "ProtectControlGroups=yes",
+      "RestrictNamespaces=yes",
+      "LockPersonality=yes",
+      "RestrictSUIDSGID=yes",
+      "RestrictRealtime=yes",
+      "SystemCallFilter=@system-service",
+      "SystemCallArchitectures=native",
+      // A filtered call fails with EPERM instead of killing Node, so libuv falls back cleanly.
+      "SystemCallErrorNumber=EPERM",
+    ]) expect(directives).toContain(directive);
+    // V8 JIT needs writable executable memory.
+    expect(unit).not.toMatch(/^MemoryDenyWriteExecute=/mu);
+    // Unix sockets and outbound HTTPS keep working.
+    expect(directives).toContain("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6");
+    expect(unit).not.toMatch(/^PrivateNetwork=/mu);
+  });
+
   it("exports only the compiled runtime bundle from a scratch final image", async () => {
     const dockerfile = await read("infrastructure/docker/connectors-build.Dockerfile");
     expect(dockerfile).toContain("ARG NODE_IMAGE");
