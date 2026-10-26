@@ -108,13 +108,14 @@ const exchange = (
   let length = 0;
   let connected = false;
   let settled = false;
-  let socket: Socket | undefined;
+  // Listeners are attached below in the same tick, before any socket event can fire.
+  const socket: Socket = createConnection({ path: socketPath });
 
   const finish = (result: () => DeviceBridgeOutcome): void => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
-    socket?.destroy();
+    socket.destroy();
     try {
       resolve(result());
     } catch (error) {
@@ -124,10 +125,9 @@ const exchange = (
   const fail = (code: DeviceBridgeErrorCode): void => finish(() => { throw new DeviceBridgeError(code); });
   const timer = setTimeout(() => fail("bridge_timeout"), timeoutMs);
 
-  socket = createConnection({ path: socketPath });
   socket.on("connect", () => {
     connected = true;
-    socket?.write(request);
+    socket.write(request);
   });
   socket.on("data", (chunk: Buffer) => {
     const newline = chunk.indexOf(0x0a);
