@@ -25,6 +25,24 @@ The BFF owns the browser callback and the final redirect back to **Sistema**.
 The connector owns `state`, the PKCE S256 verifier, the code exchange, and
 token storage. The BFF never receives a refresh token.
 
+### Callback identity and human authentication mode
+
+Google returns to the callback with a plain top-level browser redirect. The
+BFF still requires an authenticated PIH human on that request and binds the
+returned `state` to that actor, so the callback works only when the browser
+request itself carries the person's identity:
+
+- `CONNECTORS_HUMAN_AUTH_MODE=tailscale-localapi` (the supported private
+  deployment): the identity comes from the tailnet connection, so the redirect
+  is authenticated and the connection completes.
+- `CONNECTORS_HUMAN_AUTH_MODE=oidc`: the identity is an `Authorization: Bearer`
+  token that a browser redirect from Google never sends. The callback is
+  treated as unauthenticated, nothing is exchanged or stored, and **Sistema**
+  shows that the connection needs attention. Connecting Calendar is not
+  supported in this mode until the deployment provides a browser-carried
+  identity (for example an authenticating reverse proxy in front of the
+  callback route); the rest of Calendar works once connected.
+
 ### Scopes
 
 The connector requests exactly:
