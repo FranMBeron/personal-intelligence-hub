@@ -76,15 +76,26 @@ complete release flow):
    directory below that staging root containing exactly `connectors.sqlite`
    and a matching `manifest.json`. It copies the pair into its own trapped
    staging directory, runs the encrypted Restic backup with the active-release
-   tag plus the context tag, retention and `restic check`, and prints exactly
-   one `connectors-snapshot-id=`. Restic credentials stay in the separate
-   root-only Restic environment file.
+   tag plus the context tag, confirms exactly one snapshot carries the context
+   tag and prints it as `connectors-snapshot-id=`. Retention (`forget
+   --prune`) and `restic check` are deliberately not run here: deploy runs
+   `backup.sh --retention-only` only after a successful activation, so they
+   never lengthen the time between snapshot and stop, and a failed activation
+   never prunes anything. Restic credentials stay in the separate root-only
+   Restic environment file.
 4. **Metadata.** The candidate's write-once release manifest records only
    `connectors.preActivationSnapshot.resticSnapshotId` and `manifestSha256`.
 5. **Activation.** Only after the archive succeeds does deploy stop the old
    service, switch the runtime symlink and start the candidate, whose startup
    applies migrations. Web is restarted only after candidate readiness over
-   `/run/pih-connectors/web/connectors.sock`.
+   `/run/pih-connectors/web/connectors.sock`. The old service keeps running
+   between the snapshot and the stop: anything it writes in that window (for
+   example a Calendar proposal or a Hermes message) is not in the snapshot and
+   is lost if automatic recovery restores it. The window is the time the
+   encrypted archive takes; avoid using PIH while a deployment runs. After the
+   web health check passes, deploy runs retention and `restic check`; if they
+   fail, the new release stays active, deploy exits non-zero with
+   `Release <sha> is active, ...`, and the operator reruns `backup.sh`.
 6. **Automatic recovery.** If the candidate never becomes ready, deploy
    quarantines the candidate database (and any `-wal`/`-shm` files) as
    `connectors.sqlite.failed-<sha>`, restores the transient snapshot with the

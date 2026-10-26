@@ -91,12 +91,17 @@ be incompatible. That is a separate, explicitly approved operation.
 When a connectors runtime and its SQLite database already exist, deploy runs
 the active runtime's backup adapter into a fresh root-only directory below
 `backups/connectors-staging/`, archives that verified pair through `backup.sh`
-(encrypted Restic backup, retention and `restic check`, tagged with the active
-release, `pih-connectors-pre-activation` and `pre-activation-<candidate-sha>`;
-retention groups by host because each backup is archived from a new staging
-path, and connector snapshots are retained by their own pass), and records only the Restic
-snapshot ID and manifest checksum in the candidate's release manifest. Only
-then does it stop the old service and start the candidate. If the candidate
+(an encrypted Restic backup tagged with the active release,
+`pih-connectors-pre-activation` and `pre-activation-<candidate-sha>`), and
+records only the Restic snapshot ID and manifest checksum in the candidate's
+release manifest. Only then does it stop the old service and start the
+candidate. Writes the old service makes between the snapshot and the stop are
+not in the snapshot and are lost if recovery restores it, so avoid using PIH
+during a deployment. Retention (grouped by host because each backup is archived
+from a new staging path; connector snapshots are retained by their own pass)
+and `restic check` run through `backup.sh --retention-only` only after a
+successful activation and web health check. If they fail, the new release
+stays active and deploy exits non-zero saying so; rerun `backup.sh`. If the candidate
 never becomes ready, deploy quarantines the candidate database as
 `connectors.sqlite.failed-<sha>`, restores the transient snapshot with the old
 runtime's restore adapter, restores the previous runtime and service state and

@@ -162,6 +162,7 @@ case "$1" in
   list) printf '[]\\n' ;;
   unlock|forget) ;;
   backup)
+    [ -z "\${FAIL_RESTIC_BACKUP:-}" ] || exit 1
     source_directory=$2
     shift 2
     count=$(find "$repository" -mindepth 1 -maxdepth 1 -type d | wc -l)

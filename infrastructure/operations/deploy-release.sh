@@ -472,4 +472,19 @@ deployment_succeeded=1
 trap - EXIT HUP INT TERM
 cleanup_connectors_staging
 
+# Retention and the repository check for the pre-activation backup run only
+# now, after a successful activation, so they never widen the window between
+# the snapshot and stopping the old service. A failure here does not roll the
+# active release back; it is reported so the operator can rerun backup.sh.
+if [ "$connectors_upgrade" -eq 1 ]; then
+  run_transient \
+    -p "EnvironmentFile=$pih_root/config/backup.env" \
+    -p "EnvironmentFile=$pih_root/secrets/restic.env" \
+    -E "PIH_ROOT=$pih_root" -- \
+    /bin/sh "$release_directory/infrastructure/operations/backup.sh" --retention-only > /dev/null || {
+    echo "Release $release_sha is active, but backup retention or the Restic repository check failed. Nothing was rolled back; run infrastructure/operations/backup.sh and investigate before the next deployment." >&2
+    exit 1
+  }
+fi
+
 echo "Deployed Personal Intelligence Hub release $release_sha."
