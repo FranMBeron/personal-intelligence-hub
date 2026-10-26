@@ -5,9 +5,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Conversation } from "./conversation";
+import type * as EventStream from "./event-stream";
 
 vi.mock("./event-stream", async (importOriginal) => ({
-  ...await importOriginal<typeof import("./event-stream")>(),
+  ...await importOriginal<typeof EventStream>(),
   subscribeToConversationEvents: vi.fn(async () => undefined),
 }));
 
