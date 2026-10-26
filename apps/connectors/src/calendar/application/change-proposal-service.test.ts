@@ -271,7 +271,7 @@ describe("Calendar change proposal policy", () => {
     const world = await createProposalWorld();
     const proposal = await world.proposals.create(centralPrincipal(), "fictional-key-0024", createBody(world.refs[PRIMARY]!));
     await world.proposals.confirm(humanPrincipal(), proposal.id, { expectedVersion: 1 });
-    await world.db.write((handle) => repository.purgeTerminalProposalPayloads(handle, "2027-01-01T00:00:00.000Z"));
+    await world.db.write((handle) => repository.purgeTerminalProposalPayloads(handle, "2027-01-01T00:00:00.000Z", "2027-01-31T00:00:00.000Z"));
     await expect(world.proposals.get(humanPrincipal(), proposal.id)).rejects.toThrow("proposal_content_purged");
     await expect(world.proposals.confirm(humanPrincipal(), proposal.id, { expectedVersion: 1 })).rejects.toThrow("proposal_content_purged");
     await expect(world.proposals.create(centralPrincipal(), "fictional-key-0024", createBody(world.refs[PRIMARY]!))).rejects.toThrow("proposal_content_purged");

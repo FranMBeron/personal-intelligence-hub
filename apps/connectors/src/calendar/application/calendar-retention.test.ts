@@ -91,7 +91,8 @@ describe("Calendar retention", () => {
     expect(purged).toMatchObject({ status: "completed", eventRef: "evt-old-terminal" });
     expect(purged?.encryptedPayload).toBeUndefined();
     expect(purged?.providerEtagCiphertext).toBeUndefined();
-    expect(purged?.payloadPurgedAt).toBeDefined();
+    // Records when the content was erased, not the retention cutoff.
+    expect(purged?.payloadPurgedAt).toBe(NOW);
     await expect(db.read((handle) => repository.getProposal(handle, actorId, "recent-terminal"))).resolves.toHaveProperty("encryptedPayload");
     await expect(row(db, "SELECT id FROM calendar_change_audit WHERE id = 'audit-fixture'")).resolves.toHaveLength(1);
   });

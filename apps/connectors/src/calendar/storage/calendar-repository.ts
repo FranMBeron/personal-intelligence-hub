@@ -219,8 +219,11 @@ export interface CalendarRepository {
   expirePendingProposals(database: SqliteHandle, system: SystemTransitionContext): number;
   purgeOAuthTransactions(database: SqliteHandle, olderThan: string): number;
   purgeStaleEventReferences(database: SqliteHandle, olderThan: string): number;
-  /** Erases encrypted proposal content and provider ETags of proposals terminal since `olderThan`. */
-  purgeTerminalProposalPayloads(database: SqliteHandle, olderThan: string): number;
+  /**
+   * Erases encrypted proposal content and provider ETags of proposals terminal since `olderThan`,
+   * recording `now` (the purge instant) as payload_purged_at.
+   */
+  purgeTerminalProposalPayloads(database: SqliteHandle, olderThan: string, now: string): number;
   purgeIdempotencyRecords(database: SqliteHandle, olderThan: string): number;
 }
 
@@ -495,9 +498,9 @@ export const createCalendarRepository = (): CalendarRepository => ({
       "AND proposal.event_ref = calendar_event_refs.event_ref AND proposal.status IN ('pending', 'executing'))",
     ).run({ olderThan }).changes;
   },
-  purgeTerminalProposalPayloads(database, olderThan) {
-    return database.prepare("UPDATE calendar_change_proposals SET encrypted_payload = NULL, provider_etag_ciphertext = NULL, payload_purged_at = :olderThan WHERE status IN ('completed', 'rejected', 'expired', 'conflict', 'failed') AND encrypted_payload IS NOT NULL AND COALESCE(completed_at, expires_at) <= :olderThan")
-      .run({ olderThan }).changes;
+  purgeTerminalProposalPayloads(database, olderThan, now) {
+    return database.prepare("UPDATE calendar_change_proposals SET encrypted_payload = NULL, provider_etag_ciphertext = NULL, payload_purged_at = :now WHERE status IN ('completed', 'rejected', 'expired', 'conflict', 'failed') AND encrypted_payload IS NOT NULL AND COALESCE(completed_at, expires_at) <= :olderThan")
+      .run({ olderThan, now }).changes;
   },
   purgeIdempotencyRecords(database, olderThan) {
     return database.prepare("DELETE FROM calendar_idempotency WHERE created_at < :olderThan").run({ olderThan }).changes;

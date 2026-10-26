@@ -329,10 +329,10 @@ describe("Calendar repository", () => {
       encryptedPayload: sealCalendarValue("old-payload", `calendar_change_proposals:${actorId}:proposal-purge:payload`, ring),
     }), "idempotency-purge", "request-purge"));
 
-    await expect(database.write((db) => repository.purgeTerminalProposalPayloads(db, "2026-10-10T00:00:00.000Z"))).resolves.toBe(1);
+    await expect(database.write((db) => repository.purgeTerminalProposalPayloads(db, "2026-10-10T00:00:00.000Z", "2026-11-09T00:00:00.000Z"))).resolves.toBe(1);
     const purged = await database.read((db) => repository.getProposal(db, actorId, "proposal-01"));
     expect(purged?.encryptedPayload).toBeUndefined();
-    expect(purged).toMatchObject({ payloadPurgedAt: "2026-10-10T00:00:00.000Z", status: "completed" });
+    expect(purged).toMatchObject({ payloadPurgedAt: "2026-11-09T00:00:00.000Z", status: "completed" });
   });
 
   it("preserves active proposals and idempotency when saving the same selection again", async () => {
@@ -463,11 +463,12 @@ describe("Calendar repository", () => {
     await expect(database.read((db) => repository.getProposal(db, actorId, "proposal-clock"))).resolves.toMatchObject({ status: "rejected", completedAt: fakeNow });
     // The retention service purges 30 days after the terminal state; run it 31 days after the fake clock.
     const day = 24 * 60 * 60 * 1000;
-    const retentionCutoff = new Date(Date.parse(fakeNow) + 31 * day - 30 * day).toISOString();
-    await expect(database.write((db) => repository.purgeTerminalProposalPayloads(db, retentionCutoff))).resolves.toBe(1);
+    const purgedAt = new Date(Date.parse(fakeNow) + 31 * day).toISOString();
+    const retentionCutoff = new Date(Date.parse(purgedAt) - 30 * day).toISOString();
+    await expect(database.write((db) => repository.purgeTerminalProposalPayloads(db, retentionCutoff, purgedAt))).resolves.toBe(1);
     const purged = await database.read((db) => repository.getProposal(db, actorId, "proposal-clock"));
     expect(purged?.encryptedPayload).toBeUndefined();
-    expect(purged).toMatchObject({ status: "rejected", payloadPurgedAt: retentionCutoff });
+    expect(purged).toMatchObject({ status: "rejected", payloadPurgedAt: purgedAt });
   });
 
   it("treats a rebound calendar (changed blind index) exactly like a deselection", async () => {

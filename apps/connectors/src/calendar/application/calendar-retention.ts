@@ -51,7 +51,7 @@ export class CalendarRetentionService implements CalendarRetention {
       expiredProposals: this.#repository.expirePendingProposals(db, { now, requestId: `system-retention-${randomUUID()}` }),
       oauthTransactions: this.#repository.purgeOAuthTransactions(db, before(OAUTH_TRANSACTION_RETENTION_MS)),
       eventReferences: this.#repository.purgeStaleEventReferences(db, before(EVENT_REFERENCE_RETENTION_MS)),
-      proposalPayloads: this.#repository.purgeTerminalProposalPayloads(db, before(TERMINAL_PAYLOAD_RETENTION_MS)),
+      proposalPayloads: this.#repository.purgeTerminalProposalPayloads(db, before(TERMINAL_PAYLOAD_RETENTION_MS), now),
       idempotencyRecords: this.#repository.purgeIdempotencyRecords(db, before(IDEMPOTENCY_RETENTION_MS)),
     }));
   }
