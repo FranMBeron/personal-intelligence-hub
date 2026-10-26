@@ -71,9 +71,9 @@ describe("connector module registry", () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
-  it("publishes frozen empty provider extension points", () => {
-    expect(providerConfigNamespaces).toEqual([]);
-    expect(providerModules).toEqual([]);
+  it("publishes frozen provider extension points with unique names", () => {
+    expect(new Set(providerConfigNamespaces.map((namespace) => namespace.name)).size).toBe(providerConfigNamespaces.length);
+    expect(new Set(providerModules.map((factory) => factory.name)).size).toBe(providerModules.length);
     expect(Object.isFrozen(providerConfigNamespaces)).toBe(true);
     expect(Object.isFrozen(providerModules)).toBe(true);
   });
